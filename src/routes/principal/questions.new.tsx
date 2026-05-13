@@ -108,20 +108,20 @@ function NewQuestion() {
         marks: form.marks,
         negative_marks: form.negative_marks,
         question_text: form.question_text,
-        option_a: form.option_a,
-        option_b: form.option_b,
-        option_c: form.option_c,
-        option_d: form.option_d,
+        question_image: form.question_image,
+        option_a: form.option_a, option_b: form.option_b, option_c: form.option_c, option_d: form.option_d,
+        option_a_image: form.option_a_image, option_b_image: form.option_b_image,
+        option_c_image: form.option_c_image, option_d_image: form.option_d_image,
         correct_option: form.correct_option,
         created_by: user?.id,
       }).select("id").single();
       if (error) throw error;
-      if (form.solution_text.trim() && q) {
-        await supabase.from("solutions").insert({ question_id: q.id, solution_text: form.solution_text });
+      if ((form.solution_text.trim() || form.solution_image) && q) {
+        await supabase.from("solutions").insert({ question_id: q.id, solution_text: form.solution_text || "", solution_image: form.solution_image });
       }
       toast.success("Question saved");
       if (addAnother) {
-        setForm((f) => ({ ...f, question_text: "", option_a: "", option_b: "", option_c: "", option_d: "", solution_text: "", topic_tag: f.topic_tag }));
+        setForm((f) => ({ ...f, question_text: "", question_image: null, option_a: "", option_b: "", option_c: "", option_d: "", option_a_image: null, option_b_image: null, option_c_image: null, option_d_image: null, solution_text: "", solution_image: null, topic_tag: f.topic_tag }));
       } else {
         navigate({ to: "/principal/questions" });
       }
