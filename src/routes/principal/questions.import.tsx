@@ -53,6 +53,10 @@ export const Route = createFileRoute("/principal/questions/import")({ component:
 type Extracted = {
   question_text: string;
   option_a: string; option_b: string; option_c: string; option_d: string;
+  question_image?: string | null;
+  option_a_image?: string | null; option_b_image?: string | null;
+  option_c_image?: string | null; option_d_image?: string | null;
+  solution_image?: string | null;
   correct_option: "A" | "B" | "C" | "D";
   difficulty: "Easy" | "Medium" | "Hard";
   topic_tag?: string | null;
