@@ -203,10 +203,23 @@ function ImportQuestions() {
                       </select>
                     </div>
                   </div>
-                  <Textarea rows={2} value={q.question_text} onChange={(e) => update(i, { question_text: e.target.value })} className="text-sm" />
-                  {(["A","B","C","D"] as const).map((L) => (
-                    <Input key={L} value={(q as any)[`option_${L.toLowerCase()}`]} onChange={(e) => update(i, { [`option_${L.toLowerCase()}`]: e.target.value } as any)} placeholder={L} className="text-sm" />
-                  ))}
+                  <div className="flex items-start gap-2">
+                    <Textarea rows={2} value={q.question_text} onChange={(e) => update(i, { question_text: e.target.value })} className="text-sm flex-1" />
+                    <ImageBtn value={q.question_image} onChange={(v) => update(i, { question_image: v })} label="Img" />
+                  </div>
+                  {(["A","B","C","D"] as const).map((L) => {
+                    const imgKey = `option_${L.toLowerCase()}_image` as const;
+                    return (
+                      <div key={L} className="flex items-center gap-2">
+                        <Input value={(q as any)[`option_${L.toLowerCase()}`]} onChange={(e) => update(i, { [`option_${L.toLowerCase()}`]: e.target.value } as any)} placeholder={L} className="text-sm flex-1" />
+                        <ImageBtn value={(q as any)[imgKey]} onChange={(v) => update(i, { [imgKey]: v } as any)} label="Img" />
+                      </div>
+                    );
+                  })}
+                  <div className="flex items-start gap-2">
+                    <Textarea rows={2} value={q.solution_text ?? ""} onChange={(e) => update(i, { solution_text: e.target.value })} placeholder="Solution (optional)" className="text-xs flex-1" />
+                    <ImageBtn value={q.solution_image} onChange={(v) => update(i, { solution_image: v })} label="Img" />
+                  </div>
                   <Input value={q.topic_tag ?? ""} onChange={(e) => update(i, { topic_tag: e.target.value })} placeholder="Topic tag" className="text-xs" />
                 </div>
               ))}
