@@ -9,38 +9,211 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SetupRouteImport } from './routes/setup'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as StudentIndexRouteImport } from './routes/student/index'
+import { Route as PrincipalIndexRouteImport } from './routes/principal/index'
+import { Route as PrincipalSubjectsRouteImport } from './routes/principal/subjects'
+import { Route as PrincipalStudentsRouteImport } from './routes/principal/students'
+import { Route as PrincipalResultsRouteImport } from './routes/principal/results'
+import { Route as PrincipalQuestionsRouteImport } from './routes/principal/questions'
+import { Route as PrincipalMonitorRouteImport } from './routes/principal/monitor'
+import { Route as PrincipalExamsRouteImport } from './routes/principal/exams'
+import { Route as PrincipalAuditRouteImport } from './routes/principal/audit'
+import { Route as PrincipalQuestionsNewRouteImport } from './routes/principal/questions.new'
 
+const SetupRoute = SetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const StudentIndexRoute = StudentIndexRouteImport.update({
+  id: '/student/',
+  path: '/student/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrincipalIndexRoute = PrincipalIndexRouteImport.update({
+  id: '/principal/',
+  path: '/principal/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrincipalSubjectsRoute = PrincipalSubjectsRouteImport.update({
+  id: '/principal/subjects',
+  path: '/principal/subjects',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrincipalStudentsRoute = PrincipalStudentsRouteImport.update({
+  id: '/principal/students',
+  path: '/principal/students',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrincipalResultsRoute = PrincipalResultsRouteImport.update({
+  id: '/principal/results',
+  path: '/principal/results',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrincipalQuestionsRoute = PrincipalQuestionsRouteImport.update({
+  id: '/principal/questions',
+  path: '/principal/questions',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrincipalMonitorRoute = PrincipalMonitorRouteImport.update({
+  id: '/principal/monitor',
+  path: '/principal/monitor',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrincipalExamsRoute = PrincipalExamsRouteImport.update({
+  id: '/principal/exams',
+  path: '/principal/exams',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrincipalAuditRoute = PrincipalAuditRouteImport.update({
+  id: '/principal/audit',
+  path: '/principal/audit',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrincipalQuestionsNewRoute = PrincipalQuestionsNewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => PrincipalQuestionsRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/setup': typeof SetupRoute
+  '/principal/audit': typeof PrincipalAuditRoute
+  '/principal/exams': typeof PrincipalExamsRoute
+  '/principal/monitor': typeof PrincipalMonitorRoute
+  '/principal/questions': typeof PrincipalQuestionsRouteWithChildren
+  '/principal/results': typeof PrincipalResultsRoute
+  '/principal/students': typeof PrincipalStudentsRoute
+  '/principal/subjects': typeof PrincipalSubjectsRoute
+  '/principal/': typeof PrincipalIndexRoute
+  '/student/': typeof StudentIndexRoute
+  '/principal/questions/new': typeof PrincipalQuestionsNewRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/setup': typeof SetupRoute
+  '/principal/audit': typeof PrincipalAuditRoute
+  '/principal/exams': typeof PrincipalExamsRoute
+  '/principal/monitor': typeof PrincipalMonitorRoute
+  '/principal/questions': typeof PrincipalQuestionsRouteWithChildren
+  '/principal/results': typeof PrincipalResultsRoute
+  '/principal/students': typeof PrincipalStudentsRoute
+  '/principal/subjects': typeof PrincipalSubjectsRoute
+  '/principal': typeof PrincipalIndexRoute
+  '/student': typeof StudentIndexRoute
+  '/principal/questions/new': typeof PrincipalQuestionsNewRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/setup': typeof SetupRoute
+  '/principal/audit': typeof PrincipalAuditRoute
+  '/principal/exams': typeof PrincipalExamsRoute
+  '/principal/monitor': typeof PrincipalMonitorRoute
+  '/principal/questions': typeof PrincipalQuestionsRouteWithChildren
+  '/principal/results': typeof PrincipalResultsRoute
+  '/principal/students': typeof PrincipalStudentsRoute
+  '/principal/subjects': typeof PrincipalSubjectsRoute
+  '/principal/': typeof PrincipalIndexRoute
+  '/student/': typeof StudentIndexRoute
+  '/principal/questions/new': typeof PrincipalQuestionsNewRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/setup'
+    | '/principal/audit'
+    | '/principal/exams'
+    | '/principal/monitor'
+    | '/principal/questions'
+    | '/principal/results'
+    | '/principal/students'
+    | '/principal/subjects'
+    | '/principal/'
+    | '/student/'
+    | '/principal/questions/new'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/login'
+    | '/setup'
+    | '/principal/audit'
+    | '/principal/exams'
+    | '/principal/monitor'
+    | '/principal/questions'
+    | '/principal/results'
+    | '/principal/students'
+    | '/principal/subjects'
+    | '/principal'
+    | '/student'
+    | '/principal/questions/new'
+  id:
+    | '__root__'
+    | '/'
+    | '/login'
+    | '/setup'
+    | '/principal/audit'
+    | '/principal/exams'
+    | '/principal/monitor'
+    | '/principal/questions'
+    | '/principal/results'
+    | '/principal/students'
+    | '/principal/subjects'
+    | '/principal/'
+    | '/student/'
+    | '/principal/questions/new'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  LoginRoute: typeof LoginRoute
+  SetupRoute: typeof SetupRoute
+  PrincipalAuditRoute: typeof PrincipalAuditRoute
+  PrincipalExamsRoute: typeof PrincipalExamsRoute
+  PrincipalMonitorRoute: typeof PrincipalMonitorRoute
+  PrincipalQuestionsRoute: typeof PrincipalQuestionsRouteWithChildren
+  PrincipalResultsRoute: typeof PrincipalResultsRoute
+  PrincipalStudentsRoute: typeof PrincipalStudentsRoute
+  PrincipalSubjectsRoute: typeof PrincipalSubjectsRoute
+  PrincipalIndexRoute: typeof PrincipalIndexRoute
+  StudentIndexRoute: typeof StudentIndexRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/setup': {
+      id: '/setup'
+      path: '/setup'
+      fullPath: '/setup'
+      preLoaderRoute: typeof SetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -48,22 +221,104 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/student/': {
+      id: '/student/'
+      path: '/student'
+      fullPath: '/student/'
+      preLoaderRoute: typeof StudentIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/principal/': {
+      id: '/principal/'
+      path: '/principal'
+      fullPath: '/principal/'
+      preLoaderRoute: typeof PrincipalIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/principal/subjects': {
+      id: '/principal/subjects'
+      path: '/principal/subjects'
+      fullPath: '/principal/subjects'
+      preLoaderRoute: typeof PrincipalSubjectsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/principal/students': {
+      id: '/principal/students'
+      path: '/principal/students'
+      fullPath: '/principal/students'
+      preLoaderRoute: typeof PrincipalStudentsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/principal/results': {
+      id: '/principal/results'
+      path: '/principal/results'
+      fullPath: '/principal/results'
+      preLoaderRoute: typeof PrincipalResultsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/principal/questions': {
+      id: '/principal/questions'
+      path: '/principal/questions'
+      fullPath: '/principal/questions'
+      preLoaderRoute: typeof PrincipalQuestionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/principal/monitor': {
+      id: '/principal/monitor'
+      path: '/principal/monitor'
+      fullPath: '/principal/monitor'
+      preLoaderRoute: typeof PrincipalMonitorRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/principal/exams': {
+      id: '/principal/exams'
+      path: '/principal/exams'
+      fullPath: '/principal/exams'
+      preLoaderRoute: typeof PrincipalExamsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/principal/audit': {
+      id: '/principal/audit'
+      path: '/principal/audit'
+      fullPath: '/principal/audit'
+      preLoaderRoute: typeof PrincipalAuditRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/principal/questions/new': {
+      id: '/principal/questions/new'
+      path: '/new'
+      fullPath: '/principal/questions/new'
+      preLoaderRoute: typeof PrincipalQuestionsNewRouteImport
+      parentRoute: typeof PrincipalQuestionsRoute
+    }
   }
 }
 
+interface PrincipalQuestionsRouteChildren {
+  PrincipalQuestionsNewRoute: typeof PrincipalQuestionsNewRoute
+}
+
+const PrincipalQuestionsRouteChildren: PrincipalQuestionsRouteChildren = {
+  PrincipalQuestionsNewRoute: PrincipalQuestionsNewRoute,
+}
+
+const PrincipalQuestionsRouteWithChildren =
+  PrincipalQuestionsRoute._addFileChildren(PrincipalQuestionsRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  LoginRoute: LoginRoute,
+  SetupRoute: SetupRoute,
+  PrincipalAuditRoute: PrincipalAuditRoute,
+  PrincipalExamsRoute: PrincipalExamsRoute,
+  PrincipalMonitorRoute: PrincipalMonitorRoute,
+  PrincipalQuestionsRoute: PrincipalQuestionsRouteWithChildren,
+  PrincipalResultsRoute: PrincipalResultsRoute,
+  PrincipalStudentsRoute: PrincipalStudentsRoute,
+  PrincipalSubjectsRoute: PrincipalSubjectsRoute,
+  PrincipalIndexRoute: PrincipalIndexRoute,
+  StudentIndexRoute: StudentIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
