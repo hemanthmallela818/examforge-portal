@@ -24,8 +24,7 @@ function MathPreview({ text }: { text: string }) {
         if (p.startsWith("$$") && p.endsWith("$$")) {
           const formula = p.slice(2, -2);
           try {
-            // @ts-ignore
-            return <Latex.BlockMath key={i} math={formula} />;
+            return <BlockMath key={i} math={formula} />;
           } catch {
             return <code key={i}>{p}</code>;
           }
