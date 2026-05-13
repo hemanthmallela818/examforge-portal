@@ -36,7 +36,10 @@ function QuestionBank() {
           <h1 className="text-3xl font-bold tracking-tight">Question Bank</h1>
           <p className="text-sm text-muted-foreground mt-1">All questions across subjects</p>
         </div>
-        <Button asChild><Link to="/principal/questions/new">Add Question</Link></Button>
+        <div className="flex gap-2">
+          <Button asChild variant="outline"><Link to="/principal/questions/import">AI Import</Link></Button>
+          <Button asChild><Link to="/principal/questions/new">Add Question</Link></Button>
+        </div>
       </header>
 
       <Card className="p-4 mb-4">

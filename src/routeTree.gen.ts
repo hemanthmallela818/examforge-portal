@@ -23,7 +23,9 @@ import { Route as PrincipalExamsRouteImport } from './routes/principal/exams'
 import { Route as PrincipalAuditRouteImport } from './routes/principal/audit'
 import { Route as StudentResultsStudentExamIdRouteImport } from './routes/student/results.$studentExamId'
 import { Route as StudentExamExamIdRouteImport } from './routes/student/exam.$examId'
+import { Route as PrincipalStudentsStudentIdRouteImport } from './routes/principal/students.$studentId'
 import { Route as PrincipalQuestionsNewRouteImport } from './routes/principal/questions.new'
+import { Route as PrincipalQuestionsImportRouteImport } from './routes/principal/questions.import'
 import { Route as PrincipalExamsNewRouteImport } from './routes/principal/exams.new'
 import { Route as StudentExamExamIdAttemptRouteImport } from './routes/student/exam.$examId.attempt'
 
@@ -98,11 +100,23 @@ const StudentExamExamIdRoute = StudentExamExamIdRouteImport.update({
   path: '/student/exam/$examId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PrincipalStudentsStudentIdRoute =
+  PrincipalStudentsStudentIdRouteImport.update({
+    id: '/$studentId',
+    path: '/$studentId',
+    getParentRoute: () => PrincipalStudentsRoute,
+  } as any)
 const PrincipalQuestionsNewRoute = PrincipalQuestionsNewRouteImport.update({
   id: '/new',
   path: '/new',
   getParentRoute: () => PrincipalQuestionsRoute,
 } as any)
+const PrincipalQuestionsImportRoute =
+  PrincipalQuestionsImportRouteImport.update({
+    id: '/import',
+    path: '/import',
+    getParentRoute: () => PrincipalQuestionsRoute,
+  } as any)
 const PrincipalExamsNewRoute = PrincipalExamsNewRouteImport.update({
   id: '/new',
   path: '/new',
@@ -124,12 +138,14 @@ export interface FileRoutesByFullPath {
   '/principal/monitor': typeof PrincipalMonitorRoute
   '/principal/questions': typeof PrincipalQuestionsRouteWithChildren
   '/principal/results': typeof PrincipalResultsRoute
-  '/principal/students': typeof PrincipalStudentsRoute
+  '/principal/students': typeof PrincipalStudentsRouteWithChildren
   '/principal/subjects': typeof PrincipalSubjectsRoute
   '/principal/': typeof PrincipalIndexRoute
   '/student/': typeof StudentIndexRoute
   '/principal/exams/new': typeof PrincipalExamsNewRoute
+  '/principal/questions/import': typeof PrincipalQuestionsImportRoute
   '/principal/questions/new': typeof PrincipalQuestionsNewRoute
+  '/principal/students/$studentId': typeof PrincipalStudentsStudentIdRoute
   '/student/exam/$examId': typeof StudentExamExamIdRouteWithChildren
   '/student/results/$studentExamId': typeof StudentResultsStudentExamIdRoute
   '/student/exam/$examId/attempt': typeof StudentExamExamIdAttemptRoute
@@ -143,12 +159,14 @@ export interface FileRoutesByTo {
   '/principal/monitor': typeof PrincipalMonitorRoute
   '/principal/questions': typeof PrincipalQuestionsRouteWithChildren
   '/principal/results': typeof PrincipalResultsRoute
-  '/principal/students': typeof PrincipalStudentsRoute
+  '/principal/students': typeof PrincipalStudentsRouteWithChildren
   '/principal/subjects': typeof PrincipalSubjectsRoute
   '/principal': typeof PrincipalIndexRoute
   '/student': typeof StudentIndexRoute
   '/principal/exams/new': typeof PrincipalExamsNewRoute
+  '/principal/questions/import': typeof PrincipalQuestionsImportRoute
   '/principal/questions/new': typeof PrincipalQuestionsNewRoute
+  '/principal/students/$studentId': typeof PrincipalStudentsStudentIdRoute
   '/student/exam/$examId': typeof StudentExamExamIdRouteWithChildren
   '/student/results/$studentExamId': typeof StudentResultsStudentExamIdRoute
   '/student/exam/$examId/attempt': typeof StudentExamExamIdAttemptRoute
@@ -163,12 +181,14 @@ export interface FileRoutesById {
   '/principal/monitor': typeof PrincipalMonitorRoute
   '/principal/questions': typeof PrincipalQuestionsRouteWithChildren
   '/principal/results': typeof PrincipalResultsRoute
-  '/principal/students': typeof PrincipalStudentsRoute
+  '/principal/students': typeof PrincipalStudentsRouteWithChildren
   '/principal/subjects': typeof PrincipalSubjectsRoute
   '/principal/': typeof PrincipalIndexRoute
   '/student/': typeof StudentIndexRoute
   '/principal/exams/new': typeof PrincipalExamsNewRoute
+  '/principal/questions/import': typeof PrincipalQuestionsImportRoute
   '/principal/questions/new': typeof PrincipalQuestionsNewRoute
+  '/principal/students/$studentId': typeof PrincipalStudentsStudentIdRoute
   '/student/exam/$examId': typeof StudentExamExamIdRouteWithChildren
   '/student/results/$studentExamId': typeof StudentResultsStudentExamIdRoute
   '/student/exam/$examId/attempt': typeof StudentExamExamIdAttemptRoute
@@ -189,7 +209,9 @@ export interface FileRouteTypes {
     | '/principal/'
     | '/student/'
     | '/principal/exams/new'
+    | '/principal/questions/import'
     | '/principal/questions/new'
+    | '/principal/students/$studentId'
     | '/student/exam/$examId'
     | '/student/results/$studentExamId'
     | '/student/exam/$examId/attempt'
@@ -208,7 +230,9 @@ export interface FileRouteTypes {
     | '/principal'
     | '/student'
     | '/principal/exams/new'
+    | '/principal/questions/import'
     | '/principal/questions/new'
+    | '/principal/students/$studentId'
     | '/student/exam/$examId'
     | '/student/results/$studentExamId'
     | '/student/exam/$examId/attempt'
@@ -227,7 +251,9 @@ export interface FileRouteTypes {
     | '/principal/'
     | '/student/'
     | '/principal/exams/new'
+    | '/principal/questions/import'
     | '/principal/questions/new'
+    | '/principal/students/$studentId'
     | '/student/exam/$examId'
     | '/student/results/$studentExamId'
     | '/student/exam/$examId/attempt'
@@ -242,7 +268,7 @@ export interface RootRouteChildren {
   PrincipalMonitorRoute: typeof PrincipalMonitorRoute
   PrincipalQuestionsRoute: typeof PrincipalQuestionsRouteWithChildren
   PrincipalResultsRoute: typeof PrincipalResultsRoute
-  PrincipalStudentsRoute: typeof PrincipalStudentsRoute
+  PrincipalStudentsRoute: typeof PrincipalStudentsRouteWithChildren
   PrincipalSubjectsRoute: typeof PrincipalSubjectsRoute
   PrincipalIndexRoute: typeof PrincipalIndexRoute
   StudentIndexRoute: typeof StudentIndexRoute
@@ -350,11 +376,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof StudentExamExamIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/principal/students/$studentId': {
+      id: '/principal/students/$studentId'
+      path: '/$studentId'
+      fullPath: '/principal/students/$studentId'
+      preLoaderRoute: typeof PrincipalStudentsStudentIdRouteImport
+      parentRoute: typeof PrincipalStudentsRoute
+    }
     '/principal/questions/new': {
       id: '/principal/questions/new'
       path: '/new'
       fullPath: '/principal/questions/new'
       preLoaderRoute: typeof PrincipalQuestionsNewRouteImport
+      parentRoute: typeof PrincipalQuestionsRoute
+    }
+    '/principal/questions/import': {
+      id: '/principal/questions/import'
+      path: '/import'
+      fullPath: '/principal/questions/import'
+      preLoaderRoute: typeof PrincipalQuestionsImportRouteImport
       parentRoute: typeof PrincipalQuestionsRoute
     }
     '/principal/exams/new': {
@@ -387,15 +427,28 @@ const PrincipalExamsRouteWithChildren = PrincipalExamsRoute._addFileChildren(
 )
 
 interface PrincipalQuestionsRouteChildren {
+  PrincipalQuestionsImportRoute: typeof PrincipalQuestionsImportRoute
   PrincipalQuestionsNewRoute: typeof PrincipalQuestionsNewRoute
 }
 
 const PrincipalQuestionsRouteChildren: PrincipalQuestionsRouteChildren = {
+  PrincipalQuestionsImportRoute: PrincipalQuestionsImportRoute,
   PrincipalQuestionsNewRoute: PrincipalQuestionsNewRoute,
 }
 
 const PrincipalQuestionsRouteWithChildren =
   PrincipalQuestionsRoute._addFileChildren(PrincipalQuestionsRouteChildren)
+
+interface PrincipalStudentsRouteChildren {
+  PrincipalStudentsStudentIdRoute: typeof PrincipalStudentsStudentIdRoute
+}
+
+const PrincipalStudentsRouteChildren: PrincipalStudentsRouteChildren = {
+  PrincipalStudentsStudentIdRoute: PrincipalStudentsStudentIdRoute,
+}
+
+const PrincipalStudentsRouteWithChildren =
+  PrincipalStudentsRoute._addFileChildren(PrincipalStudentsRouteChildren)
 
 interface StudentExamExamIdRouteChildren {
   StudentExamExamIdAttemptRoute: typeof StudentExamExamIdAttemptRoute
@@ -417,7 +470,7 @@ const rootRouteChildren: RootRouteChildren = {
   PrincipalMonitorRoute: PrincipalMonitorRoute,
   PrincipalQuestionsRoute: PrincipalQuestionsRouteWithChildren,
   PrincipalResultsRoute: PrincipalResultsRoute,
-  PrincipalStudentsRoute: PrincipalStudentsRoute,
+  PrincipalStudentsRoute: PrincipalStudentsRouteWithChildren,
   PrincipalSubjectsRoute: PrincipalSubjectsRoute,
   PrincipalIndexRoute: PrincipalIndexRoute,
   StudentIndexRoute: StudentIndexRoute,
