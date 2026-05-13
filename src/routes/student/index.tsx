@@ -104,14 +104,3 @@ function StudentDashboard() {
     </div>
   );
 }
-            </div>
-          ) : (
-            <Card className="p-8 text-center text-sm text-muted-foreground">
-              No exams assigned to you yet. Check back later.
-            </Card>
-          )}
-        </section>
-      </main>
-    </div>
-  );
-}
