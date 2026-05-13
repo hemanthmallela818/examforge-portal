@@ -10,7 +10,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-context";
-import Latex from "react-katex/dist/index.js";
+// @ts-ignore - no types
+import { BlockMath } from "react-katex";
 
 export const Route = createFileRoute("/principal/questions/new")({ component: NewQuestion });
 
