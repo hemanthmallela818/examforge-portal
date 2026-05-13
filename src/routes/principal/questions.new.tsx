@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { PrincipalShell } from "@/components/PrincipalShell";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,10 +10,44 @@ import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-context";
+import { Upload, X } from "lucide-react";
 // @ts-ignore - no types
 import { BlockMath } from "react-katex";
 
 export const Route = createFileRoute("/principal/questions/new")({ component: NewQuestion });
+
+function ImageUpload({ value, onChange, label }: { value: string | null; onChange: (url: string | null) => void; label: string }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const upload = async (file: File) => {
+    setBusy(true);
+    try {
+      const ext = file.name.split(".").pop() || "png";
+      const path = `${crypto.randomUUID()}.${ext}`;
+      const { error } = await supabase.storage.from("question-images").upload(path, file, { upsert: false });
+      if (error) throw error;
+      const { data } = supabase.storage.from("question-images").getPublicUrl(path);
+      onChange(data.publicUrl);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Upload failed");
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="flex items-center gap-2">
+      <input ref={ref} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); }} />
+      {value ? (
+        <div className="flex items-center gap-2">
+          <img src={value} alt="" className="h-10 w-10 rounded border object-cover" />
+          <Button type="button" variant="ghost" size="sm" onClick={() => onChange(null)}><X className="h-3 w-3" /></Button>
+        </div>
+      ) : (
+        <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => ref.current?.click()}>
+          <Upload className="h-3 w-3 mr-1" />{busy ? "..." : label}
+        </Button>
+      )}
+    </div>
+  );
+}
 
 function MathPreview({ text }: { text: string }) {
   // Render $$...$$ blocks as KaTeX
@@ -50,12 +84,15 @@ function NewQuestion() {
     marks: 4,
     negative_marks: 1,
     question_text: "",
-    option_a: "",
-    option_b: "",
-    option_c: "",
-    option_d: "",
+    question_image: null as string | null,
+    option_a: "", option_b: "", option_c: "", option_d: "",
+    option_a_image: null as string | null,
+    option_b_image: null as string | null,
+    option_c_image: null as string | null,
+    option_d_image: null as string | null,
     correct_option: "A" as "A" | "B" | "C" | "D",
     solution_text: "",
+    solution_image: null as string | null,
   });
   const [saving, setSaving] = useState(false);
 
@@ -71,20 +108,20 @@ function NewQuestion() {
         marks: form.marks,
         negative_marks: form.negative_marks,
         question_text: form.question_text,
-        option_a: form.option_a,
-        option_b: form.option_b,
-        option_c: form.option_c,
-        option_d: form.option_d,
+        question_image: form.question_image,
+        option_a: form.option_a, option_b: form.option_b, option_c: form.option_c, option_d: form.option_d,
+        option_a_image: form.option_a_image, option_b_image: form.option_b_image,
+        option_c_image: form.option_c_image, option_d_image: form.option_d_image,
         correct_option: form.correct_option,
         created_by: user?.id,
       }).select("id").single();
       if (error) throw error;
-      if (form.solution_text.trim() && q) {
-        await supabase.from("solutions").insert({ question_id: q.id, solution_text: form.solution_text });
+      if ((form.solution_text.trim() || form.solution_image) && q) {
+        await supabase.from("solutions").insert({ question_id: q.id, solution_text: form.solution_text || "", solution_image: form.solution_image });
       }
       toast.success("Question saved");
       if (addAnother) {
-        setForm((f) => ({ ...f, question_text: "", option_a: "", option_b: "", option_c: "", option_d: "", solution_text: "", topic_tag: f.topic_tag }));
+        setForm((f) => ({ ...f, question_text: "", question_image: null, option_a: "", option_b: "", option_c: "", option_d: "", option_a_image: null, option_b_image: null, option_c_image: null, option_d_image: null, solution_text: "", solution_image: null, topic_tag: f.topic_tag }));
       } else {
         navigate({ to: "/principal/questions" });
       }
@@ -127,26 +164,38 @@ function NewQuestion() {
           </div>
 
           <div className="space-y-2">
-            <Label>Question text</Label>
+            <div className="flex items-center justify-between">
+              <Label>Question text</Label>
+              <ImageUpload value={form.question_image} onChange={(v) => setForm({ ...form, question_image: v })} label="Add image" />
+            </div>
             <Textarea rows={5} value={form.question_text} onChange={(e) => setForm({ ...form, question_text: e.target.value })} placeholder="Find the value of $$\\int_0^1 x^2 dx$$" />
           </div>
 
-          {(["A", "B", "C", "D"] as const).map((opt) => (
-            <div key={opt} className="flex gap-2 items-start">
-              <label className="flex items-center gap-2 mt-2">
-                <input type="radio" checked={form.correct_option === opt} onChange={() => setForm({ ...form, correct_option: opt })} />
-                <span className="font-bold w-5">{opt}</span>
-              </label>
-              <Input
-                value={(form as any)[`option_${opt.toLowerCase()}`]}
-                onChange={(e) => setForm({ ...form, [`option_${opt.toLowerCase()}`]: e.target.value } as any)}
-                placeholder={`Option ${opt}`}
-              />
-            </div>
-          ))}
+          {(["A", "B", "C", "D"] as const).map((opt) => {
+            const imgKey = `option_${opt.toLowerCase()}_image` as const;
+            return (
+              <div key={opt} className="flex gap-2 items-start">
+                <label className="flex items-center gap-2 mt-2">
+                  <input type="radio" checked={form.correct_option === opt} onChange={() => setForm({ ...form, correct_option: opt })} />
+                  <span className="font-bold w-5">{opt}</span>
+                </label>
+                <div className="flex-1 space-y-1">
+                  <Input
+                    value={(form as any)[`option_${opt.toLowerCase()}`]}
+                    onChange={(e) => setForm({ ...form, [`option_${opt.toLowerCase()}`]: e.target.value } as any)}
+                    placeholder={`Option ${opt}`}
+                  />
+                  <ImageUpload value={(form as any)[imgKey]} onChange={(v) => setForm({ ...form, [imgKey]: v } as any)} label="Image" />
+                </div>
+              </div>
+            );
+          })}
 
           <div className="space-y-2">
-            <Label>Solution (optional)</Label>
+            <div className="flex items-center justify-between">
+              <Label>Solution (optional)</Label>
+              <ImageUpload value={form.solution_image} onChange={(v) => setForm({ ...form, solution_image: v })} label="Add image" />
+            </div>
             <Textarea rows={3} value={form.solution_text} onChange={(e) => setForm({ ...form, solution_text: e.target.value })} />
           </div>
 
