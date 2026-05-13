@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { PrincipalShell } from "@/components/PrincipalShell";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,10 +10,44 @@ import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-context";
+import { Upload, X } from "lucide-react";
 // @ts-ignore - no types
 import { BlockMath } from "react-katex";
 
 export const Route = createFileRoute("/principal/questions/new")({ component: NewQuestion });
+
+function ImageUpload({ value, onChange, label }: { value: string | null; onChange: (url: string | null) => void; label: string }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const upload = async (file: File) => {
+    setBusy(true);
+    try {
+      const ext = file.name.split(".").pop() || "png";
+      const path = `${crypto.randomUUID()}.${ext}`;
+      const { error } = await supabase.storage.from("question-images").upload(path, file, { upsert: false });
+      if (error) throw error;
+      const { data } = supabase.storage.from("question-images").getPublicUrl(path);
+      onChange(data.publicUrl);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Upload failed");
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="flex items-center gap-2">
+      <input ref={ref} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); }} />
+      {value ? (
+        <div className="flex items-center gap-2">
+          <img src={value} alt="" className="h-10 w-10 rounded border object-cover" />
+          <Button type="button" variant="ghost" size="sm" onClick={() => onChange(null)}><X className="h-3 w-3" /></Button>
+        </div>
+      ) : (
+        <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => ref.current?.click()}>
+          <Upload className="h-3 w-3 mr-1" />{busy ? "..." : label}
+        </Button>
+      )}
+    </div>
+  );
+}
 
 function MathPreview({ text }: { text: string }) {
   // Render $$...$$ blocks as KaTeX
