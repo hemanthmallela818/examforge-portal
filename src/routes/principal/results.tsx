@@ -1,9 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useMemo, useState } from "react";
 import { PrincipalShell } from "@/components/PrincipalShell";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
+import { recomputeResults } from "@/lib/results.functions";
+import { toast } from "sonner";
+import { Loader2, RefreshCw } from "lucide-react";
 
 export const Route = createFileRoute("/principal/results")({
   component: ResultsAnalytics,
