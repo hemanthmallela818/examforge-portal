@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
@@ -121,6 +121,7 @@ function StudentsPage() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-right space-x-2">
+                  <Button asChild size="sm" variant="ghost"><Link to="/principal/students/$studentId" params={{ studentId: s.id }}>Profile</Link></Button>
                   <Button size="sm" variant="outline" onClick={() => handleReset(s.id)}>Reset PW</Button>
                   <Button size="sm" variant={s.is_active ? "outline" : "default"} onClick={() => handleToggle(s.id, s.is_active)}>
                     {s.is_active ? "Deactivate" : "Reactivate"}
