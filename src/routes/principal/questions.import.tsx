@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { PrincipalShell } from "@/components/PrincipalShell";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,13 +13,50 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
 import { extractQuestions } from "@/lib/extract.functions";
 import { toast } from "sonner";
-import { Sparkles, Loader2 } from "lucide-react";
+import { Sparkles, Loader2, Upload, X } from "lucide-react";
+
+function ImageBtn({ value, onChange, label }: { value?: string | null; onChange: (url: string | null) => void; label: string }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const upload = async (file: File) => {
+    setBusy(true);
+    try {
+      const ext = file.name.split(".").pop() || "png";
+      const path = `${crypto.randomUUID()}.${ext}`;
+      const { error } = await supabase.storage.from("question-images").upload(path, file, { upsert: false });
+      if (error) throw error;
+      const { data } = supabase.storage.from("question-images").getPublicUrl(path);
+      onChange(data.publicUrl);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Upload failed");
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="inline-flex items-center gap-1">
+      <input ref={ref} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); }} />
+      {value ? (
+        <>
+          <img src={value} alt="" className="h-6 w-6 rounded border object-cover" />
+          <Button type="button" variant="ghost" size="sm" className="h-6 px-1" onClick={() => onChange(null)}><X className="h-3 w-3" /></Button>
+        </>
+      ) : (
+        <Button type="button" variant="outline" size="sm" className="h-7 text-[10px] px-2" disabled={busy} onClick={() => ref.current?.click()}>
+          <Upload className="h-3 w-3 mr-1" />{busy ? "..." : label}
+        </Button>
+      )}
+    </div>
+  );
+}
 
 export const Route = createFileRoute("/principal/questions/import")({ component: ImportQuestions });
 
 type Extracted = {
   question_text: string;
   option_a: string; option_b: string; option_c: string; option_d: string;
+  question_image?: string | null;
+  option_a_image?: string | null; option_b_image?: string | null;
+  option_c_image?: string | null; option_d_image?: string | null;
+  solution_image?: string | null;
   correct_option: "A" | "B" | "C" | "D";
   difficulty: "Easy" | "Medium" | "Hard";
   topic_tag?: string | null;
@@ -83,7 +120,10 @@ function ImportQuestions() {
         picks.map((q) => ({
           subject_id: subjectId,
           question_text: q.question_text,
+          question_image: q.question_image ?? null,
           option_a: q.option_a, option_b: q.option_b, option_c: q.option_c, option_d: q.option_d,
+          option_a_image: q.option_a_image ?? null, option_b_image: q.option_b_image ?? null,
+          option_c_image: q.option_c_image ?? null, option_d_image: q.option_d_image ?? null,
           correct_option: q.correct_option,
           difficulty: q.difficulty,
           topic_tag: q.topic_tag || null,
@@ -93,8 +133,8 @@ function ImportQuestions() {
       if (error) throw error;
 
       const sols = picks
-        .map((q, i) => (q.solution_text ? { question_id: inserted![i].id, solution_text: q.solution_text } : null))
-        .filter(Boolean) as { question_id: string; solution_text: string }[];
+        .map((q, i) => (q.solution_text || q.solution_image ? { question_id: inserted![i].id, solution_text: q.solution_text || "", solution_image: q.solution_image ?? null } : null))
+        .filter(Boolean) as { question_id: string; solution_text: string; solution_image: string | null }[];
       if (sols.length) await supabase.from("solutions").insert(sols);
 
       await supabase.from("audit_logs").insert({ action: "AI_IMPORT", details: `Imported ${picks.length} questions via AI` });
@@ -163,10 +203,23 @@ function ImportQuestions() {
                       </select>
                     </div>
                   </div>
-                  <Textarea rows={2} value={q.question_text} onChange={(e) => update(i, { question_text: e.target.value })} className="text-sm" />
-                  {(["A","B","C","D"] as const).map((L) => (
-                    <Input key={L} value={(q as any)[`option_${L.toLowerCase()}`]} onChange={(e) => update(i, { [`option_${L.toLowerCase()}`]: e.target.value } as any)} placeholder={L} className="text-sm" />
-                  ))}
+                  <div className="flex items-start gap-2">
+                    <Textarea rows={2} value={q.question_text} onChange={(e) => update(i, { question_text: e.target.value })} className="text-sm flex-1" />
+                    <ImageBtn value={q.question_image} onChange={(v) => update(i, { question_image: v })} label="Img" />
+                  </div>
+                  {(["A","B","C","D"] as const).map((L) => {
+                    const imgKey = `option_${L.toLowerCase()}_image` as const;
+                    return (
+                      <div key={L} className="flex items-center gap-2">
+                        <Input value={(q as any)[`option_${L.toLowerCase()}`]} onChange={(e) => update(i, { [`option_${L.toLowerCase()}`]: e.target.value } as any)} placeholder={L} className="text-sm flex-1" />
+                        <ImageBtn value={(q as any)[imgKey]} onChange={(v) => update(i, { [imgKey]: v } as any)} label="Img" />
+                      </div>
+                    );
+                  })}
+                  <div className="flex items-start gap-2">
+                    <Textarea rows={2} value={q.solution_text ?? ""} onChange={(e) => update(i, { solution_text: e.target.value })} placeholder="Solution (optional)" className="text-xs flex-1" />
+                    <ImageBtn value={q.solution_image} onChange={(v) => update(i, { solution_image: v })} label="Img" />
+                  </div>
                   <Input value={q.topic_tag ?? ""} onChange={(e) => update(i, { topic_tag: e.target.value })} placeholder="Topic tag" className="text-xs" />
                 </div>
               ))}
