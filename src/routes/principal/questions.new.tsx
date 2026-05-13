@@ -164,26 +164,38 @@ function NewQuestion() {
           </div>
 
           <div className="space-y-2">
-            <Label>Question text</Label>
+            <div className="flex items-center justify-between">
+              <Label>Question text</Label>
+              <ImageUpload value={form.question_image} onChange={(v) => setForm({ ...form, question_image: v })} label="Add image" />
+            </div>
             <Textarea rows={5} value={form.question_text} onChange={(e) => setForm({ ...form, question_text: e.target.value })} placeholder="Find the value of $$\\int_0^1 x^2 dx$$" />
           </div>
 
-          {(["A", "B", "C", "D"] as const).map((opt) => (
-            <div key={opt} className="flex gap-2 items-start">
-              <label className="flex items-center gap-2 mt-2">
-                <input type="radio" checked={form.correct_option === opt} onChange={() => setForm({ ...form, correct_option: opt })} />
-                <span className="font-bold w-5">{opt}</span>
-              </label>
-              <Input
-                value={(form as any)[`option_${opt.toLowerCase()}`]}
-                onChange={(e) => setForm({ ...form, [`option_${opt.toLowerCase()}`]: e.target.value } as any)}
-                placeholder={`Option ${opt}`}
-              />
-            </div>
-          ))}
+          {(["A", "B", "C", "D"] as const).map((opt) => {
+            const imgKey = `option_${opt.toLowerCase()}_image` as const;
+            return (
+              <div key={opt} className="flex gap-2 items-start">
+                <label className="flex items-center gap-2 mt-2">
+                  <input type="radio" checked={form.correct_option === opt} onChange={() => setForm({ ...form, correct_option: opt })} />
+                  <span className="font-bold w-5">{opt}</span>
+                </label>
+                <div className="flex-1 space-y-1">
+                  <Input
+                    value={(form as any)[`option_${opt.toLowerCase()}`]}
+                    onChange={(e) => setForm({ ...form, [`option_${opt.toLowerCase()}`]: e.target.value } as any)}
+                    placeholder={`Option ${opt}`}
+                  />
+                  <ImageUpload value={(form as any)[imgKey]} onChange={(v) => setForm({ ...form, [imgKey]: v } as any)} label="Image" />
+                </div>
+              </div>
+            );
+          })}
 
           <div className="space-y-2">
-            <Label>Solution (optional)</Label>
+            <div className="flex items-center justify-between">
+              <Label>Solution (optional)</Label>
+              <ImageUpload value={form.solution_image} onChange={(v) => setForm({ ...form, solution_image: v })} label="Add image" />
+            </div>
             <Textarea rows={3} value={form.solution_text} onChange={(e) => setForm({ ...form, solution_text: e.target.value })} />
           </div>
 
