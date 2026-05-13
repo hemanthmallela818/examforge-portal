@@ -25,10 +25,21 @@ function StudentDashboard() {
     enabled: !!user,
     queryFn: async () => {
       const { data } = await supabase
-        .from("exams")
-        .select("id, title, description, scheduled_date, start_time, duration_minutes, status")
-        .order("scheduled_date", { ascending: true });
-      return data ?? [];
+        .from("exam_assignments")
+        .select("exam_id, exams(id, title, description, scheduled_date, start_time, duration_minutes, status)")
+        .eq("student_id", user!.id);
+      return (data ?? []).map((r: any) => r.exams).filter(Boolean);
+    },
+  });
+
+  const { data: attempts } = useQuery({
+    queryKey: ["student-attempts", user?.id],
+    enabled: !!user,
+    queryFn: async () => {
+      const { data } = await supabase.from("student_exams").select("id, exam_id, status").eq("student_id", user!.id);
+      const m = new Map<string, { id: string; status: string }>();
+      (data ?? []).forEach((r) => m.set(r.exam_id, { id: r.id, status: r.status }));
+      return m;
     },
   });
 
