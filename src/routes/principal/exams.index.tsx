@@ -7,7 +7,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Plus, Play, CheckCircle2, FileText, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-export const Route = createFileRoute("/principal/exams")({ component: ExamsList });
+export const Route = createFileRoute("/principal/exams/")({ component: ExamsList });
 
 function ExamsList() {
   const qc = useQueryClient();

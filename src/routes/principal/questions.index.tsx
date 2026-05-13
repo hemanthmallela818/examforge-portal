@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/integrations/supabase/client";
 
-export const Route = createFileRoute("/principal/questions")({ component: QuestionBank });
+export const Route = createFileRoute("/principal/questions/")({ component: QuestionBank });
 
 function QuestionBank() {
   const [search, setSearch] = useState("");

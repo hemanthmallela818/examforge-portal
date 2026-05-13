@@ -17,10 +17,10 @@ import { Route as PrincipalIndexRouteImport } from './routes/principal/index'
 import { Route as PrincipalSubjectsRouteImport } from './routes/principal/subjects'
 import { Route as PrincipalStudentsRouteImport } from './routes/principal/students'
 import { Route as PrincipalResultsRouteImport } from './routes/principal/results'
-import { Route as PrincipalQuestionsRouteImport } from './routes/principal/questions'
 import { Route as PrincipalMonitorRouteImport } from './routes/principal/monitor'
-import { Route as PrincipalExamsRouteImport } from './routes/principal/exams'
 import { Route as PrincipalAuditRouteImport } from './routes/principal/audit'
+import { Route as PrincipalQuestionsIndexRouteImport } from './routes/principal/questions.index'
+import { Route as PrincipalExamsIndexRouteImport } from './routes/principal/exams.index'
 import { Route as StudentReviewStudentExamIdRouteImport } from './routes/student/review.$studentExamId'
 import { Route as StudentResultsStudentExamIdRouteImport } from './routes/student/results.$studentExamId'
 import { Route as StudentExamExamIdRouteImport } from './routes/student/exam.$examId'
@@ -70,24 +70,24 @@ const PrincipalResultsRoute = PrincipalResultsRouteImport.update({
   path: '/principal/results',
   getParentRoute: () => rootRouteImport,
 } as any)
-const PrincipalQuestionsRoute = PrincipalQuestionsRouteImport.update({
-  id: '/principal/questions',
-  path: '/principal/questions',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const PrincipalMonitorRoute = PrincipalMonitorRouteImport.update({
   id: '/principal/monitor',
   path: '/principal/monitor',
   getParentRoute: () => rootRouteImport,
 } as any)
-const PrincipalExamsRoute = PrincipalExamsRouteImport.update({
-  id: '/principal/exams',
-  path: '/principal/exams',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const PrincipalAuditRoute = PrincipalAuditRouteImport.update({
   id: '/principal/audit',
   path: '/principal/audit',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrincipalQuestionsIndexRoute = PrincipalQuestionsIndexRouteImport.update({
+  id: '/principal/questions/',
+  path: '/principal/questions/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrincipalExamsIndexRoute = PrincipalExamsIndexRouteImport.update({
+  id: '/principal/exams/',
+  path: '/principal/exams/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const StudentReviewStudentExamIdRoute =
@@ -141,9 +141,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/principal/audit': typeof PrincipalAuditRoute
-  '/principal/exams': typeof PrincipalExamsRouteWithChildren
   '/principal/monitor': typeof PrincipalMonitorRoute
-  '/principal/questions': typeof PrincipalQuestionsRouteWithChildren
   '/principal/results': typeof PrincipalResultsRoute
   '/principal/students': typeof PrincipalStudentsRouteWithChildren
   '/principal/subjects': typeof PrincipalSubjectsRoute
@@ -156,6 +154,8 @@ export interface FileRoutesByFullPath {
   '/student/exam/$examId': typeof StudentExamExamIdRouteWithChildren
   '/student/results/$studentExamId': typeof StudentResultsStudentExamIdRoute
   '/student/review/$studentExamId': typeof StudentReviewStudentExamIdRoute
+  '/principal/exams/': typeof PrincipalExamsIndexRoute
+  '/principal/questions/': typeof PrincipalQuestionsIndexRoute
   '/student/exam/$examId/attempt': typeof StudentExamExamIdAttemptRoute
 }
 export interface FileRoutesByTo {
@@ -163,9 +163,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/principal/audit': typeof PrincipalAuditRoute
-  '/principal/exams': typeof PrincipalExamsRouteWithChildren
   '/principal/monitor': typeof PrincipalMonitorRoute
-  '/principal/questions': typeof PrincipalQuestionsRouteWithChildren
   '/principal/results': typeof PrincipalResultsRoute
   '/principal/students': typeof PrincipalStudentsRouteWithChildren
   '/principal/subjects': typeof PrincipalSubjectsRoute
@@ -178,6 +176,8 @@ export interface FileRoutesByTo {
   '/student/exam/$examId': typeof StudentExamExamIdRouteWithChildren
   '/student/results/$studentExamId': typeof StudentResultsStudentExamIdRoute
   '/student/review/$studentExamId': typeof StudentReviewStudentExamIdRoute
+  '/principal/exams': typeof PrincipalExamsIndexRoute
+  '/principal/questions': typeof PrincipalQuestionsIndexRoute
   '/student/exam/$examId/attempt': typeof StudentExamExamIdAttemptRoute
 }
 export interface FileRoutesById {
@@ -186,9 +186,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/principal/audit': typeof PrincipalAuditRoute
-  '/principal/exams': typeof PrincipalExamsRouteWithChildren
   '/principal/monitor': typeof PrincipalMonitorRoute
-  '/principal/questions': typeof PrincipalQuestionsRouteWithChildren
   '/principal/results': typeof PrincipalResultsRoute
   '/principal/students': typeof PrincipalStudentsRouteWithChildren
   '/principal/subjects': typeof PrincipalSubjectsRoute
@@ -201,6 +199,8 @@ export interface FileRoutesById {
   '/student/exam/$examId': typeof StudentExamExamIdRouteWithChildren
   '/student/results/$studentExamId': typeof StudentResultsStudentExamIdRoute
   '/student/review/$studentExamId': typeof StudentReviewStudentExamIdRoute
+  '/principal/exams/': typeof PrincipalExamsIndexRoute
+  '/principal/questions/': typeof PrincipalQuestionsIndexRoute
   '/student/exam/$examId/attempt': typeof StudentExamExamIdAttemptRoute
 }
 export interface FileRouteTypes {
@@ -210,9 +210,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/principal/audit'
-    | '/principal/exams'
     | '/principal/monitor'
-    | '/principal/questions'
     | '/principal/results'
     | '/principal/students'
     | '/principal/subjects'
@@ -225,6 +223,8 @@ export interface FileRouteTypes {
     | '/student/exam/$examId'
     | '/student/results/$studentExamId'
     | '/student/review/$studentExamId'
+    | '/principal/exams/'
+    | '/principal/questions/'
     | '/student/exam/$examId/attempt'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -232,9 +232,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/principal/audit'
-    | '/principal/exams'
     | '/principal/monitor'
-    | '/principal/questions'
     | '/principal/results'
     | '/principal/students'
     | '/principal/subjects'
@@ -247,6 +245,8 @@ export interface FileRouteTypes {
     | '/student/exam/$examId'
     | '/student/results/$studentExamId'
     | '/student/review/$studentExamId'
+    | '/principal/exams'
+    | '/principal/questions'
     | '/student/exam/$examId/attempt'
   id:
     | '__root__'
@@ -254,9 +254,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/principal/audit'
-    | '/principal/exams'
     | '/principal/monitor'
-    | '/principal/questions'
     | '/principal/results'
     | '/principal/students'
     | '/principal/subjects'
@@ -269,6 +267,8 @@ export interface FileRouteTypes {
     | '/student/exam/$examId'
     | '/student/results/$studentExamId'
     | '/student/review/$studentExamId'
+    | '/principal/exams/'
+    | '/principal/questions/'
     | '/student/exam/$examId/attempt'
   fileRoutesById: FileRoutesById
 }
@@ -277,9 +277,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   SetupRoute: typeof SetupRoute
   PrincipalAuditRoute: typeof PrincipalAuditRoute
-  PrincipalExamsRoute: typeof PrincipalExamsRouteWithChildren
   PrincipalMonitorRoute: typeof PrincipalMonitorRoute
-  PrincipalQuestionsRoute: typeof PrincipalQuestionsRouteWithChildren
   PrincipalResultsRoute: typeof PrincipalResultsRoute
   PrincipalStudentsRoute: typeof PrincipalStudentsRouteWithChildren
   PrincipalSubjectsRoute: typeof PrincipalSubjectsRoute
@@ -288,6 +286,8 @@ export interface RootRouteChildren {
   StudentExamExamIdRoute: typeof StudentExamExamIdRouteWithChildren
   StudentResultsStudentExamIdRoute: typeof StudentResultsStudentExamIdRoute
   StudentReviewStudentExamIdRoute: typeof StudentReviewStudentExamIdRoute
+  PrincipalExamsIndexRoute: typeof PrincipalExamsIndexRoute
+  PrincipalQuestionsIndexRoute: typeof PrincipalQuestionsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -348,13 +348,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PrincipalResultsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/principal/questions': {
-      id: '/principal/questions'
-      path: '/principal/questions'
-      fullPath: '/principal/questions'
-      preLoaderRoute: typeof PrincipalQuestionsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/principal/monitor': {
       id: '/principal/monitor'
       path: '/principal/monitor'
@@ -362,18 +355,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PrincipalMonitorRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/principal/exams': {
-      id: '/principal/exams'
-      path: '/principal/exams'
-      fullPath: '/principal/exams'
-      preLoaderRoute: typeof PrincipalExamsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/principal/audit': {
       id: '/principal/audit'
       path: '/principal/audit'
       fullPath: '/principal/audit'
       preLoaderRoute: typeof PrincipalAuditRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/principal/questions/': {
+      id: '/principal/questions/'
+      path: '/principal/questions'
+      fullPath: '/principal/questions/'
+      preLoaderRoute: typeof PrincipalQuestionsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/principal/exams/': {
+      id: '/principal/exams/'
+      path: '/principal/exams'
+      fullPath: '/principal/exams/'
+      preLoaderRoute: typeof PrincipalExamsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/student/review/$studentExamId': {
@@ -435,31 +435,6 @@ declare module '@tanstack/react-router' {
   }
 }
 
-interface PrincipalExamsRouteChildren {
-  PrincipalExamsNewRoute: typeof PrincipalExamsNewRoute
-}
-
-const PrincipalExamsRouteChildren: PrincipalExamsRouteChildren = {
-  PrincipalExamsNewRoute: PrincipalExamsNewRoute,
-}
-
-const PrincipalExamsRouteWithChildren = PrincipalExamsRoute._addFileChildren(
-  PrincipalExamsRouteChildren,
-)
-
-interface PrincipalQuestionsRouteChildren {
-  PrincipalQuestionsImportRoute: typeof PrincipalQuestionsImportRoute
-  PrincipalQuestionsNewRoute: typeof PrincipalQuestionsNewRoute
-}
-
-const PrincipalQuestionsRouteChildren: PrincipalQuestionsRouteChildren = {
-  PrincipalQuestionsImportRoute: PrincipalQuestionsImportRoute,
-  PrincipalQuestionsNewRoute: PrincipalQuestionsNewRoute,
-}
-
-const PrincipalQuestionsRouteWithChildren =
-  PrincipalQuestionsRoute._addFileChildren(PrincipalQuestionsRouteChildren)
-
 interface PrincipalStudentsRouteChildren {
   PrincipalStudentsStudentIdRoute: typeof PrincipalStudentsStudentIdRoute
 }
@@ -487,9 +462,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   SetupRoute: SetupRoute,
   PrincipalAuditRoute: PrincipalAuditRoute,
-  PrincipalExamsRoute: PrincipalExamsRouteWithChildren,
   PrincipalMonitorRoute: PrincipalMonitorRoute,
-  PrincipalQuestionsRoute: PrincipalQuestionsRouteWithChildren,
   PrincipalResultsRoute: PrincipalResultsRoute,
   PrincipalStudentsRoute: PrincipalStudentsRouteWithChildren,
   PrincipalSubjectsRoute: PrincipalSubjectsRoute,
@@ -498,7 +471,19 @@ const rootRouteChildren: RootRouteChildren = {
   StudentExamExamIdRoute: StudentExamExamIdRouteWithChildren,
   StudentResultsStudentExamIdRoute: StudentResultsStudentExamIdRoute,
   StudentReviewStudentExamIdRoute: StudentReviewStudentExamIdRoute,
+  PrincipalExamsIndexRoute: PrincipalExamsIndexRoute,
+  PrincipalQuestionsIndexRoute: PrincipalQuestionsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
