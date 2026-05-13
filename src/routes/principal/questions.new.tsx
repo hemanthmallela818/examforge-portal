@@ -84,12 +84,15 @@ function NewQuestion() {
     marks: 4,
     negative_marks: 1,
     question_text: "",
-    option_a: "",
-    option_b: "",
-    option_c: "",
-    option_d: "",
+    question_image: null as string | null,
+    option_a: "", option_b: "", option_c: "", option_d: "",
+    option_a_image: null as string | null,
+    option_b_image: null as string | null,
+    option_c_image: null as string | null,
+    option_d_image: null as string | null,
     correct_option: "A" as "A" | "B" | "C" | "D",
     solution_text: "",
+    solution_image: null as string | null,
   });
   const [saving, setSaving] = useState(false);
 
