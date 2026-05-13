@@ -70,20 +70,40 @@ function StudentDashboard() {
           <h2 className="text-lg font-semibold mb-4">Your Exams</h2>
           {exams && exams.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {exams.map((e) => (
-                <Card key={e.id} className="p-5">
-                  <h3 className="font-semibold">{e.title}</h3>
-                  <p className="text-xs text-muted-foreground mt-1">{e.scheduled_date} {e.start_time} • {e.duration_minutes} min</p>
-                  <div className="mt-3 flex items-center justify-between">
-                    <span className={`text-xs rounded-full px-2 py-0.5 ${
-                      e.status === "ONGOING" ? "bg-success/15 text-success" :
-                      e.status === "COMPLETED" ? "bg-muted text-muted-foreground" :
-                      "bg-info/15 text-info"
-                    }`}>{e.status}</span>
-                    <Button size="sm" disabled>Start</Button>
-                  </div>
-                </Card>
-              ))}
+              {exams.map((e: any) => {
+                const att = attempts?.get(e.id);
+                const finished = att?.status === "SUBMITTED" || att?.status === "TERMINATED";
+                const canStart = (e.status === "ONGOING" || e.status === "SCHEDULED") && !finished;
+                return (
+                  <Card key={e.id} className="p-5">
+                    <h3 className="font-semibold">{e.title}</h3>
+                    <p className="text-xs text-muted-foreground mt-1">{e.scheduled_date ?? "—"} {e.start_time ?? ""} • {e.duration_minutes} min</p>
+                    <div className="mt-3 flex items-center justify-between">
+                      <span className={`text-xs rounded-full px-2 py-0.5 ${
+                        e.status === "ONGOING" ? "bg-success/15 text-success" :
+                        e.status === "COMPLETED" ? "bg-muted text-muted-foreground" :
+                        "bg-info/15 text-info"
+                      }`}>{finished ? "DONE" : e.status}</span>
+                      {finished ? (
+                        <Button size="sm" variant="outline" onClick={() => navigate({ to: "/student/results/$studentExamId", params: { studentExamId: att!.id } })}>View Result</Button>
+                      ) : (
+                        <Button size="sm" disabled={!canStart} onClick={() => navigate({ to: "/student/exam/$examId", params: { examId: e.id } })}>Start</Button>
+                      )}
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          ) : (
+            <Card className="p-8 text-center text-sm text-muted-foreground">
+              No exams assigned to you yet. Check back later.
+            </Card>
+          )}
+        </section>
+      </main>
+    </div>
+  );
+}
             </div>
           ) : (
             <Card className="p-8 text-center text-sm text-muted-foreground">
