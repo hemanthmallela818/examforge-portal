@@ -66,7 +66,10 @@ function ResultsPage() {
         )}
 
         <div className="text-center text-xs text-muted-foreground">Attempted {total} questions</div>
-        <div className="flex justify-center"><Button asChild><Link to="/student">Back to Dashboard</Link></Button></div>
+        <div className="flex justify-center gap-2">
+          <Button asChild variant="outline"><Link to="/student/review/$studentExamId" params={{ studentExamId }}>Review Answers & Solutions</Link></Button>
+          <Button asChild><Link to="/student">Back to Dashboard</Link></Button>
+        </div>
       </main>
     </div>
   );
