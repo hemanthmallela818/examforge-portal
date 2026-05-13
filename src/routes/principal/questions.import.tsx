@@ -120,7 +120,10 @@ function ImportQuestions() {
         picks.map((q) => ({
           subject_id: subjectId,
           question_text: q.question_text,
+          question_image: q.question_image ?? null,
           option_a: q.option_a, option_b: q.option_b, option_c: q.option_c, option_d: q.option_d,
+          option_a_image: q.option_a_image ?? null, option_b_image: q.option_b_image ?? null,
+          option_c_image: q.option_c_image ?? null, option_d_image: q.option_d_image ?? null,
           correct_option: q.correct_option,
           difficulty: q.difficulty,
           topic_tag: q.topic_tag || null,
@@ -130,8 +133,8 @@ function ImportQuestions() {
       if (error) throw error;
 
       const sols = picks
-        .map((q, i) => (q.solution_text ? { question_id: inserted![i].id, solution_text: q.solution_text } : null))
-        .filter(Boolean) as { question_id: string; solution_text: string }[];
+        .map((q, i) => (q.solution_text || q.solution_image ? { question_id: inserted![i].id, solution_text: q.solution_text || "", solution_image: q.solution_image ?? null } : null))
+        .filter(Boolean) as { question_id: string; solution_text: string; solution_image: string | null }[];
       if (sols.length) await supabase.from("solutions").insert(sols);
 
       await supabase.from("audit_logs").insert({ action: "AI_IMPORT", details: `Imported ${picks.length} questions via AI` });
