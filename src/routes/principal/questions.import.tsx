@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { PrincipalShell } from "@/components/PrincipalShell";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,40 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
 import { extractQuestions } from "@/lib/extract.functions";
 import { toast } from "sonner";
-import { Sparkles, Loader2 } from "lucide-react";
+import { Sparkles, Loader2, Upload, X } from "lucide-react";
+
+function ImageBtn({ value, onChange, label }: { value?: string | null; onChange: (url: string | null) => void; label: string }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const upload = async (file: File) => {
+    setBusy(true);
+    try {
+      const ext = file.name.split(".").pop() || "png";
+      const path = `${crypto.randomUUID()}.${ext}`;
+      const { error } = await supabase.storage.from("question-images").upload(path, file, { upsert: false });
+      if (error) throw error;
+      const { data } = supabase.storage.from("question-images").getPublicUrl(path);
+      onChange(data.publicUrl);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Upload failed");
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="inline-flex items-center gap-1">
+      <input ref={ref} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); }} />
+      {value ? (
+        <>
+          <img src={value} alt="" className="h-6 w-6 rounded border object-cover" />
+          <Button type="button" variant="ghost" size="sm" className="h-6 px-1" onClick={() => onChange(null)}><X className="h-3 w-3" /></Button>
+        </>
+      ) : (
+        <Button type="button" variant="outline" size="sm" className="h-7 text-[10px] px-2" disabled={busy} onClick={() => ref.current?.click()}>
+          <Upload className="h-3 w-3 mr-1" />{busy ? "..." : label}
+        </Button>
+      )}
+    </div>
+  );
+}
 
 export const Route = createFileRoute("/principal/questions/import")({ component: ImportQuestions });
 
