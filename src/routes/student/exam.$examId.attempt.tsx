@@ -138,8 +138,9 @@ function ExamAttempt() {
         return nv;
       });
     };
+    const enteredFs = !!document.fullscreenElement;
     const onVis = () => { if (document.hidden) flag("tab switched"); };
-    const onFs = () => { if (!document.fullscreenElement && !submittedRef.current) flag("exited fullscreen"); };
+    const onFs = () => { if (enteredFs && !document.fullscreenElement && !submittedRef.current) flag("exited fullscreen"); };
     const onCopy = (e: ClipboardEvent) => { e.preventDefault(); flag("copy attempt"); };
     const onCtx = (e: MouseEvent) => e.preventDefault();
     const onBeforeUnload = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
