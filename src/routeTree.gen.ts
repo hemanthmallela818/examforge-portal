@@ -114,20 +114,20 @@ const PrincipalStudentsStudentIdRoute =
     getParentRoute: () => PrincipalStudentsRoute,
   } as any)
 const PrincipalQuestionsNewRoute = PrincipalQuestionsNewRouteImport.update({
-  id: '/new',
-  path: '/new',
-  getParentRoute: () => PrincipalQuestionsRoute,
+  id: '/principal/questions/new',
+  path: '/principal/questions/new',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const PrincipalQuestionsImportRoute =
   PrincipalQuestionsImportRouteImport.update({
-    id: '/import',
-    path: '/import',
-    getParentRoute: () => PrincipalQuestionsRoute,
+    id: '/principal/questions/import',
+    path: '/principal/questions/import',
+    getParentRoute: () => rootRouteImport,
   } as any)
 const PrincipalExamsNewRoute = PrincipalExamsNewRouteImport.update({
-  id: '/new',
-  path: '/new',
-  getParentRoute: () => PrincipalExamsRoute,
+  id: '/principal/exams/new',
+  path: '/principal/exams/new',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const StudentExamExamIdAttemptRoute =
   StudentExamExamIdAttemptRouteImport.update({
@@ -283,6 +283,9 @@ export interface RootRouteChildren {
   PrincipalSubjectsRoute: typeof PrincipalSubjectsRoute
   PrincipalIndexRoute: typeof PrincipalIndexRoute
   StudentIndexRoute: typeof StudentIndexRoute
+  PrincipalExamsNewRoute: typeof PrincipalExamsNewRoute
+  PrincipalQuestionsImportRoute: typeof PrincipalQuestionsImportRoute
+  PrincipalQuestionsNewRoute: typeof PrincipalQuestionsNewRoute
   StudentExamExamIdRoute: typeof StudentExamExamIdRouteWithChildren
   StudentResultsStudentExamIdRoute: typeof StudentResultsStudentExamIdRoute
   StudentReviewStudentExamIdRoute: typeof StudentReviewStudentExamIdRoute
@@ -406,24 +409,24 @@ declare module '@tanstack/react-router' {
     }
     '/principal/questions/new': {
       id: '/principal/questions/new'
-      path: '/new'
+      path: '/principal/questions/new'
       fullPath: '/principal/questions/new'
       preLoaderRoute: typeof PrincipalQuestionsNewRouteImport
-      parentRoute: typeof PrincipalQuestionsRoute
+      parentRoute: typeof rootRouteImport
     }
     '/principal/questions/import': {
       id: '/principal/questions/import'
-      path: '/import'
+      path: '/principal/questions/import'
       fullPath: '/principal/questions/import'
       preLoaderRoute: typeof PrincipalQuestionsImportRouteImport
-      parentRoute: typeof PrincipalQuestionsRoute
+      parentRoute: typeof rootRouteImport
     }
     '/principal/exams/new': {
       id: '/principal/exams/new'
-      path: '/new'
+      path: '/principal/exams/new'
       fullPath: '/principal/exams/new'
       preLoaderRoute: typeof PrincipalExamsNewRouteImport
-      parentRoute: typeof PrincipalExamsRoute
+      parentRoute: typeof rootRouteImport
     }
     '/student/exam/$examId/attempt': {
       id: '/student/exam/$examId/attempt'
@@ -468,6 +471,9 @@ const rootRouteChildren: RootRouteChildren = {
   PrincipalSubjectsRoute: PrincipalSubjectsRoute,
   PrincipalIndexRoute: PrincipalIndexRoute,
   StudentIndexRoute: StudentIndexRoute,
+  PrincipalExamsNewRoute: PrincipalExamsNewRoute,
+  PrincipalQuestionsImportRoute: PrincipalQuestionsImportRoute,
+  PrincipalQuestionsNewRoute: PrincipalQuestionsNewRoute,
   StudentExamExamIdRoute: StudentExamExamIdRouteWithChildren,
   StudentResultsStudentExamIdRoute: StudentResultsStudentExamIdRoute,
   StudentReviewStudentExamIdRoute: StudentReviewStudentExamIdRoute,
@@ -477,13 +483,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
