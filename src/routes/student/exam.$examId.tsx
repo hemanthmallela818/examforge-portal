@@ -27,28 +27,31 @@ function ExamInstructions() {
     queryFn: async () => (await supabase.from("exam_questions").select("id", { count: "exact", head: true }).eq("exam_id", examId)).count ?? 0,
   });
 
-  async function start() {
+  function start() {
     if (!user || !exam) return;
     if (exam.status !== "ONGOING" && exam.status !== "SCHEDULED") {
       return toast.error("This exam is not active.");
     }
-    const { data: existing } = await supabase
-      .from("student_exams").select("id, status").eq("student_id", user.id).eq("exam_id", examId).maybeSingle();
-    let seId = existing?.id;
-    if (!existing) {
-      const { data, error } = await supabase.from("student_exams").insert({
-        student_id: user.id, exam_id: examId, status: "ONGOING", started_at: new Date().toISOString(),
-      }).select("id").single();
-      if (error || !data) return toast.error(error?.message ?? "Could not start exam");
-      seId = data.id;
-    } else if (existing.status === "SUBMITTED" || existing.status === "TERMINATED") {
-      return navigate({ to: "/student/results/$studentExamId", params: { studentExamId: existing.id } });
-    } else if (existing.status === "NOT_STARTED") {
-      await supabase.from("student_exams").update({ status: "ONGOING", started_at: new Date().toISOString() }).eq("id", existing.id);
-    }
-    // request fullscreen then go
-    try { await document.documentElement.requestFullscreen(); } catch {}
-    navigate({ to: "/student/exam/$examId/attempt", params: { examId } });
+    // Request fullscreen synchronously inside the click handler to preserve user gesture
+    const fsPromise = document.documentElement.requestFullscreen?.().catch(() => {});
+
+    (async () => {
+      const { data: existing } = await supabase
+        .from("student_exams").select("id, status").eq("student_id", user.id).eq("exam_id", examId).maybeSingle();
+      if (!existing) {
+        const { data, error } = await supabase.from("student_exams").insert({
+          student_id: user.id, exam_id: examId, status: "ONGOING", started_at: new Date().toISOString(),
+        }).select("id").single();
+        if (error || !data) { toast.error(error?.message ?? "Could not start exam"); return; }
+      } else if (existing.status === "SUBMITTED" || existing.status === "TERMINATED") {
+        navigate({ to: "/student/results/$studentExamId", params: { studentExamId: existing.id } });
+        return;
+      } else if (existing.status === "NOT_STARTED") {
+        await supabase.from("student_exams").update({ status: "ONGOING", started_at: new Date().toISOString() }).eq("id", existing.id);
+      }
+      try { await fsPromise; } catch {}
+      navigate({ to: "/student/exam/$examId/attempt", params: { examId } });
+    })();
   }
 
   if (!exam) return <div className="min-h-screen flex items-center justify-center text-muted-foreground">Loading…</div>;
