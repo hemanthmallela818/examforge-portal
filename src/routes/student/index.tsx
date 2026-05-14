@@ -51,10 +51,13 @@ function StudentDashboard() {
         <div className="mx-auto max-w-6xl px-6 py-4 flex items-center justify-between">
           <Logo className="text-primary-foreground [&_.text-muted-foreground]:text-primary-foreground/60" />
           <div className="flex items-center gap-3">
-            <div className="text-sm">
+            <div className="text-sm text-right">
               <div className="font-medium">{fullName ?? user.email}</div>
               <div className="text-xs opacity-70">Student</div>
             </div>
+            <Button asChild size="sm" variant="secondary">
+              <Link to="/student/results">My Results</Link>
+            </Button>
             <Button size="sm" variant="secondary" onClick={() => { signOut(); navigate({ to: "/login" }); }}>
               <LogOut className="h-4 w-4 mr-1" /> Sign out
             </Button>
