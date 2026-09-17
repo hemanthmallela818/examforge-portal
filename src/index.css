@@ -1,0 +1,477 @@
+:root {
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --success: #22c55e;
+  --success-hover: #16a34a;
+  --warning: #f59e0b;
+  --warning-hover: #d97706;
+  --danger: #ef4444;
+  --danger-hover: #dc2626;
+  --info: #8b5cf6;
+  --info-hover: #7c3aed;
+  
+  --bg-color: #f8fafc;
+  --panel-bg: #ffffff;
+  --text-main: #0f172a;
+  --text-muted: #64748b;
+  --border-color: #e2e8f0;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-main);
+  overflow-x: hidden;
+}
+
+/* Base button styles */
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.7);
+  outline-offset: 2px;
+}
+
+/* Screen reader only and skip links */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.sr-skip-nav {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 10000;
+  display: flex;
+  gap: 8px;
+}
+
+.sr-skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 4px;
+  padding: 8px 14px;
+  background-color: #0f172a;
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 13px;
+  border-radius: 4px;
+  text-decoration: none;
+  z-index: 10001;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+}
+
+.sr-skip-link:focus {
+  left: 12px;
+  outline: 3px solid #2563eb;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Specific Buttons */
+.btn-primary {
+  background-color: var(--primary);
+  color: white;
+}
+.btn-primary:hover:not(:disabled) { background-color: var(--primary-hover); }
+
+.btn-success {
+  background-color: var(--success);
+  color: white;
+}
+.btn-success:hover:not(:disabled) { background-color: var(--success-hover); }
+
+.btn-warning {
+  background-color: var(--warning);
+  color: white;
+}
+.btn-warning:hover:not(:disabled) { background-color: var(--warning-hover); }
+
+.btn-info {
+  background-color: var(--info);
+  color: white;
+}
+.btn-info:hover:not(:disabled) { background-color: var(--info-hover); }
+
+.btn-outline {
+  background-color: white;
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+}
+.btn-outline:hover:not(:disabled) { background-color: var(--bg-color); }
+
+.status-not-visited {
+  background-color: #e2e8f0; /* grey */
+  color: #333;
+  border: 1px dashed #94a3b8;
+}
+.status-not-answered {
+  background-color: #ef4444; /* red */
+  color: white;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border: 1px solid #dc2626;
+}
+.status-answered {
+  background-color: #22c55e; /* green */
+  color: white;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border: 1px solid #16a34a;
+}
+.status-marked {
+  background-color: #8b5cf6; /* purple */
+  color: white;
+  border-radius: 50%;
+  border: 1px dotted #7c3aed;
+}
+.status-answered-marked {
+  background-color: #8b5cf6; /* purple */
+  color: white;
+  border-radius: 50%;
+  position: relative;
+  border: 2px double #4c1d95;
+}
+.status-answered-marked::after {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  width: 8px;
+  height: 8px;
+  background-color: #22c55e;
+  border-radius: 50%;
+  border: 1px solid white;
+}
+
+/* High Contrast / Forced Colors Mode (Windows High Contrast & WCAG) */
+@media (forced-colors: active) {
+  .status-not-visited {
+    border: 2px dashed CanvasText !important;
+    background: Canvas !important;
+    color: CanvasText !important;
+  }
+  .status-not-answered {
+    border: 2px solid CanvasText !important;
+    background: Canvas !important;
+    color: CanvasText !important;
+  }
+  .status-answered {
+    border: 3px solid Highlight !important;
+    background: Canvas !important;
+    color: CanvasText !important;
+  }
+  .status-marked {
+    border: 2px dotted CanvasText !important;
+    background: Canvas !important;
+    color: CanvasText !important;
+  }
+  .status-answered-marked {
+    border: 3px double Highlight !important;
+    background: Canvas !important;
+    color: CanvasText !important;
+  }
+  .exam-question-item-active {
+    outline: 3px solid Highlight !important;
+    outline-offset: 2px !important;
+  }
+  .question-option-card:hover {
+    border-color: Highlight !important;
+  }
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+/* Fullscreen Trap Overlay */
+.terminated-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: #7f1d1d;
+  color: white;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+@media (max-width: 900px) {
+  .admin-dashboard-shell {
+    flex-direction: column !important;
+    height: auto !important;
+    min-height: 100dvh;
+    overflow: visible !important;
+  }
+
+  .admin-dashboard-sidebar {
+    position: sticky;
+    top: 0;
+    width: 100% !important;
+    flex-direction: row !important;
+    flex-wrap: wrap;
+    align-items: center;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.14) !important;
+  }
+
+  .admin-sidebar-brand {
+    padding: 10px 14px !important;
+    border-bottom: 0 !important;
+  }
+
+  .admin-sidebar-nav {
+    order: 3;
+    width: 100%;
+    flex: none !important;
+    flex-direction: row !important;
+    gap: 6px !important;
+    padding: 8px !important;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .admin-sidebar-nav > button,
+  .admin-sidebar-nav > div {
+    flex: 0 0 auto;
+    white-space: nowrap;
+    border-left: 0 !important;
+    margin-left: 0 !important;
+  }
+
+  .admin-sidebar-footer {
+    margin-left: auto;
+    padding: 10px 12px !important;
+    border-top: 0 !important;
+  }
+
+  .admin-sidebar-footer button {
+    width: auto !important;
+  }
+
+  .admin-dashboard-main {
+    overflow: visible !important;
+  }
+
+  .admin-dashboard-topbar {
+    top: 112px !important;
+    padding: 14px 18px !important;
+  }
+
+  .admin-dashboard-content {
+    padding: 20px !important;
+  }
+
+  .active-exam-shell {
+    height: 100dvh !important;
+  }
+
+  .exam-navbar-header {
+    align-items: stretch !important;
+    flex-direction: column !important;
+    gap: 12px;
+    padding: 12px !important;
+  }
+
+  .exam-navbar-indicators {
+    flex-wrap: wrap;
+    gap: 8px !important;
+  }
+
+  .exam-subject-tabs {
+    overflow-x: auto;
+    padding: 0 8px !important;
+  }
+
+  .exam-subject-tabs > button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .active-exam-content {
+    flex-direction: column !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+  }
+
+  .exam-question-panel {
+    flex: 0 0 auto !important;
+    height: auto !important;
+    min-height: 100%;
+    border-right: 0 !important;
+  }
+
+  .exam-question-content {
+    overflow-y: visible !important;
+  }
+
+  .exam-grid-panel {
+    width: 100% !important;
+    height: auto !important;
+    flex: 0 0 auto;
+    overflow-y: visible !important;
+    border-top: 2px solid var(--border-color);
+  }
+
+  .exam-navigation-actions {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+}
+
+@media (max-width: 600px) {
+  .responsive-two-column-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .student-dashboard-page {
+    padding: 16px 10px !important;
+  }
+
+  .student-dashboard-header,
+  .student-exam-card,
+  .student-recovery-banner {
+    align-items: stretch !important;
+    flex-direction: column !important;
+  }
+
+  .student-dashboard-header,
+  .student-exams-panel,
+  .student-exam-card {
+    padding: 16px !important;
+  }
+
+  .student-dashboard-header,
+  .student-exam-card,
+  .student-recovery-banner {
+    gap: 14px !important;
+  }
+
+  .student-account-meta,
+  .student-exam-meta {
+    flex-direction: column !important;
+    gap: 4px !important;
+  }
+
+  .student-dashboard-header > button,
+  .student-exam-card button,
+  .student-recovery-banner button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .admin-sidebar-brand p,
+  .admin-identity > span {
+    display: none;
+  }
+
+  .admin-dashboard-topbar {
+    top: 108px !important;
+    padding: 12px !important;
+  }
+
+  .admin-dashboard-topbar h1 {
+    font-size: 1.1rem !important;
+  }
+
+  .admin-dashboard-content {
+    padding: 12px !important;
+  }
+
+  .exam-navbar-indicators > div {
+    flex: 1 1 145px;
+    justify-content: center;
+  }
+
+  .exam-action-bar {
+    padding: 12px !important;
+  }
+
+  .exam-modal-content {
+    padding: 24px 18px !important;
+  }
+
+  .exam-action-bar button,
+  .exam-navigation-actions > div {
+    flex: 1 1 100%;
+  }
+
+  .exam-navigation-actions > div {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .pre-exam-page,
+  .result-page,
+  .terminated-overlay {
+    align-items: flex-start !important;
+    overflow-y: auto;
+    padding: 12px !important;
+  }
+
+  .pre-exam-card,
+  .result-card,
+  .terminated-card {
+    padding: 24px 16px !important;
+  }
+
+  .result-score {
+    min-width: 0 !important;
+    width: 100%;
+    padding: 20px 12px !important;
+  }
+
+  .result-stats {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+  }
+
+  /* Touch target accessibility for mobile viewports (WCAG 2.5.5 / 2.5.8) */
+  button, 
+  .exam-action-bar button,
+  .exam-nav-tabs button,
+  .exam-question-item,
+  .question-option-card {
+    min-height: 44px !important;
+  }
+}

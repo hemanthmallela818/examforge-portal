@@ -1,0 +1,3 @@
+-- Stage 24 browser fixtures are created through the local service-role API in
+-- e2e/global-setup.mjs after every clean migration reset. Keep this file so the
+-- configured seed phase is explicit and local resets remain warning-free.

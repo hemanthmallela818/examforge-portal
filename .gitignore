@@ -10,15 +10,14 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
-.output
-.vinxi
-.tanstack/**
-.nitro
 *.local
-
-# Wrangler / Cloudflare
-.wrangler/
-.dev.vars
+playwright-report/
+test-results/
+e2e/.state/
+.env
+.env.*
+.env.local
+!.env.example
 
 # Editor directories and files
 .vscode/*
@@ -30,3 +29,5 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+testsprite_tests\tmp\config.json

@@ -1,0 +1,79 @@
+name: Continuous Integration & Quality Gates
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-gates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality-gates:
+    name: Lint, Test, Audit & Build Gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Syntax & Lint Verification
+        run: npm run lint
+
+      - name: Run Test Suite (PGlite Database & Security Tests)
+        run: npm test
+
+      - name: Production Bundle Compilation (Vite)
+        run: npm run build
+
+      - name: Dependency Security Audit
+        run: npm audit --audit-level=high
+
+  critical-browser-e2e:
+    name: Local Supabase Critical Browser E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Install Pinned Browser Runtimes
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Start Pinned Local Supabase Stack
+        run: node scripts/run-supabase.mjs start
+
+      - name: Replay Migrations From a Clean Database
+        run: node scripts/run-supabase.mjs db reset --local
+
+      - name: Run Critical Authenticated Browser Paths
+        run: npm run test:e2e:critical
+
+      - name: Stop Local Supabase Stack
+        if: always()
+        run: node scripts/run-supabase.mjs stop --no-backup

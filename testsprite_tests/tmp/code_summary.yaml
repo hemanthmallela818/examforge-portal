@@ -1,0 +1,62 @@
+version: "2"
+type: frontend
+tech_stack:
+  - javascript
+  - react
+  - vite
+  - firebase
+  - webrtc
+routes:
+  - path: /
+    file: src/App.jsx
+    auth_required: false
+    description: Main entry component managing application state
+features:
+  - name: Authentication
+    description: Student and Admin login
+    files:
+      - src/App.jsx
+      - src/components/AuthPortal.jsx
+    entry_route: /
+    user_interactions:
+      - Fill email and password for student/admin
+      - Click login button
+    api_calls: []
+    auth_required: false
+  - name: Student Dashboard
+    description: Student dashboard to view available exams
+    files:
+      - src/App.jsx
+      - src/components/StudentDashboard.jsx
+    entry_route: /
+    user_interactions:
+      - View list of exams
+      - Click start exam
+    api_calls: []
+    auth_required: true
+  - name: Admin Dashboard
+    description: Admin dashboard
+    files:
+      - src/App.jsx
+      - src/components/AdminDashboard.jsx
+    entry_route: /
+    user_interactions:
+      - View stats
+    api_calls: []
+    auth_required: true
+  - name: Exam Interface
+    description: Taking the exam with webcam monitoring
+    files:
+      - src/App.jsx
+      - src/components/LiveWebcam.jsx
+      - src/components/QuestionPanel.jsx
+      - src/components/GridPanel.jsx
+    entry_route: /
+    user_interactions:
+      - Allow camera and screen share
+      - Answer multiple choice questions
+      - Click next/previous/mark for review
+      - Click submit exam
+    api_calls: []
+    auth_required: true
+known_limitations: []
