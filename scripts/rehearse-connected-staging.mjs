@@ -17,6 +17,13 @@ const requireSuccess = result => {
   if (result.error) throw new Error('Operation failed.');
   return result.data;
 };
+const redactChildError = value => String(value || '')
+  .replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]')
+  .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED_JWT]')
+  .replace(/\bsb_(?:secret|publishable)_[A-Za-z0-9_-]+\b/g, '[REDACTED_KEY]')
+  .replace(/(["']?(?:apikey|authorization|token|password)["']?\s*[:=]\s*["'])[^"']+/gi, '$1[REDACTED]')
+  .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[REDACTED_EMAIL]')
+  .slice(-2_000);
 try {
   const email = `release-harness-${Date.now()}@rehearsal.local`;
   const password = `${randomBytes(32).toString('base64url')}!aA1`;
@@ -53,17 +60,22 @@ try {
       }
     });
     let output = '';
+    let errorOutput = '';
     child.stdout.on('data', data => { output = (output + data).slice(-32_000); });
-    // Do not relay SDK error objects, which may contain authentication headers.
-    child.stderr.resume();
+    child.stderr.on('data', data => { errorOutput = (errorOutput + data).slice(-32_000); });
     child.on('error', rejectRun);
-    child.on('close', code => resolveRun({ code, output }));
+    child.on('close', code => resolveRun({ code, output, errorOutput }));
   });
-  if (outcome.code !== 0) throw new Error('Candidate rehearsal failed. Inspect staging metrics, not credential-bearing logs.');
+  if (outcome.code !== 0) {
+    const safeDetails = redactChildError(outcome.errorOutput).trim();
+    throw new Error(`Candidate rehearsal failed.${safeDetails ? ` ${safeDetails}` : ''}`);
+  }
   const report = JSON.parse(outcome.output.trim().split(/\r?\n/).at(-1));
   console.log(JSON.stringify(report));
-} catch {
+} catch (error) {
   console.error(`Staging rehearsal failed during ${phase}. Credentials were not logged.`);
+  const safeDetails = redactChildError(error?.message).trim();
+  if (safeDetails) console.error(safeDetails);
   failed = true;
 } finally {
   // Revoke refresh sessions before deleting the temporary privileged identity.

@@ -23,7 +23,25 @@ The stale staging Edge Function was replaced with the repository's hardened `man
 
 The local app now uses staging via ignored `.env.local`, with a publishable frontend key only. Staging CORS permits the exact localhost/127.0.0.1 development and preview origins on ports 5173 and 4173.
 
-Repository verification on 21 September: 242 tests passed; changed operational scripts passed ESLint; the production bundle built successfully.
+Repository verification on 21 September: 244 tests passed; changed operational scripts passed ESLint; the production bundle built successfully.
+
+## Corrected live 100-candidate rehearsal: PASS
+
+The bounded load rehearsal completed against `jee-staging` in 315.524 seconds with 100 questions and 100 candidates. All 100 accounts were created and authenticated, claimed signed sessions, subscribed to Realtime, started exams, autosaved, submitted, and repeated submission idempotently. Exactly 100 results were stored with zero lost, duplicated, or cross-account answers; zero active sessions remained. Answer keys remained hidden, cross-account sessions/results were inaccessible, and forged result writes, forged exam creation, and student-side provisioning were blocked. The administrator provisioning path produced a persistent, correctly assigned student/profile record.
+
+Measured application-operation latency in milliseconds:
+
+- Start: p50 88.3, p95 176.7, p99 193.4, max 345.1.
+- Autosave: p50 73.6, p95 140.2, p99 159.4, max 192.9.
+- Submit: p50 192.1, p95 427.0, p99 437.8, max 451.8.
+- Idempotent retry: p50 62.1, p95 377.5, p99 389.2, max 452.0.
+- Realtime subscription: p50 207.7, p95 1645.6, p99 3645.9, max 3647.1.
+
+The temporary MFA administrator and all 101 timestamped candidate/provisioning identities, 100 immutable results, exam, answer row, class, audit references, and sessions were removed afterward. A post-cleanup query verified zero matching rows in every affected table and Auth. Production was not touched.
+
+## Hosted GitHub CI: PASS
+
+GitHub Actions run 3 for commit `595527f6a5e6e6808c85d6d89e02ef2cdf9bbdd1` completed successfully. The quality job passed install, ESLint, typecheck, all 244 tests with coverage gates, production bundle compilation, and dependency audit. The browser job started a clean local Supabase stack, replayed every migration, and passed the critical authenticated paths in Chromium, Firefox, and WebKit before cleaning up the stack. Pull request: <https://github.com/hemanthmallela818/examforge-portal/pull/1>.
 
 ## Private Storage recovery: PASS
 
@@ -53,6 +71,6 @@ All three commands are restricted to the exact staging project above. The rehear
 
 ## Remaining release evidence
 
-The corrected 100-candidate run is the next validation-window gate; the earlier 100-candidate attempt exposed a harness scoring assumption and was cleaned up. Current-working-tree hosted CI, real-network browser resilience, peak/soak capacity, hosted disaster-recovery/PITR validation, and assisted screen-reader acceptance remain outstanding. The operator drill itself now passes. Leaked-password protection remains disabled in staging. Sentry remains deferred at the user's request. No production deployment or production approval is claimed.
+The corrected 100-candidate run and exact-commit hosted CI now pass. Real-network browser resilience, peak/soak capacity beyond the agreed 100-member target, hosted disaster-recovery/PITR validation, and assisted screen-reader acceptance remain deployment/acceptance work. The operator drill itself passes. Leaked-password protection remains disabled in staging. Sentry remains deferred at the user's request. No production deployment or production approval is claimed.
 
 A malformed bare secret-key line was removed from the ignored `.env` file while preserving its valid assignments. The CLI printed that line in a configuration error before it was corrected. That exposed key must be revoked/rotated before real use; no key is included in this report.

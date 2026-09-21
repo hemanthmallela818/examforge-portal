@@ -9,13 +9,13 @@ This checklist separates repository work from deployment work. Production remain
 - [x] Lint, typecheck, production build, and dependency audit (last successful audit: 0 vulnerabilities).
 - [x] Local browser coverage across Chromium, Firefox, and WebKit paths.
 - [x] 80-candidate staging rehearsal, private Storage recovery, and logical database restore.
+- [x] Corrected 100-candidate staging rehearsal with timing report and bounded fixture cleanup.
 - [x] Staging operator drill: AAL1/AAL2, emergency ending, MFA recovery, health, audit, cleanup.
 - [x] Current staging Edge Function uses the hardened provisioning implementation.
+- [x] Hosted GitHub CI for handover commit: quality/coverage/build/audit and clean local-Supabase browser E2E all passed.
 
 ## Remaining pre-handover gates
 
-- [ ] Run the corrected 100-candidate staging rehearsal and attach its JSON timing report.
-- [ ] Run hosted GitHub CI for the exact handover commit and retain the workflow URL/artifacts.
 - [ ] Rotate the secret key exposed by the malformed ignored environment-file line.
 - [ ] Enable leaked-password protection in staging and production.
 - [ ] Verify production migration parity and deploy the current Edge Function during deployment.

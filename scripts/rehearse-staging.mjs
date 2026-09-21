@@ -360,7 +360,7 @@ try {
   const { count: resultCount, error: resultCountError } = await admin
     .from('student_results').select('*', { count: 'exact', head: true }).eq('exam_id', examId);
   if (resultCountError) throw resultCountError;
-  if (resultCount !== students.length) throw new Error(`Expected 80 saved results, found ${resultCount}.`);
+  if (resultCount !== students.length) throw new Error(`Expected ${students.length} saved results, found ${resultCount}.`);
 
   const { data: storedResults, error: storedResultsError } = await admin
     .from('student_results')
