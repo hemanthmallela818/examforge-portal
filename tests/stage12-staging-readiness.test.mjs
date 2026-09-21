@@ -9,8 +9,8 @@ test('Stage 12: Staging rehearsal script enforces concurrency, backoff, and isol
 
   const content = readFileSync(rehearsalPath, 'utf8');
 
-  // 1. Concurrency: Minimum 80 students tested
-  assert.match(content, /Array\.from\(\{\s*length:\s*80\s*\},/, 'Rehearsal script must configure at least 80 concurrent students');
+  // 1. Concurrency: the bounded candidate count defaults to at least 80.
+  assert.match(content, /candidateCount\s*=\s*Number\.parseInt\(process\.env\.REHEARSAL_CANDIDATE_COUNT\s*\|\|\s*'80'/, 'Rehearsal script must default to at least 80 candidates');
 
   // 2. Retry and backoff: Handles 429 rate-limiting from shared IP
   assert.match(content, /withRetries\s*=/, 'Rehearsal script must define retry wrapper');
