@@ -1,4 +1,3 @@
-import React from 'react';
 
 const Result = ({ results, onBackToDashboard }) => {
   if (!results) return null;

@@ -10,7 +10,7 @@ export const validateRuntimeConfiguration = (supabaseUrl, anonKey) => {
   }
 
   if (parsedUrl) {
-    const localHost = ['localhost', '127.0.0.1', '::1'].includes(parsedUrl.hostname);
+    const localHost = ['localhost', '127.0.0.1', '::1', 'host.docker.internal'].includes(parsedUrl.hostname);
     if (parsedUrl.protocol !== 'https:' && !(localHost && parsedUrl.protocol === 'http:')) {
       errors.push('The Supabase URL must use HTTPS outside local development.');
     }

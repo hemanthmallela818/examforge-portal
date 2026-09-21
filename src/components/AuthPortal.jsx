@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { supabase } from '../supabase';
 import AdminMfaModal from './AdminMfaModal';
 import { safeStorageSet } from '../browserStorage';

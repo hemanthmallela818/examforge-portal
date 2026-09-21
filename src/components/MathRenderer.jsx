@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import katex from 'katex';
 import 'katex/dist/katex.min.css';
 
@@ -17,6 +17,8 @@ function renderKaTeX(str, isDisplay = false) {
     return katex.renderToString(str.trim(), {
       displayMode: isDisplay,
       throwOnError: false,
+      trust: false,
+      strict: 'warn',
       output: 'htmlAndMathml'
     });
   } catch (err) {

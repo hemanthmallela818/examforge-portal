@@ -8,6 +8,8 @@ test('runtime configuration rejects missing, placeholder and insecure production
   assert.equal(validateRuntimeConfiguration('https://YOUR_PROJECT.supabase.co', 'YOUR_PUBLIC_ANON_KEY').valid, false);
   assert.equal(validateRuntimeConfiguration('http://project.supabase.co', 'a'.repeat(30)).valid, false);
   assert.equal(validateRuntimeConfiguration('http://localhost:54321', 'a'.repeat(30)).valid, true);
+  assert.equal(validateRuntimeConfiguration('http://host.docker.internal:54321', 'a'.repeat(30)).valid, true);
+  assert.equal(validateRuntimeConfiguration('http://host.docker.internal.evil.test:54321', 'a'.repeat(30)).valid, false);
   assert.equal(validateRuntimeConfiguration('https://project.supabase.co', 'a'.repeat(30)).valid, true);
 });
 

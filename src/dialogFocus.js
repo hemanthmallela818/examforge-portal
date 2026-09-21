@@ -49,7 +49,7 @@ export const useDialogFocusTrap = ({
     return () => {
       cancelAnimationFrame(frame);
       document.removeEventListener('keydown', handleDocumentEscape, true);
-      const returnTarget = returnFocusRef?.current || capturedReturnFocusRef.current;
+      const returnTarget = capturedReturnFocusRef.current;
       if (typeof HTMLElement !== 'undefined'
           && returnTarget instanceof HTMLElement
           && returnTarget.isConnected) returnTarget.focus();

@@ -1,4 +1,3 @@
-import React from 'react';
 import { useDialogFocusTrap } from '../dialogFocus';
 
 const AccessibleModal = ({ labelledBy, onEscape, returnFocusRef, maxWidth = '500px', children }) => {

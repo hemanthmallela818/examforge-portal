@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import MathRenderer from './MathRenderer';
 import StorageImage from './StorageImage';
 

@@ -124,6 +124,8 @@ test('login and dialogs expose basic accessibility and duplicate-submit protecti
   assert.match(auth, /aria-describedby=\{error \? 'login-error'/);
   assert.match(dialogs, /aria-modal="true"/);
   assert.match(dialogs, /aria-live="polite"/);
+  assert.match(dialogs, /\[dialog\?\.id\]/);
+  assert.doesNotMatch(dialogs, /select\(\);\s*\}\s*,\s*\[dialog\]\);/);
 });
 
 test('a clean installation has a server-only administrator bootstrap path', async () => {

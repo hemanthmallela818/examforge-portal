@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useDialogFocusTrap } from '../dialogFocus';
 
 const CustomPopupContainer = () => {
@@ -49,7 +49,10 @@ const CustomPopupContainer = () => {
       promptInputRef.current.focus();
       promptInputRef.current.select();
     }
-  }, [dialog]);
+  // Re-focus only when a new dialog opens; depending on the full dialog would
+  // select the prompt text again after every keystroke.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialog?.id]);
 
   const removeToast = (id) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));

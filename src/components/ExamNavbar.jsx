@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { announceAssertive, announcePolite } from './LiveAnnouncer';
 import { checkTimerMilestones } from '../accessibilityLogic';
 
@@ -8,9 +8,7 @@ const ExamNavbar = ({
   setActiveSubject,
   studentName,
   examTitle,
-  duration = 180,
   paused = false,
-  onTimeOut,
   timeLeft,
   autosaveStatus = 'SAVED'
 }) => {

@@ -15,7 +15,7 @@ test('CI workflow file exists and configures full quality gates', () => {
 
   // Verify mandatory gates
   assert.match(ciContent, /npm run lint/, 'CI must run npm run lint');
-  assert.match(ciContent, /npm test/, 'CI must run npm test');
+  assert.match(ciContent, /npm run test:coverage/, 'CI must run the coverage-gated test suite');
   assert.match(ciContent, /npm run build/, 'CI must run npm run build');
   assert.match(ciContent, /npm audit/, 'CI must run npm audit');
   assert.match(ciContent, /permissions:\s*[\s\S]*?contents:\s*read/i, 'CI token permissions must be read-only');

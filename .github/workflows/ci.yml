@@ -35,8 +35,11 @@ jobs:
       - name: Syntax & Lint Verification
         run: npm run lint
 
-      - name: Run Test Suite (PGlite Database & Security Tests)
-        run: npm test
+      - name: JavaScript & JSX Project Verification
+        run: npm run typecheck
+
+      - name: Run Test Suite With Coverage Gates
+        run: npm run test:coverage
 
       - name: Production Bundle Compilation (Vite)
         run: npm run build
@@ -73,6 +76,17 @@ jobs:
 
       - name: Run Critical Authenticated Browser Paths
         run: npm run test:e2e:critical
+
+      - name: Upload Browser Failure Evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failure-evidence
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Stop Local Supabase Stack
         if: always()

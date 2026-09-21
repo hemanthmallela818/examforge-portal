@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import { useState, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { customAlert, customConfirm } from '../utils';
 import MathRenderer from './MathRenderer';

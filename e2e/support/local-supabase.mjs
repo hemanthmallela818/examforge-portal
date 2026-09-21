@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost']);
+const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', 'host.docker.internal']);
 const CLI_WRAPPER = fileURLToPath(new URL('../../scripts/run-supabase.mjs', import.meta.url));
 
 const parseStatusOutput = raw => {
@@ -30,7 +30,7 @@ export const readLocalSupabase = () => {
       { cwd: process.cwd(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
     );
   } catch (error) {
-    throw new Error(`The local Supabase stack is unavailable: ${error.stderr || error.message}`);
+    throw new Error(`The local Supabase stack is unavailable: ${error.stderr || error.message}`, { cause: error });
   }
   const status = parseStatusOutput(output);
   const url = new URL(status.API_URL);

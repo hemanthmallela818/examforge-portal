@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { supabase } from '../supabase';
 import { useDialogFocusTrap } from '../dialogFocus';
 
@@ -62,7 +62,7 @@ const AdminMfaModal = ({
       // Create and verify one fresh challenge for this exact submission. This
       // avoids the enrollment race and stale-challenge window caused by
       // creating a challenge as soon as the dialog mounted.
-      const { data, error: verifyError } = await supabase.auth.mfa.challengeAndVerify({
+      const { error: verifyError } = await supabase.auth.mfa.challengeAndVerify({
         factorId: activeFactorId,
         code: cleanCode,
       });

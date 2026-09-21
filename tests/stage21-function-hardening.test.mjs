@@ -56,7 +56,7 @@ test('Stage 21 identity and session functions use empty search paths and qualifi
   assert.match(sql, /FROM pg_catalog\.pg_class AS c/);
   assert.match(sql, /pg_catalog\.octet_length\(exam_id_param\)[\s\S]*128/);
   assert.match(sql, /s\.archived_at IS NULL/);
-  assert.match(sql, /OPERATOR\(pg_catalog\.\=\)/);
+  assert.match(sql, /OPERATOR\(pg_catalog\.=\)/);
 });
 
 test('Stage 21 indexes the unfiltered active-roster paging order', async () => {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { supabase } from './supabase';
 import AuthPortal from './components/AuthPortal';
 import CustomPopupContainer from './components/CustomPopupContainer';
@@ -133,6 +133,7 @@ function App() {
   const sessionVersionRef = useRef(initialActiveSession.current?.version || 1);
   const isSavingRef = useRef(false);
   const pendingSaveRef = useRef(null);
+  const autosaveGenerationRef = useRef(0);
   const safeLogoutRef = useRef(null);
   const studentSessionLockedRef = useRef(false);
   const [studentSessionLocked, setStudentSessionLocked] = useState(false);
@@ -454,6 +455,7 @@ function App() {
   useEffect(() => {
     if (examState !== 'ACTIVE' || !currentStudent || !activeExam || !userResponses || !examData) return;
     if (studentSessionLockedRef.current) return;
+    const saveGeneration = ++autosaveGenerationRef.current;
 
     // Immediate zero-data-loss local persistence
     const localSave = saveOfflineRecoveryRecord({
@@ -480,16 +482,19 @@ function App() {
       return;
     }
 
+    // A changed response is not server-confirmed until the debounced RPC succeeds.
+    // Mark it pending immediately so the UI never presents stale "saved" state.
+    setAutosaveStatus('SAVING');
+
     const timer = setTimeout(async () => {
       if (isSavingRef.current) {
-        pendingSaveRef.current = userResponses;
+        pendingSaveRef.current = { payload: userResponses, generation: saveGeneration };
         return;
       }
 
-      const executeSave = async (payload) => {
+      const executeSave = async (payload, generation) => {
         if (studentSessionLockedRef.current) return;
         isSavingRef.current = true;
-        setAutosaveStatus('SAVING');
         try {
           for (let retry = 0; retry <= 3; retry += 1) {
             if (studentSessionLockedRef.current) return;
@@ -498,7 +503,7 @@ function App() {
               return;
             }
             if (retry > 0) {
-              setAutosaveStatus('RETRYING');
+              if (generation === autosaveGenerationRef.current) setAutosaveStatus('RETRYING');
               const delay = Math.min(1000 * Math.pow(2, retry - 1) + Math.random() * 200, 5000);
               await new Promise(resolve => setTimeout(resolve, delay));
             }
@@ -513,14 +518,31 @@ function App() {
 
               if (syncData?.success) {
                 sessionVersionRef.current = syncData.version;
-                setAutosaveStatus('SAVED');
+                if (generation === autosaveGenerationRef.current) {
+                  const confirmedLocalSave = saveOfflineRecoveryRecord({
+                    student: currentStudent,
+                    examId: activeExam.id,
+                    examTitle: activeExam.title,
+                    userUuid: currentStudent.docId,
+                    examData,
+                    userResponses: payload,
+                    activeSubject,
+                    currentIndices,
+                    version: syncData.version,
+                    endTime: sessionEndTimeRef.current
+                  });
+                  setLocalRecoveryAvailable(confirmedLocalSave.success);
+                  setAutosaveStatus('SAVED');
+                }
                 return;
               }
               if (syncData?.conflict) {
                 sessionVersionRef.current = syncData.version;
-                if (syncData.user_responses) setUserResponses(syncData.user_responses);
-                setAutosaveStatus('CONFLICT');
-                setRecoveryNotice('A newer server-confirmed answer set was found, so this stale tab was not allowed to overwrite it. Review your answers before continuing.');
+                if (generation === autosaveGenerationRef.current) {
+                  if (syncData.user_responses) setUserResponses(syncData.user_responses);
+                  setAutosaveStatus('CONFLICT');
+                  setRecoveryNotice('A newer server-confirmed answer set was found, so this stale tab was not allowed to overwrite it. Review your answers before continuing.');
+                }
                 return;
               }
               throw new Error('The exam server returned an invalid autosave response.');
@@ -541,8 +563,10 @@ function App() {
             return;
           }
           const isNetworkIssue = !navigator.onLine || /network|fetch|timeout|connection/i.test(err?.message || '');
-          setAutosaveStatus(isNetworkIssue && localSave.success ? 'OFFLINE' : 'FAILED');
-          if (!localSave.success) {
+          if (generation === autosaveGenerationRef.current) {
+            setAutosaveStatus(isNetworkIssue && localSave.success ? 'OFFLINE' : 'FAILED');
+          }
+          if (!localSave.success && generation === autosaveGenerationRef.current) {
             setRecoveryNotice('This browser could not store a recovery copy. Keep this page open and restore the connection immediately.');
           }
         } finally {
@@ -550,16 +574,18 @@ function App() {
           if (pendingSaveRef.current) {
             const nextBatch = pendingSaveRef.current;
             pendingSaveRef.current = null;
-            if (!sessionEndTimeRef.current || Date.now() < sessionEndTimeRef.current) executeSave(nextBatch);
+            if (!sessionEndTimeRef.current || Date.now() < sessionEndTimeRef.current) {
+              executeSave(nextBatch.payload, nextBatch.generation);
+            }
           }
         }
       };
 
-      executeSave(userResponses);
+      executeSave(userResponses, saveGeneration);
     }, 1000);
 
     return () => clearTimeout(timer);
-  }, [userResponses, examState, currentStudent, activeExam, examData, activeSubject, currentIndices, offlineSince]);
+  }, [userResponses, examState, currentStudent, activeExam, examData, activeSubject, currentIndices, offlineSince, handleSafeLogout]);
 
   const terminateExam = useCallback(async () => {
     if (studentSessionLockedRef.current) return;
@@ -594,7 +620,7 @@ function App() {
         }
       }
     }
-  }, [currentStudent, activeExam, examData, handleSafeLogout]);
+  }, [currentStudent, activeExam, handleSafeLogout]);
 
   const terminateExamRef = useRef();
   useEffect(() => {
@@ -1032,6 +1058,7 @@ function App() {
 
   const updateResponse = (index, selectedOption, status) => {
     if (studentSessionLockedRef.current) return;
+    setAutosaveStatus(navigator.onLine && !offlineSince ? 'SAVING' : 'OFFLINE');
     setUserResponses(prev => {
       if (!prev[activeSubject]) return prev;
       const newResponses = { ...prev };
@@ -1043,6 +1070,7 @@ function App() {
 
   const selectResponse = (index, selectedOption) => {
     if (studentSessionLockedRef.current) return;
+    setAutosaveStatus(navigator.onLine && !offlineSince ? 'SAVING' : 'OFFLINE');
     setUserResponses(prev => {
       if (!prev[activeSubject] || !prev[activeSubject][index]) return prev;
       const currentResponse = prev[activeSubject][index];

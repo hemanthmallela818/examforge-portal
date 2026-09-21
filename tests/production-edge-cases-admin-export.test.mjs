@@ -7,10 +7,7 @@ import {
   MAX_PDF_RESULT_ROWS
 } from '../src/resultExportLogic.js';
 import {
-  validateImportQuestions,
-  canonicalQuestionText,
-  MAX_IMPORT_FILE_BYTES,
-  MAX_IMPORT_QUESTIONS
+  validateImportQuestions
 } from '../src/importLogic.js';
 
 test('CSV export: immunizes against spreadsheet formula injection (CSV Injection)', () => {

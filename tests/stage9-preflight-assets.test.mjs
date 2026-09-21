@@ -7,8 +7,7 @@ import {
   verifyImageMagicBytes,
   validateImageDimensions,
   MAX_IMAGE_FILE_BYTES,
-  MAX_IMAGE_DIMENSION,
-  MAX_IMAGE_MEGAPIXELS
+  MAX_IMAGE_DIMENSION
 } from '../src/imageValidation.js';
 import {
   checkLatexDelimiters,

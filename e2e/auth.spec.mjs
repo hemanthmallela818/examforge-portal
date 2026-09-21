@@ -15,13 +15,13 @@ test('student signs in with an assigned account and signs out', async ({ page },
   await expect(page.getByRole('heading', { name: 'Exam Portal' })).toBeVisible();
 });
 
-test('public email sign-up remains disabled while email/password login is enabled', async ({}, testInfo) => {
-  const fixture = fixturesFor(testInfo.project.name);
+test('public email sign-up remains disabled while email/password login is enabled', async ({ browserName }) => {
+  const fixture = fixturesFor(browserName);
   const client = createClient(fixture.local.url, fixture.local.anonKey, {
     auth: { persistSession: false, autoRefreshToken: false }
   });
   const { data, error } = await client.auth.signUp({
-    email: `forbidden-${testInfo.project.name}@e2e.local`,
+    email: `forbidden-${browserName}@e2e.local`,
     password: 'Forbidden!2026'
   });
   expect(data.user).toBeNull();

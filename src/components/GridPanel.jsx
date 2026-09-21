@@ -1,4 +1,3 @@
-import React from 'react';
 import { getStatusGlyph, getStatusLabel } from '../accessibilityLogic';
 
 export { getStatusGlyph, getStatusLabel };

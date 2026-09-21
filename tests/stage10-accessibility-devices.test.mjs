@@ -220,7 +220,7 @@ test('long-running question imports use a trapped semantic dialog and progressba
 });
 
 test('supported environments matrix satisfies Stage 10 browser & OS specification', () => {
-  const { desktop, mobile, operatingSystems } = SUPPORTED_ENVIRONMENTS;
+  const { desktop, operatingSystems } = SUPPORTED_ENVIRONMENTS;
 
   // Verify Chrome, Edge, Firefox, Safari versions
   const chrome = desktop.find(d => d.browser.includes('Chrome'));

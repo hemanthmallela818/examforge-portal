@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 
 const harness = readFileSync(resolve('scripts/rehearse-staging.mjs'), 'utf8');
 const localRunner = readFileSync(resolve('scripts/rehearse-local.mjs'), 'utf8');
+const localSupabaseFixture = readFileSync(resolve('e2e/support/local-supabase.mjs'), 'utf8');
 const pkg = JSON.parse(readFileSync(resolve('package.json'), 'utf8'));
 const healthCheck = readFileSync(resolve('scripts/operational-health-check.mjs'), 'utf8');
 const advisorCleanup = readFileSync(resolve('supabase/migrations/20260913110000_stage25_database_advisor_cleanup.sql'), 'utf8');
@@ -23,9 +24,17 @@ test('Stage 25 local runner is restricted to the local Supabase stack and create
   assert.equal(pkg.scripts['test:rehearsal:local'], 'node scripts/rehearse-local.mjs');
 });
 
+test('Stage 25 browser fixtures allow only host-local Supabase endpoints', () => {
+  assert.match(localSupabaseFixture, /127\.0\.0\.1/);
+  assert.match(localSupabaseFixture, /localhost/);
+  assert.match(localSupabaseFixture, /host\.docker\.internal/);
+  assert.match(localSupabaseFixture, /Refusing to run E2E fixtures against a non-local Supabase host/);
+});
+
 test('Stage 25 harness verifies unique candidate grading, retry idempotence, isolation, and exact cardinality', () => {
-  assert.match(harness, /Array\.from\(\{ length: 80 \}/);
-  assert.match(harness, /const questionCount = 80/);
+  assert.match(harness, /REHEARSAL_CANDIDATE_COUNT/);
+  assert.match(harness, /candidateCount > 1000/);
+  assert.match(harness, /const questionCount = Math\.max\(80, candidateCount\)/);
   assert.match(harness, /responsesForCandidate/);
   assert.match(harness, /complete_account_provisioning/);
   assert.match(harness, /idempotentSubmissionRetries/);

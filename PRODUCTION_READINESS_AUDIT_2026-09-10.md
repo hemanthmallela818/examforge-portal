@@ -1,25 +1,25 @@
 # Production Readiness Security Audit
 
 Original audit date: 10 September 2026  
-Closure update: 17 September 2026  
-Scope: security, authorization, data integrity, account isolation, exam continuity, operational safeguards, and evidence through Stages 1 through 26.
+Closure update: 19 September 2026
+Scope: security, authorization, data integrity, account isolation, exam continuity, operational safeguards, and evidence through Stages 1 through 27.
 
 ## Executive verdict
 
 **NO UNRESOLVED CRITICAL OR HIGH LOCAL SECURITY DEFECT IS CURRENTLY KNOWN. THE PORTAL IS READY FOR CONTROLLED STAGING, NOT LIVE PRODUCTION.**
 
-Stages 1 through 11 established the core server-owned examination architecture, AAL2 administrator security, lifecycle controls, offline recovery, immutable grading, asset validation, accessibility foundations, and operational tooling. Stages 12 through 26 closed paging, export, disclosure, Data API, privileged-function, device-takeover, import, browser, accessibility, release-rehearsal, historical-constraint, and restore-proof gaps.
+Stages 1 through 11 established the core server-owned examination architecture, AAL2 administrator security, lifecycle controls, offline recovery, immutable grading, asset validation, accessibility foundations, and operational tooling. Stages 12 through 27 closed paging, export, disclosure, Data API, privileged-function, device-takeover, import, browser, accessibility, release-rehearsal, historical-constraint, restore-proof, RLS-planner, and autosave-concurrency gaps.
 
 The final local evidence is:
 
-- 61 forward-only migrations rebuild cleanly from an empty local database.
+- 62 forward-only migrations rebuild cleanly from an empty local database.
 - The database advisor reports zero schema warnings.
-- 237 of 237 automated checks pass across 38 test files.
+- 239 of 239 automated checks pass with enforced coverage thresholds.
 - 39 of 39 browser scenarios pass across Chromium, Firefox, and WebKit.
 - The 80-candidate local rehearsal reports zero lost/cross-account answers, duplicate results, unauthorized operations, or unhandled server errors.
 - Populated logical-database and private-Storage restore proofs pass with matching content hashes.
 - Lint, production build, operational health, and dependency audit pass.
-- No remote project, deployment, secret, or production data was changed.
+- No deployment, secret, or production data was changed. Stage 27 was applied only to the disposable `jee-staging` project.
 
 ## Trust-boundary conclusion
 
@@ -93,6 +93,7 @@ Status: **locally resolved**
 - Offline recovery records are schema-versioned and isolated by student and exam.
 - Corrupt, foreign, blocked, and quota-failed browser storage paths fail safely.
 - A response lost after a committed submission is reconciled to the one stored result.
+- Autosave completion is generation-aware: a stale in-flight request cannot claim newer work is saved or replace a newer local answer set. The recovery mirror records the confirmed server version before success is displayed.
 
 ### Automatic device takeover
 
@@ -143,7 +144,7 @@ Chromium, Firefox, and WebKit each pass the complete 13-scenario local matrix (3
 - REST 401/403 recovery, Realtime outage, storage quota denial, and response-after-commit loss.
 - Focus trapping/return, live announcements, reduced motion, forced-colors behavior, and responsive active-exam behavior.
 
-Native Firefox still cannot launch on this Windows host (`spawn UNKNOWN` before application code). The complete Firefox matrix therefore ran successfully in Microsoft's pinned Playwright 1.63.0 Linux image using local-only Docker host networking. Hosted Linux CI remains unexecuted because this workspace has no Git repository/remote and this work includes no push.
+Native Firefox still cannot launch on this Windows host (`spawn UNKNOWN` before application code). The complete Firefox matrix therefore ran successfully in Microsoft's pinned Playwright 1.63.0 Linux image using local-only Docker host networking. The repository has a GitHub remote and an earlier hosted run passed; hosted CI for the current unpushed working tree remains pending.
 
 ## Operational safeguards
 
@@ -160,12 +161,13 @@ Native Firefox still cannot launch on this Windows host (`spawn UNKNOWN` before 
 
 ### Staging-only release blockers
 
-1. Complete the isolated staging 80-candidate run using real network boundaries and staging secrets.
+1. Complete the isolated `jee-staging` 80-candidate run using real network boundaries and staging secrets, then reset that disposable project.
 2. Obtain a passing hosted Linux CI result for Chromium, Firefox, and WebKit; the same matrix already passes locally across Windows plus the pinned Linux Firefox container.
 3. Run peak, soak, reconnect-storm, and simultaneous-submit load at the institution's expected concurrency.
 4. Repeat the passing local database/private-Storage restore proofs in isolated staging and record RPO/RTO and restoration ownership.
 5. Rehearse lost MFA factor, service outage, partial campus connectivity, emergency termination, rollback, and candidate communication.
 6. Perform supported-device and assisted screen-reader acceptance with representative users.
+7. Enable Supabase Auth leaked-password protection before launch.
 
 ### Deployment and hosting blockers
 

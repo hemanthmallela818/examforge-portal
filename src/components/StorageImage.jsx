@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../supabase';
 
 const isDirectImage = (value) => /^data:image\/|^https?:\/\//i.test(value || '');

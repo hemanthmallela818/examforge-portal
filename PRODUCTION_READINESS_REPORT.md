@@ -1,22 +1,24 @@
 # Production Readiness Report
 
-Audit date: 17 September 2026  
+Audit date: 21 September 2026
 Scope: local repository, React browser application, Supabase schema and migrations, administrator and student workflows, security boundaries, recovery behavior, build output, dependencies, and release tooling.  
-Deployment status: no deployment, push, remote migration, secret change, or production-data operation was performed.
+Deployment status: no production deployment or push was performed. Staging has the Stage 27 migration and, as of 21 September, the current hardened student-provisioning Edge Function with local-only allowed browser origins. The production Supabase project was not modified.
+
+Latest staging evidence: see [21 September verification](docs/STAGING_VERIFICATION_2026-09-21.md). The strengthened 80-candidate live rehearsal and private-file recovery passed. The repository now passes 242 tests; the older coverage/browser figures below retain their original 19 September scope.
 
 ## Verdict
 
-**LOCAL RELEASE CLOSURE PASSES. THE APPLICATION IS READY FOR AN ISOLATED STAGING REHEARSAL, BUT IT IS NOT YET APPROVED FOR LIVE PRODUCTION.**
+**LOCAL CHECKS AND THE 80-CANDIDATE STAGING REHEARSAL PASS. THE APPLICATION IS NOT YET APPROVED FOR LIVE PRODUCTION.**
 
-Stages 1 through 26 are implemented locally. The repository has no unresolved critical or high defect currently known in authorization, answer disclosure, grading integrity, account isolation, duplicate submission handling, or exam recovery.
+Stages 1 through 27 are implemented locally. The repository has no unresolved critical or high defect currently known in authorization, answer disclosure, grading integrity, account isolation, duplicate submission handling, or exam recovery.
 
-Production approval remains intentionally blocked on environment-dependent evidence: an isolated staging run, an actual remote CI run, real peak/soak tests, a timed staging backup/restore drill, hosting-header verification, monitoring, rate-limit tuning, and incident rehearsal.
+Production approval still requires current remote CI, real peak/soak tests, hosted disaster-recovery validation, hosting-header verification, monitoring, rate-limit tuning, incident rehearsal, and rotation of the key exposed by a malformed environment-file error. The staging 80-candidate run, private-file recovery, and timed logical backup restoration into an isolated local database passed on 21 September.
 
 ## Final local evidence
 
-- Forward-only database history: **61 migrations**, rebuilt successfully from scratch with the project-pinned Supabase CLI.
+- Forward-only database history: **62 migrations**, rebuilt successfully from scratch with the project-pinned Supabase CLI.
 - Database advisor: **PASS**, with zero schema warnings after the clean reset.
-- Automated repository tests: **237/237 PASS** across **38 test files**.
+- Automated repository tests: **239/239 PASS** with enforced thresholds of 85% lines, 70% branches, and 90% functions.
 - Browser automation: **39/39 PASS**: all 13 scenarios in Chromium, Firefox, and WebKit. Firefox was executed in Microsoft's pinned Playwright Linux image because the Windows host cannot launch the patched Firefox process.
 - Critical browser paths: **21/21 PASS** across Chromium, Firefox, and WebKit.
 - Syntax and source checks: **PASS**.
@@ -28,6 +30,7 @@ Production approval remains intentionally blocked on environment-dependent evide
 - Logical database restore: **PASS** with matching row counts and SHA/MD5 content digests for the populated 80-candidate data set and zero unvalidated public constraints.
 - Private Storage restore: **PASS** with anonymous access denied, signed access verified, and an identical SHA-256 hash after export, removal, and restoration.
 - Local container health: **PASS** with no crash-looping collector; unsupported Windows local analytics/log shipping is disabled.
+- Autosave concurrency: **PASS**. Older in-flight saves cannot display a false saved state, overwrite newer browser recovery data, or clobber newer answers after an optimistic-concurrency conflict. Confirmed server versions are persisted before the UI reports success.
 
 ## 80-candidate rehearsal results
 
@@ -110,28 +113,35 @@ One WebKit run exposed a real controlled-checkbox timing issue. The handler now 
 ### Stage 26 - Legacy constraint closure and restore proof
 
 - A forward-only migration validates all five historical `NOT VALID` application constraints after the cleanup migrations.
-- A clean 61-migration replay succeeds, the database linter reports no schema errors, and PostgreSQL reports zero unvalidated public constraints.
+- A clean 62-migration replay succeeds, the database linter reports no schema errors, and PostgreSQL reports zero unvalidated public constraints.
 - A repeatable local restore proof creates an isolated temporary database, restores a logical dump using the Supabase-managed local role, compares critical-table row digests, checks constraint state, and removes the temporary database and dump.
 - A repeatable private-Storage proof exports, removes, restores, hashes, signed-reads, and cleans a private `exam-assets` fixture.
 - Supabase CLI use is project-pinned and telemetry-free; local Windows analytics is disabled to eliminate the unsupported Vector log-socket crash loop.
+
+### Stage 27 - RLS planner cleanup and autosave race closure
+
+- Repeated `auth.uid()`/JWT policy lookups are cached per statement and overlapping permissive SELECT policies were removed without changing actor permissions.
+- The staging performance advisor no longer reports the targeted RLS init-plan or overlapping-policy warnings; only workload-dependent unused-index informational findings remain.
+- Firefox exposed a reload/offline race where an older in-flight save could briefly report success. Autosave generations now prevent stale completion from changing current UI or recovery state, and the local mirror stores the confirmed server version before displaying “Saved.”
+- Exact autosave request payloads and successful, conflict-free responses are asserted in the reload/offline browser test.
 
 ## Browser status
 
 - Chromium: complete local matrix passes.
 - WebKit: complete local matrix passes.
 - Firefox: complete local matrix passes in Microsoft's version-matched Playwright 1.63.0 Linux image. The native Windows launch still fails before application code with `spawn UNKNOWN`; this is a host tooling limitation, not an untested browser path.
-- Linux CI is configured to run the critical three-browser paths. Its actual hosted result remains pending because this workspace has no Git repository/remote and no push is included in this work.
+- Linux CI is configured to run the critical three-browser paths. The repository has a GitHub remote and an earlier hosted run passed, but a hosted run for the current unpushed working tree remains pending.
 
 ## Remaining staging-only gates
 
 Before production approval, run all of the following against a disposable, isolated staging project:
 
-1. Apply all 61 migrations from an empty database and rerun database advisors.
-2. Run the guarded 80-candidate staging rehearsal and confirm exact result/session cardinality.
-3. Obtain a hosted Linux CI result for the checked-in three-browser critical matrix.
+1. **Completed:** the guarded 80-candidate staging rehearsal passed on 21 September, including exact result/session cardinality and usable student provisioning. Identified disposable fixtures were removed, preserving the original administrator and audit history. All 62 migrations, including Stage 27, are present there.
+2. Obtain a hosted Linux CI result for the current checked-in three-browser critical matrix.
+3. Enable Supabase Auth leaked-password protection for staging and production before launch.
 4. Run realistic network shaping, disconnect/reconnect, long tab suspension, device takeover, and grace-boundary tests using the real staging network.
 5. Run peak and sustained load tests at the expected campus concurrency, including authentication, autosave, Realtime, submission, exports, and maintenance jobs.
-6. Repeat the now-passing database and private-Storage restore proofs against isolated staging; record measured RPO/RTO and operational ownership.
+6. **Logical recovery completed:** staging database and private-Storage recovery passed. The 80-result database export/restore proof took 26.612 seconds, with local restoration/verification taking 4.135 seconds. Hosted disaster recovery, production-scale RPO/RTO, and operational ownership still require validation.
 7. Verify email, MFA recovery, operator access, service-role rotation, and emergency exam termination procedures.
 8. Complete an assisted manual accessibility session with the institution's supported screen reader and devices.
 
@@ -148,4 +158,4 @@ These cannot be proven by repository-only testing:
 
 ## Release decision
 
-The local codebase and local database stack meet the plan's acceptance criteria. Proceed to an isolated staging rehearsal. Do not approve a live examination until every staging and deployment control above has evidence and an accountable owner.
+The local checks, guarded staging rehearsal, and logical recovery proofs pass. Do not approve a live examination until the remaining release controls above have evidence and an accountable owner. See the dated staging verification for the precise scope and limitations of this evidence.

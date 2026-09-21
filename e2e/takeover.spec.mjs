@@ -38,8 +38,15 @@ test('newest student login takes over atomically and the old device becomes read
   try {
     await loginStudent(oldPage, takeoverCredentials);
     await openExam(oldPage, fixture.exam);
+
+    const confirmedAutosave = oldPage.waitForResponse((response) => (
+      response.request().method() === 'POST'
+      && response.url().includes('/rest/v1/rpc/sync_active_session_progress')
+      && response.ok()
+    ));
     await oldPage.getByRole('radio', { name: /B\.\s*Second/ }).check();
     await oldPage.getByRole('button', { name: /Save & Next/ }).click();
+    await confirmedAutosave;
     await expect(oldPage.getByTitle('All responses saved to server')).toBeVisible();
 
     await loginStudent(newPage, takeoverCredentials, { expectTakeover: true });

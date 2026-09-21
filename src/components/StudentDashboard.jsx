@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabase';
 import {
   sessionBelongsToStudent,
@@ -209,6 +209,9 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
       supabase.removeChannel(examsChannel);
       supabase.removeChannel(resultsChannel);
     };
+  // The subscription lifetime is bound to the authenticated student. Query
+  // state is owned inside this component and refreshed by the callbacks.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [student]);
 
   const handleStartExam = (exam) => {

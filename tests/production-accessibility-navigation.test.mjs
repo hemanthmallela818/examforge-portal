@@ -1,11 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  STATUS_GLYPHS,
-  STATUS_LABELS,
   getStatusGlyph,
   getStatusLabel,
-  TIMER_MILESTONES,
   checkTimerMilestones,
   registerAnnouncers,
   unregisterAnnouncers,

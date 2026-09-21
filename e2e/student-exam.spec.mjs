@@ -11,6 +11,19 @@ const loginStudent = async (page, credentials) => {
   await expect(page.getByText('Your Assigned Examinations')).toBeVisible();
 };
 
+const waitForConfirmedAutosave = (page, subject, expectedAnswer) => page.waitForResponse(async (response) => {
+  if (
+    response.request().method() !== 'POST'
+    || !response.url().includes('/rest/v1/rpc/sync_active_session_progress')
+    || !response.ok()
+  ) return false;
+
+  const request = response.request().postDataJSON();
+  if (request?.responses_param?.[subject]?.[0]?.selectedOption !== expectedAnswer) return false;
+  const result = await response.json().catch(() => null);
+  return result?.success === true && result?.conflict === false;
+});
+
 test('student reloads, works offline, reconnects, submits once, and revisits the result', async ({ page, context }, testInfo) => {
   const fixture = fixturesFor(testInfo.project.name);
   await loginStudent(page, fixture.credentials);
@@ -23,8 +36,10 @@ test('student reloads, works offline, reconnects, submits once, and revisits the
   await page.getByRole('button', { name: 'Start Exam' }).click();
 
   await expect(page.getByRole('heading', { name: fixture.exam.title })).toBeVisible();
+  const physicsAutosave = waitForConfirmedAutosave(page, 'Physics', 1);
   await page.getByRole('radio', { name: /B\.\s*Second/ }).check();
   await page.getByRole('button', { name: /Save & Next/ }).click();
+  await physicsAutosave;
   await expect(page.getByTitle('All responses saved to server')).toBeVisible();
 
   await page.reload();
@@ -40,11 +55,15 @@ test('student reloads, works offline, reconnects, submits once, and revisits the
   await page.getByRole('button', { name: /Save & Next/ }).click();
   await expect(page.getByTitle('Offline: Responses saved to local storage')).toBeVisible();
 
+  const chemistryAutosave = waitForConfirmedAutosave(page, 'Chemistry', '0');
   await context.setOffline(false);
+  await chemistryAutosave;
   await expect(page.getByTitle('All responses saved to server')).toBeVisible({ timeout: 20_000 });
   await page.getByRole('button', { name: 'Mathematics' }).click();
+  const mathematicsAutosave = waitForConfirmedAutosave(page, 'Mathematics', 2);
   await page.getByRole('radio', { name: /C\.\s*Three/ }).check();
   await page.getByRole('button', { name: /Save & Next/ }).click();
+  await mathematicsAutosave;
   await expect(page.getByTitle('All responses saved to server')).toBeVisible();
 
   await page.getByRole('button', { name: 'Submit Exam' }).click();

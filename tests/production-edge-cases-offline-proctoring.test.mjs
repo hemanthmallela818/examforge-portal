@@ -10,12 +10,8 @@ import {
   savePendingTerminationRecord,
   readPendingTerminationRecord,
   clearPendingTerminationRecord,
-  mergeOfflineResponses,
   reconcileOfflineRecovery,
-  SERVER_GRACE_PERIOD_SECONDS,
-  RECOVERY_SCHEMA_VERSION,
-  formatPendingSubmissionStorageKey,
-  formatPendingTerminationStorageKey
+  RECOVERY_SCHEMA_VERSION
 } from '../src/examLogic.js';
 
 class MockStorage {

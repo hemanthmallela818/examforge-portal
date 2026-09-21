@@ -2,9 +2,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { readLocalSupabase } from '../e2e/support/local-supabase.mjs';
+import { readConnectedStaging } from './connected-staging.mjs';
 
 const BUCKET = 'exam-assets';
-const local = readLocalSupabase();
+const staging = process.argv.includes('--staging') ? readConnectedStaging() : null;
+const local = staging ? { url: staging.url, serviceRoleKey: staging.serviceKey } : readLocalSupabase();
 const client = createClient(local.url, local.serviceRoleKey, {
   auth: { persistSession: false, autoRefreshToken: false }
 });
@@ -70,6 +72,7 @@ try {
 
   console.log(JSON.stringify({
     status: 'PRIVATE_STORAGE_RESTORE_VERIFIED',
+    target: staging?.projectRef || 'local',
     bucket: BUCKET,
     bytes: restored.byteLength,
     sha256: digest(restored),
@@ -79,6 +82,9 @@ try {
 } finally {
   if (objectPresent) {
     const { error } = await storage.remove([objectPath]);
-    if (error) console.error(`Temporary restore-proof object cleanup failed: ${error.message}`);
+    if (error) {
+      console.error('Temporary restore-proof object cleanup failed.');
+      process.exitCode = 1;
+    }
   }
 }

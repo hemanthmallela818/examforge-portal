@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import MathRenderer from './MathRenderer';
 import StorageImage from './StorageImage';
 import {
@@ -13,7 +13,6 @@ const QuestionPanel = ({
   selectedOption, 
   setSelectedOption,
   handleAction,
-  totalQuestions,
   goNext,
   goPrev,
   submitExam,
@@ -57,14 +56,14 @@ const QuestionPanel = ({
     else if (validation.empty) setSelectedOption(null);
   };
 
-  const clearResponse = () => {
+  const clearResponse = useCallback(() => {
     if (disabled) return;
     setNumericalDraft('');
     setNumericalError('');
     setSelectedOption(null);
-  };
+  }, [disabled, setSelectedOption]);
 
-  const numericalDraftIsReady = () => {
+  const numericalDraftIsReady = useCallback(() => {
     if (!isNumericalQuestion || numericalDraft === '') return true;
     const validation = validateNumericalAnswer(numericalDraft);
     if (!validation.valid) {
@@ -72,11 +71,11 @@ const QuestionPanel = ({
       return false;
     }
     return true;
-  };
+  }, [isNumericalQuestion, numericalDraft]);
 
-  const performAction = (action) => {
+  const performAction = useCallback((action) => {
     if (numericalDraftIsReady()) handleAction(action);
-  };
+  }, [handleAction, numericalDraftIsReady]);
 
   const performSubmit = () => {
     if (numericalDraftIsReady()) submitExam();

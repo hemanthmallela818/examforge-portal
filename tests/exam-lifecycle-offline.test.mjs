@@ -3,16 +3,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import {
-  createInitialResponses,
-  buildSubmissionResponses,
   remainingSecondsUntil,
   saveOfflineRecoveryRecord,
   readOfflineRecoveryRecord,
-  clearOfflineRecoveryRecord,
   mergeOfflineResponses,
-  sessionBelongsToStudent,
-  RECOVERY_SCHEMA_VERSION,
-  SERVER_GRACE_PERIOD_SECONDS
+  RECOVERY_SCHEMA_VERSION
 } from '../src/examLogic.js';
 
 test('Stage 3: Comprehensive Exam Lifecycle, Offline Resilience, and Concurrency Tests', async (t) => {
@@ -360,7 +355,6 @@ test('Stage 3: Comprehensive Exam Lifecycle, Offline Resilience, and Concurrency
     assert.equal(remainingSecondsUntil(serverEndTime, Date.now()), 1800);
 
     // If local clock jumps backwards (e.g. user changes system time)
-    const backwardsClock = Date.now() - 3600000;
     // Client deriving from absolute deadline:
     assert.equal(remainingSecondsUntil(serverEndTime, serverEndTime - 600000), 600);
 

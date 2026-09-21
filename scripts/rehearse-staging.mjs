@@ -6,6 +6,7 @@ const serviceKey = process.env.REHEARSAL_SUPABASE_SERVICE_ROLE_KEY;
 const adminAccessToken = process.env.REHEARSAL_ADMIN_AAL2_ACCESS_TOKEN;
 const expectedProjectRef = process.env.REHEARSAL_EXPECTED_PROJECT_REF;
 const destructiveConfirmation = process.env.REHEARSAL_CONFIRM_DISPOSABLE;
+const candidateCount = Number.parseInt(process.env.REHEARSAL_CANDIDATE_COUNT || '80', 10);
 
 if (!url || !anonKey || !serviceKey || !adminAccessToken || !expectedProjectRef) {
   throw new Error('Rehearsal URL, anon key, service-role key, AAL2 admin access token, and expected project ref are required.');
@@ -18,18 +19,22 @@ if (localTarget ? expectedProjectRef !== 'local' : rehearsalHost !== `${expected
 if (destructiveConfirmation !== 'YES_RESET_THIS_DISPOSABLE_PROJECT_AFTER_REHEARSAL') {
   throw new Error('Refusing to run without explicit disposable-project reset confirmation.');
 }
+if (!Number.isInteger(candidateCount) || candidateCount < 1 || candidateCount > 1000) {
+  throw new Error('REHEARSAL_CANDIDATE_COUNT must be an integer from 1 through 1000.');
+}
 
 const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
 const prefix = `REHEARSAL-${Date.now()}`;
 const className = `${prefix}-CLASS`;
 const studentPassword = 'Rehearsal!12345';
-const students = Array.from({ length: 80 }, (_, index) => ({
+const students = Array.from({ length: candidateCount }, (_, index) => ({
   studentId: `${prefix}-S${String(index + 1).padStart(3, '0')}`,
   email: `${prefix.toLowerCase()}-s${String(index + 1).padStart(3, '0')}@rehearsal.local`,
   name: `Rehearsal Student ${index + 1}`
 }));
 
-const questionCount = 80;
+// Keep one distinct scoring fingerprint per candidate in larger load runs.
+const questionCount = Math.max(80, candidateCount);
 const subjects = ['Physics', 'Chemistry', 'Mathematics'];
 const rehearsalQuestions = Object.fromEntries(subjects.map(subject => [subject, []]));
 for (let index = 0; index < questionCount; index += 1) {
@@ -80,6 +85,29 @@ const limit = async (items, concurrency, task) => {
 
 const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
+// Supabase Auth rate-limits password sign-ins by source IP. Keep the
+// rehearsal's sign-in starts globally paced even though the rest of the
+// candidate workload can remain concurrent. The staging rate-limit setting
+// and this delay should be chosen together (for example, 120 sign-ins/5 min
+// with a 3000 ms delay). The value is configurable so production-like
+// staging environments do not require a code change.
+const authSignInDelayMs = Number.parseInt(process.env.REHEARSAL_AUTH_SIGNIN_DELAY_MS || '3000', 10);
+if (!Number.isInteger(authSignInDelayMs) || authSignInDelayMs < 0) {
+  throw new Error('REHEARSAL_AUTH_SIGNIN_DELAY_MS must be a non-negative integer.');
+}
+let nextAuthSignInAt = 0;
+let authSignInQueue = Promise.resolve();
+const waitForAuthSignInSlot = async () => {
+  let release;
+  const previous = authSignInQueue;
+  authSignInQueue = new Promise(resolve => { release = resolve; });
+  await previous;
+  const remaining = nextAuthSignInAt - Date.now();
+  if (remaining > 0) await wait(remaining);
+  nextAuthSignInAt = Date.now() + authSignInDelayMs;
+  release();
+};
+
 const withRetries = async (task, attempts = 5) => {
   let lastError;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -88,10 +116,23 @@ const withRetries = async (task, attempts = 5) => {
     } catch (error) {
       lastError = error;
       if (error?.status !== 429 || attempt === attempts - 1) throw error;
-      await wait(1000 * (attempt + 1));
+      // A 429 is an IP bucket response, so short retries only extend the
+      // burst. Back off exponentially and keep the next attempt behind the
+      // normal sign-in pacing window.
+      await wait(Math.max(authSignInDelayMs, 5000 * (2 ** attempt)));
     }
   }
   throw lastError;
+};
+
+const functionErrorSummary = async error => {
+  const status = Number(error?.context?.status) || 0;
+  let body = '';
+  try {
+    body = await error?.context?.clone?.().text?.() || '';
+  } catch {}
+  const boundedBody = body.replace(/[\r\n]+/g, ' ').slice(0, 500);
+  return `HTTP ${status || 'unknown'}${boundedBody ? `: ${boundedBody}` : ''}`;
 };
 
 const subscribe = (client, channelName) => new Promise(resolve => {
@@ -108,6 +149,17 @@ const subscribe = (client, channelName) => new Promise(resolve => {
 let examId;
 let authIds = [];
 const channels = [];
+const startedAt = Date.now();
+const latencyMs = { start: [], autosave: [], submit: [], retry: [], realtime: [] };
+const timed = async (bucket, task) => {
+  const began = performance.now();
+  try { return await task(); } finally { bucket.push(performance.now() - began); }
+};
+const percentile = (values, percent) => {
+  if (!values.length) return 0;
+  const ordered = [...values].sort((a, b) => a - b);
+  return Number(ordered[Math.ceil((percent / 100) * ordered.length) - 1].toFixed(1));
+};
 const report = {
   candidateCount: students.length,
   questionCount,
@@ -166,10 +218,12 @@ try {
   examId = exam.id;
 
   // Stagger sign-ins so this rehearsal also respects Supabase's anti-abuse
-  // limits when all test accounts originate from one IP address.
+  // limits when all test accounts originate from one IP address. The global
+  // slot gate is required even though the surrounding worker pool is small.
   const authenticated = await limit(created, 4, async student => {
     const client = createClient(url, anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
     const authData = await withRetries(async () => {
+      await waitForAuthSignInSlot();
       const result = await client.auth.signInWithPassword({ email: student.email, password: studentPassword });
       if (result.error) throw result.error;
       return result.data;
@@ -194,17 +248,17 @@ try {
 
     const correctTarget = candidateIndex + 1;
     const candidateResponses = responsesForCandidate(correctTarget);
-    const { data: session, error: sessionError } = await client.rpc('start_exam_session', {
+    const { data: session, error: sessionError } = await timed(latencyMs.start, () => client.rpc('start_exam_session', {
       exam_id_param: examId,
       exam_data_param: visibleExam.questions_data,
       responses_param: candidateResponses.grouped
-    });
+    }));
     if (sessionError) throw sessionError;
-    const { error: autosaveError } = await client.rpc('sync_active_session_progress', {
+    const { error: autosaveError } = await timed(latencyMs.autosave, () => client.rpc('sync_active_session_progress', {
       exam_id_param: examId,
       responses_param: session.user_responses,
       expected_version_param: session.version
-    });
+    }));
     if (autosaveError) throw autosaveError;
     return { student, client, session, correctTarget, submissionResponses: candidateResponses.flattened };
   });
@@ -212,10 +266,11 @@ try {
   report.autosavedSessions = sessions.length;
   report.answersHidden = true;
 
-  const subscriptionResults = await Promise.all(sessions.map(({ client }, index) => subscribe(client, `${prefix}-channel-${index}`)));
+  const subscriptionResults = await Promise.all(sessions.map(({ client }, index) =>
+    timed(latencyMs.realtime, () => subscribe(client, `${prefix}-channel-${index}`))));
   subscriptionResults.forEach(result => channels.push(result.channel));
   report.realtimeSubscribed = subscriptionResults.filter(result => result.status === 'SUBSCRIBED').length;
-  if (report.realtimeSubscribed !== students.length) throw new Error(`Only ${report.realtimeSubscribed}/80 Realtime channels subscribed.`);
+  if (report.realtimeSubscribed !== students.length) throw new Error(`Only ${report.realtimeSubscribed}/${students.length} Realtime channels subscribed.`);
 
   const firstClient = sessions[0].client;
   const { data: foreignSessions, error: foreignSessionsError } = await firstClient
@@ -240,8 +295,15 @@ try {
   const { error: studentProvisionError } = await firstClient.functions.invoke('manage-student', {
     body: { action: 'create', studentId: `${prefix}-FORGED`, name: 'Forged Student', password: studentPassword, className, section: 'A' }
   });
-  report.studentProvisioningBlocked = Boolean(studentProvisionError);
-  if (!report.studentProvisioningBlocked) throw new Error('A student was able to provision another student.');
+  report.studentProvisioningBlocked = [401, 403].includes(Number(studentProvisionError?.context?.status));
+  if (!report.studentProvisioningBlocked) {
+    if (studentProvisionError) {
+      throw new Error(`Student provisioning denial was not authoritative (${await functionErrorSummary(studentProvisionError)}).`, {
+        cause: studentProvisionError
+      });
+    }
+    throw new Error('A student was able to provision another student.');
+  }
 
   const adminClient = createClient(url, anonKey, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -250,12 +312,27 @@ try {
   const { data: provisionedStudent, error: provisionError } = await adminClient.functions.invoke('manage-student', {
     body: { action: 'create', studentId: `${prefix}-PROVISIONED`, name: 'Provisioned Student', password: studentPassword, className, section: 'A' }
   });
-  if (provisionError || !provisionedStudent?.id) throw provisionError || new Error('Admin provisioning did not return a student ID.');
+  if (provisionError) {
+    throw new Error(`Admin provisioning failed (${await functionErrorSummary(provisionError)}).`, { cause: provisionError });
+  }
+  if (!provisionedStudent?.id) throw new Error('Admin provisioning did not return a student ID.');
   authIds.push(provisionedStudent.id);
+  const { data: provisionedProfile, error: provisionedProfileError } = await admin
+    .from('students').select('student_id, class, section').eq('id', provisionedStudent.id).single();
+  const { data: provisionedRole, error: provisionedRoleError } = await admin
+    .from('profiles').select('role').eq('id', provisionedStudent.id).single();
+  if (provisionedProfileError || provisionedRoleError
+      || provisionedProfile?.student_id !== `${prefix}-PROVISIONED`
+      || provisionedProfile?.class !== className || provisionedProfile?.section !== 'A'
+      || provisionedRole?.role !== 'student') {
+    throw new Error('Admin provisioning returned success without a usable, correctly assigned student profile.');
+  }
   report.adminProvisionedStudent = true;
 
   const submissions = await limit(sessions, 16, async ({ student, client, correctTarget, submissionResponses }) => {
-    const { data, error } = await client.rpc('submit_exam', { exam_id_param: examId, responses_param: submissionResponses });
+    const { data, error } = await timed(latencyMs.submit, () => client.rpc('submit_exam', {
+      exam_id_param: examId, responses_param: submissionResponses
+    }));
     if (error) throw error;
     const expectedIncorrect = questionCount - correctTarget;
     const expectedScore = (correctTarget * 4) - expectedIncorrect;
@@ -265,10 +342,10 @@ try {
         || Number(data.unattempted) !== 0) {
       throw new Error(`Unexpected server score: ${JSON.stringify(data)}`);
     }
-    const { data: retryData, error: retryError } = await client.rpc('submit_exam', {
+    const { data: retryData, error: retryError } = await timed(latencyMs.retry, () => client.rpc('submit_exam', {
       exam_id_param: examId,
       responses_param: submissionResponses
-    });
+    }));
     if (retryError) throw retryError;
     for (const key of ['totalScore', 'maxScore', 'correct', 'incorrect', 'unattempted']) {
       if (Number(retryData?.[key]) !== Number(data?.[key])) {
@@ -322,6 +399,14 @@ try {
   if (sessionCountError) throw sessionCountError;
   if (sessionCount !== 0) throw new Error(`Expected 0 remaining sessions, found ${sessionCount}.`);
   report.zeroUnhandledServerErrors = true;
+  report.durationMs = Date.now() - startedAt;
+  report.latencyMs = Object.fromEntries(Object.entries(latencyMs).map(([name, values]) => [name, {
+    samples: values.length,
+    p50: percentile(values, 50),
+    p95: percentile(values, 95),
+    p99: percentile(values, 99),
+    max: Number(Math.max(...values).toFixed(1))
+  }]));
 } finally {
   await Promise.all(channels.map(channel => channel.unsubscribe().catch(() => undefined)));
   // Submitted results are intentionally immutable. Do not claim that deleting

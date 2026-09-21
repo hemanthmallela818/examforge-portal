@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  CANDIDATE_NUMERICAL_MAX_LENGTH,
   AUTHOR_NUMERICAL_MAX_LENGTH,
   NUMERICAL_ABSOLUTE_TOLERANCE,
   validateNumericalAnswer,
@@ -10,8 +9,7 @@ import {
 } from '../src/numericalAnswerPolicy.js';
 import {
   buildLeaderboard,
-  calculateResultAnalytics,
-  normalizeResultSubjects
+  calculateResultAnalytics
 } from '../src/resultExportLogic.js';
 import { validateExamPreflight } from '../src/examPreflightLogic.js';
 

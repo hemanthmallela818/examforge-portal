@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useDialogFocusTrap } from '../dialogFocus';
 
-const OfflineOverlay = ({ offlineSince, onTerminate, onLogout, onContinueOffline, recoveryAvailable = true }) => {
+const OfflineOverlay = ({ offlineSince, onLogout, onContinueOffline, recoveryAvailable = true }) => {
   const [elapsed, setElapsed] = useState(0);
   const continueButtonRef = useRef(null);
   const { dialogRef, handleDialogKeyDown } = useDialogFocusTrap({ initialFocusRef: continueButtonRef });

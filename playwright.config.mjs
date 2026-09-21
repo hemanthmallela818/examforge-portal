@@ -24,7 +24,9 @@ export default defineConfig({
   webServer: {
     command: 'npm run dev -- --host 127.0.0.1 --port 4173',
     url: 'http://127.0.0.1:4173',
-    reuseExistingServer: !process.env.CI,
+    // Never reuse an unknown process on the test port. A stale preview can be
+    // compiled with production credentials and silently cross environments.
+    reuseExistingServer: false,
     timeout: 120_000,
     env: {
       ...process.env,

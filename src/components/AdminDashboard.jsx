@@ -121,8 +121,9 @@ const AdminDashboard = ({ onBackToLogin }) => {
   }, [activeExamId, resultPage, resultSearch]);
 
   useEffect(() => {
-    dataLoadTracker.current.activate();
-    return () => { dataLoadTracker.current.deactivate(); };
+    const tracker = dataLoadTracker.current;
+    tracker.activate();
+    return () => { tracker.deactivate(); };
   }, []);
 
   useEffect(() => {
@@ -572,6 +573,7 @@ const AdminDashboard = ({ onBackToLogin }) => {
 
   useEffect(() => {
     if (adminAccess !== 'GRANTED') return;
+    const refreshTimers = collectionRefreshTimers.current;
     // The overview needs only exams and aggregate counts. Large collections
     // are loaded when their owning screen is opened.
     fetchTableCounts();
@@ -664,14 +666,17 @@ const AdminDashboard = ({ onBackToLogin }) => {
 
     return () => {
       if (countRefreshTimer.current) clearTimeout(countRefreshTimer.current);
-      collectionRefreshTimers.current.forEach(timer => clearTimeout(timer));
-      collectionRefreshTimers.current.clear();
+      refreshTimers.forEach(timer => clearTimeout(timer));
+      refreshTimers.clear();
       supabase.removeChannel(examsChannel);
       supabase.removeChannel(resultsChannel);
       supabase.removeChannel(studentsChannel);
       supabase.removeChannel(qbChannel);
       supabase.removeChannel(classesChannel);
     };
+  // The subscriptions are intentionally recreated only when authorization
+  // changes. Their callbacks read the current query state from refs.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminAccess]);
 
 
