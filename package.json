@@ -29,6 +29,7 @@
     "ops:verify-root:local": "node scripts/verify-root-hierarchy.mjs",
     "ops:verify-root:staging": "node scripts/verify-connected-staging-root.mjs",
     "ops:verify-root:main": "node scripts/verify-connected-main-root.mjs",
+    "ops:verify-hierarchy:main": "node scripts/verify-connected-main-hierarchy.mjs",
     "ops:drill:staging": "node scripts/operator-drill-staging.mjs",
     "ops:prove-restore:local": "node scripts/prove-local-backup-restore.mjs",
     "ops:prove-restore:staging": "node scripts/prove-staging-backup-restore.mjs",
