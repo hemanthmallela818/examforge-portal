@@ -9,6 +9,7 @@ import { prepareQuestionDraft } from '../questionContentLogic';
 import StorageImage from './StorageImage';
 import AdminOperationsView from './AdminOperationsView';
 import AdminDatabaseCleanerView from './AdminDatabaseCleanerView';
+import RootAdministratorManager from './RootAdministratorManager';
 import { fetchAllRows, parsePagedCollectionResponse } from '../paginatedQuery';
 import { normalizeQuestionBankRow, parseSelectedQuestionsResponse } from '../questionBankPaging';
 import { normalizeExamListRow } from '../examListPaging';
@@ -33,6 +34,7 @@ const RESULT_EXPORT_PAGE_SIZE = 500;
 
 const AdminDashboard = ({ onBackToLogin }) => {
   const [adminAccess, setAdminAccess] = useState('CHECKING');
+  const [isRootDeveloper, setIsRootDeveloper] = useState(false);
   const [adminAccessError, setAdminAccessError] = useState('');
   const [adminVerificationAttempt, setAdminVerificationAttempt] = useState(0);
   const [dataLoadState, setDataLoadState] = useState({});
@@ -257,16 +259,19 @@ const AdminDashboard = ({ onBackToLogin }) => {
           return;
         }
 
-        // Mandatory MFA TOTP (AAL2) verification
-        const { data: aalData, error: aalErr } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-        if (aalErr) throw aalErr;
+        const { data: allowed, error: accessError } = await supabase.rpc('is_admin_aal2');
+        if (accessError) throw accessError;
         if (!active) return;
-        if (aalData?.currentLevel !== 'aal2') {
+        if (allowed !== true) {
           setAdminAccess('DENIED');
           onBackToLogin();
           return;
         }
 
+        const { data: root, error: rootError } = await supabase.rpc('is_root_developer');
+        if (rootError) throw rootError;
+        if (!active) return;
+        setIsRootDeveloper(root === true);
         setAdminAccess('GRANTED');
       } catch (error) {
         console.error('Administrator verification failed:', error);
@@ -400,7 +405,7 @@ const AdminDashboard = ({ onBackToLogin }) => {
       setAuditEvents(auditResult.data || []);
     } catch (error) {
       console.error('Operational overview failed:', error);
-      setOperationalError('Operational status could not be loaded. Verify the database connection and your MFA session.');
+      setOperationalError('Operational status could not be loaded. Verify the database connection and administrator access.');
     } finally {
       setOperationalLoading(false);
     }
@@ -2489,6 +2494,7 @@ const AdminDashboard = ({ onBackToLogin }) => {
         </header>
 
         <div className="admin-dashboard-content" style={{ padding: '40px', flex: 1, maxWidth: '1400px', margin: '0 auto', width: '100%' }}>
+          {isRootDeveloper && <RootAdministratorManager />}
           {isAnyDataLoading && <p role="status" aria-live="polite">Refreshing administrator data…</p>}
           {failedDataLoads.length > 0 && (
             <section role="alert" style={{ marginBottom: '20px', padding: '14px 16px', border: '1px solid #f87171', borderRadius: '8px', background: '#fef2f2', color: '#991b1b' }}>

@@ -98,7 +98,7 @@ function App() {
     if (initialActiveSession.current) return 'ACTIVE';
     const saved = safeStorageGet('sessionStorage', 'examState');
     if (saved === 'STUDENT_DASHBOARD') return saved;
-    // Never restore ADMIN_DASHBOARD synchronously without validating AAL2
+    // Restore administrative screens only after server authorization.
     if (saved && saved !== 'AUTH' && saved !== 'ADMIN_DASHBOARD') {
       const isStudent = safeStorageGet('sessionStorage', 'currentStudent');
       return isStudent ? 'STUDENT_DASHBOARD' : 'AUTH';
@@ -228,15 +228,15 @@ function App() {
   // Asynchronously verify administrator session restoration on initial mount
   useEffect(() => {
     const saved = safeStorageGet('sessionStorage', 'examState');
-    if (saved === 'ADMIN_DASHBOARD') {
+    if (saved === 'ADMIN_DASHBOARD' || !initialStudent.current) {
       supabase.auth.getUser().then(async ({ data: { user }, error }) => {
         if (error || !user) {
           safeStorageSet('sessionStorage', 'examState', 'AUTH');
           return;
         }
         const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-        const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-        if (profile?.role === 'admin' && aalData?.currentLevel === 'aal2') {
+        const { data: allowed, error: accessError } = await supabase.rpc('is_admin_aal2');
+        if (profile?.role === 'admin' && !accessError && allowed === true) {
           setExamState('ADMIN_DASHBOARD');
         } else {
           safeStorageSet('sessionStorage', 'examState', 'AUTH');
@@ -245,7 +245,7 @@ function App() {
     }
   }, []);
 
-  // Guard admin dashboard state against unauthorized session storage manipulation or AAL downgrade
+  // Browser storage never grants administrative authority.
   useEffect(() => {
     if (examState === 'ADMIN_DASHBOARD') {
       supabase.auth.getUser().then(async ({ data: { user }, error }) => {
@@ -264,8 +264,8 @@ function App() {
           setExamState('AUTH');
           return;
         }
-        const { data: aalData } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-        if (aalData?.currentLevel !== 'aal2') {
+        const { data: allowed, error: accessError } = await supabase.rpc('is_admin_aal2');
+        if (accessError || allowed !== true) {
           safeStorageSet('sessionStorage', 'examState', 'AUTH');
           setExamState('AUTH');
         }

@@ -1,6 +1,5 @@
 import { useRef, useState } from 'react';
 import { supabase } from '../supabase';
-import AdminMfaModal from './AdminMfaModal';
 import { safeStorageSet } from '../browserStorage';
 import { customAlert } from '../utils';
 
@@ -10,7 +9,6 @@ const AuthPortal = ({ onStudentLogin, onAdminLogin }) => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [mfaModalState, setMfaModalState] = useState(null);
   const studentTabRef = useRef(null);
   const adminTabRef = useRef(null);
   const loginButtonRef = useRef(null);
@@ -150,73 +148,15 @@ const AuthPortal = ({ onStudentLogin, onAdminLogin }) => {
             role: 'ADMIN'
           };
 
-          // Check MFA Assurance Level
-          const { data: aalData, error: aalError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-          if (aalError) {
+          const { data: allowed, error: accessError } = await supabase.rpc('is_admin_aal2');
+          if (accessError || allowed !== true) {
             await supabase.auth.signOut({ scope: 'local' });
-            setError('Failed to verify security assurance level. Please try again.');
+            setError('This administrator account has not been approved by the root developer.');
             return;
           }
-
-          if (aalData?.currentLevel === 'aal2') {
-            safeStorageSet('sessionStorage', 'examState', 'ADMIN_DASHBOARD');
-            safeStorageSet('sessionStorage', 'currentAdmin', JSON.stringify(adminInfo));
-            onAdminLogin(adminInfo);
-            return;
-          }
-
-          // Mandatory MFA TOTP verification or enrollment required
-          const { data: factorsData, error: factorsError } = await supabase.auth.mfa.listFactors();
-          if (factorsError) {
-            await supabase.auth.signOut({ scope: 'local' });
-            setError('Failed to retrieve authentication factors.');
-            return;
-          }
-
-          const verifiedFactor = factorsData?.totp?.find(f => f.status === 'verified');
-          if (verifiedFactor) {
-            // Factor already enrolled: challenge for 6-digit TOTP
-            setMfaModalState({
-              user: authData.user,
-              isEnrollment: false,
-              factorId: verifiedFactor.id,
-              adminInfo,
-            });
-          } else {
-            // Detect and clean up stale unverified TOTP factors before creating another enrollment
-            const unverifiedFactors = factorsData?.totp?.filter(f => f.status === 'unverified') || [];
-            for (const staleFactor of unverifiedFactors) {
-              const { error: unenrollError } = await supabase.auth.mfa.unenroll({ factorId: staleFactor.id });
-              if (unenrollError) {
-                await supabase.auth.signOut({ scope: 'local' });
-                setError('An incomplete MFA setup could not be cleared. Please try again or contact the system owner.');
-                return;
-              }
-            }
-
-            // Factor not yet enrolled: start enrollment flow
-            const { data: enrollData, error: enrollError } = await supabase.auth.mfa.enroll({
-              factorType: 'totp',
-              issuer: 'CBT Exam Portal',
-              friendlyName: authData.user.email || 'Admin',
-            });
-            if (enrollError || !enrollData) {
-              await supabase.auth.signOut({ scope: 'local' });
-              setError(enrollError?.message || 'Failed to initialize MFA enrollment.');
-              return;
-            }
-
-            setMfaModalState({
-              user: authData.user,
-              isEnrollment: true,
-              factorId: enrollData.id,
-              enrollmentData: {
-                qrCode: enrollData.totp?.qr_code,
-                secret: enrollData.totp?.secret,
-              },
-              adminInfo,
-            });
-          }
+          safeStorageSet('sessionStorage', 'examState', 'ADMIN_DASHBOARD');
+          safeStorageSet('sessionStorage', 'currentAdmin', JSON.stringify(adminInfo));
+          onAdminLogin(adminInfo);
         } catch (err) {
           console.error("Admin login error:", err);
           setError('Invalid Admin Email or Password.');
@@ -227,47 +167,8 @@ const AuthPortal = ({ onStudentLogin, onAdminLogin }) => {
     }
   };
 
-  const handleMfaSuccess = () => {
-    if (!mfaModalState) return;
-    const adminInfo = mfaModalState.adminInfo;
-    setMfaModalState(null);
-    safeStorageSet('sessionStorage', 'examState', 'ADMIN_DASHBOARD');
-    safeStorageSet('sessionStorage', 'currentAdmin', JSON.stringify(adminInfo));
-    onAdminLogin(adminInfo);
-  };
-
-  const handleMfaCancel = async () => {
-    // If cancelling a newly created unverified factor, attempt to unenroll it before signing out
-    if (mfaModalState?.isEnrollment && mfaModalState?.factorId) {
-      try {
-        const { error: unenrollError } = await supabase.auth.mfa.unenroll({ factorId: mfaModalState.factorId });
-        if (unenrollError) {
-          console.warn('Could not clear the cancelled MFA enrollment. It will be retried at next login.');
-        }
-      } catch (unenrollErr) {
-        console.warn('Could not clear the cancelled MFA enrollment. It will be retried at next login.');
-      }
-    }
-    setMfaModalState(null);
-    try {
-      await supabase.auth.signOut({ scope: 'local' });
-    } catch { }
-    setError('Administrator verification cancelled.');
-  };
-
   return (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: 'var(--bg-color)' }}>
-      {mfaModalState && (
-        <AdminMfaModal
-          user={mfaModalState.user}
-          isEnrollment={mfaModalState.isEnrollment}
-          factorId={mfaModalState.factorId}
-          enrollmentData={mfaModalState.enrollmentData}
-          onSuccess={handleMfaSuccess}
-          onCancel={handleMfaCancel}
-          returnFocusRef={loginButtonRef}
-        />
-      )}
 
       <div className="animate-fade-in" style={{ backgroundColor: 'var(--panel-bg)', padding: '40px', borderRadius: '12px', boxShadow: '0 10px 25px rgba(0,0,0,0.1)', maxWidth: '400px', width: '100%' }}>
         <h1 style={{ marginBottom: '10px', color: 'var(--primary)', textAlign: 'center' }}>Exam Portal</h1>

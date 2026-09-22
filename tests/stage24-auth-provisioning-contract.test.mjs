@@ -19,6 +19,7 @@ test('Stage 24 provisioning tolerates GoTrue insert ordering and finalizes only 
   assert.match(edgeFunction, /admin\.rpc\('complete_account_provisioning'/);
   assert.match(edgeFunction, /finalizeError \|\| verifyStudentError \|\| !verifiedStudent/);
   assert.match(bootstrap, /admin\.rpc\('complete_account_provisioning'/);
-  assert.match(bootstrap, /deleteUser\(data\.user\.id\)/);
+  assert.match(bootstrap, /deleteUser\(user\.id\)/);
+  assert.match(bootstrap, /from\('application_owner'\)\.upsert/);
   assert.match(e2eSetup, /complete_account_provisioning/);
 });

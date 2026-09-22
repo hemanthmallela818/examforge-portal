@@ -56,11 +56,11 @@ npm run ops:prove-storage-restore:local
 - `supabase/functions/manage-student/` contains the JWT-protected account-provisioning Edge Function.
 - `tests/` contains unit, contract, database, migration, security, and regression checks.
 - `e2e/` contains authenticated Chromium, Firefox, and WebKit journeys.
-- `docs/` contains import, authorization, operations, backup, disaster-recovery, and MFA runbooks.
+- `docs/` contains import, authorization, operations, backup, and disaster-recovery runbooks.
 
 Important operating rules:
 
-- Administrators must reach AAL2 with TOTP before protected actions.
+- Administrators use password sign-in; server-side managed-account authorization protects protected actions.
 - Public sign-up stays disabled; accounts are created through trusted provisioning paths.
 - The `exam-assets` bucket remains private and is accessed through short-lived signed URLs.
 - Only the newest signed student session can mutate an attempt; an older device becomes read-only.

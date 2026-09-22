@@ -4,6 +4,7 @@ import { readLocalSupabase } from './support/local-supabase.mjs';
 
 const PROJECTS = ['chromium', 'firefox', 'webkit'];
 const ADMIN_PASSWORD = 'E2E-Admin!2026';
+const ROOT_EMAIL = 'root-developer@e2e.local';
 const STUDENT_PASSWORD = 'E2E-Student!2026';
 const CLASS_NAME = 'E2E Class 12';
 const SECTION = 'A';
@@ -116,6 +117,28 @@ export default async function globalSetup() {
     label: `${project} E2E ${purpose.toLowerCase()} student`
   });
 
+  const rootUser = await ensureUser({
+    email: ROOT_EMAIL,
+    password: ADMIN_PASSWORD,
+    userMetadata: { name: 'E2E Root Developer' },
+    appMetadata: { provisioned_by: 'admin', account_type: 'admin' },
+    label: 'E2E root developer'
+  });
+  const { error: ownerError } = await service.from('application_owner').upsert({
+    singleton: true,
+    user_id: rootUser.id
+  }, { onConflict: 'singleton' });
+  if (ownerError) throw new Error(`Could not register E2E root developer: ${ownerError.message}`);
+
+  const registerAdministrator = async user => {
+    const { error } = await service.from('managed_administrators').upsert({
+      user_id: user.id,
+      created_by: rootUser.id,
+      enabled: true
+    }, { onConflict: 'user_id' });
+    if (error) throw new Error(`Could not authorize E2E administrator: ${error.message}`);
+  };
+
   for (const project of PROJECTS) {
     const suffix = project === 'chromium' ? 'CHR' : project === 'firefox' ? 'FOX' : 'WEB';
     const studentId = `E2E${suffix}001`;
@@ -139,6 +162,7 @@ export default async function globalSetup() {
       appMetadata: { provisioned_by: 'admin', account_type: 'admin' },
       label: `${project} E2E administrator`
     });
+    await registerAdministrator(adminUser);
     await clearMfaFactors(adminUser, `${project} E2E administrator`);
 
     const operationsAdminUser = await ensureUser({
@@ -148,6 +172,7 @@ export default async function globalSetup() {
       appMetadata: { provisioned_by: 'admin', account_type: 'admin' },
       label: `${project} E2E operations administrator`
     });
+    await registerAdministrator(operationsAdminUser);
     await clearMfaFactors(operationsAdminUser, `${project} E2E operations administrator`);
 
     const exportAdminUser = await ensureUser({
@@ -157,6 +182,7 @@ export default async function globalSetup() {
       appMetadata: { provisioned_by: 'admin', account_type: 'admin' },
       label: `${project} E2E export administrator`
     });
+    await registerAdministrator(exportAdminUser);
     await clearMfaFactors(exportAdminUser, `${project} E2E export administrator`);
 
     const reliabilityAdminUser = await ensureUser({
@@ -166,6 +192,7 @@ export default async function globalSetup() {
       appMetadata: { provisioned_by: 'admin', account_type: 'admin' },
       label: `${project} E2E reliability administrator`
     });
+    await registerAdministrator(reliabilityAdminUser);
     await clearMfaFactors(reliabilityAdminUser, `${project} E2E reliability administrator`);
 
     const accessibilityAdminUser = await ensureUser({
@@ -175,6 +202,7 @@ export default async function globalSetup() {
       appMetadata: { provisioned_by: 'admin', account_type: 'admin' },
       label: `${project} E2E accessibility administrator`
     });
+    await registerAdministrator(accessibilityAdminUser);
     await clearMfaFactors(accessibilityAdminUser, `${project} E2E accessibility administrator`);
 
     const studentUser = await ensureUser({
@@ -238,6 +266,7 @@ export default async function globalSetup() {
     });
 
     credentials[project] = {
+      root: { email: ROOT_EMAIL, password: ADMIN_PASSWORD, id: rootUser.id },
       admin: { email: adminEmail, password: ADMIN_PASSWORD, id: adminUser.id },
       operationsAdmin: {
         email: operationsAdminEmail,

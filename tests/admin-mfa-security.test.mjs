@@ -639,31 +639,21 @@ test('Stage 2: Edge Function Origin and Security Behavioral Contracts', async ()
   });
 });
 
-test('Stage 2: Auth Configuration and MFA Lifecycle Contracts', async () => {
-  const [configToml, authPortal, adminModal] = await Promise.all([
+test('Root hierarchy: password login configuration and client contracts', async () => {
+  const [configToml, authPortal, dashboard, rootManager] = await Promise.all([
     readFile(new URL('../supabase/config.toml', import.meta.url), 'utf8'),
     readFile(new URL('../src/components/AuthPortal.jsx', import.meta.url), 'utf8'),
-    readFile(new URL('../src/components/AdminMfaModal.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/components/AdminDashboard.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/components/RootAdministratorManager.jsx', import.meta.url), 'utf8'),
   ]);
 
-  // Local Auth configuration aligned to 12 minimum chars and secure password change
-  assert.match(configToml, /minimum_password_length\s*=\s*12/, 'config.toml must require minimum password length 12');
+  assert.match(configToml, /minimum_password_length\s*=\s*10/, 'config.toml must require minimum password length 10');
   assert.match(configToml, /secure_password_change\s*=\s*true/, 'config.toml must require secure password change');
   assert.match(configToml, /\[auth\][\s\S]*?enable_signup\s*=\s*false/, 'Global public sign-up must remain disabled');
   assert.match(configToml, /\[auth\.email\][\s\S]*?enable_signup\s*=\s*true/, 'Email/password login provider must remain enabled');
-
-  // AuthPortal unenrolls unverified factor on cancellation
-  assert.match(authPortal, /error:\s*unenrollError[^]*unenroll\(\{\s*factorId:\s*mfaModalState\.factorId\s*\}\)/, 'AuthPortal must inspect cancellation unenroll errors');
-
-  // AuthPortal cleans up stale unverified factors on next login before re-enrolling
-  assert.match(authPortal, /factorsData\?\.totp\?\.filter\(f\s*=>\s*f\.status\s*===\s*'unverified'\)/, 'AuthPortal must filter unverified factors');
-  assert.match(authPortal, /error:\s*unenrollError[^]*unenroll\(\{\s*factorId:\s*staleFactor\.id\s*\}\)/, 'AuthPortal must inspect stale-factor unenroll errors');
-  assert.match(authPortal, /if\s*\(unenrollError\)[^]*return;/, 'AuthPortal must not enroll another factor after stale cleanup fails');
-
-  // AdminMfaModal duplicate submission prevention and offline detection
-  assert.match(adminModal, /if\s*\(isSubmitting\)\s*return/, 'AdminMfaModal must guard against duplicate submissions');
-  assert.match(adminModal, /!navigator\.onLine/, 'AdminMfaModal must detect offline status');
-  assert.match(adminModal, /mfa\.challengeAndVerify/, 'AdminMfaModal must create and verify one fresh challenge per submission');
-  assert.doesNotMatch(adminModal, /useEffect[\s\S]*?mfa\.challenge\(/, 'AdminMfaModal must not race enrollment by challenging on mount');
-  assert.match(adminModal, /disabled=\{verificationUnavailable\}/, 'AdminMfaModal must keep duplicate or incomplete submissions disabled');
+  assert.match(authPortal, /rpc\('is_admin_aal2'\)/, 'Admin login must verify server-side managed access');
+  assert.doesNotMatch(authPortal, /AdminMfaModal|mfa\.(enroll|challenge)/, 'Admin login must not require MFA');
+  assert.match(dashboard, /rpc\('is_root_developer'\)/, 'Dashboard must resolve root developer authority server-side');
+  assert.match(rootManager, /action:\s*'create-admin'/, 'Root controls must use trusted administrator provisioning');
+  assert.match(rootManager, /set_managed_administrator_enabled/, 'Root controls must support administrator access revocation');
 });

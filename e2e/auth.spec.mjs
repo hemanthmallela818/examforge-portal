@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { createClient } from '@supabase/supabase-js';
-import { fixturesFor, generateTotp } from './support/fixtures.mjs';
+import { fixturesFor } from './support/fixtures.mjs';
 
 test('student signs in with an assigned account and signs out', async ({ page }, testInfo) => {
   const { credentials } = fixturesFor(testInfo.project.name);
@@ -28,7 +28,7 @@ test('public email sign-up remains disabled while email/password login is enable
   expect(error?.message).toMatch(/signups not allowed|signup.*disabled/i);
 });
 
-test('administrator cannot enter without valid TOTP and succeeds after verification', async ({ page }, testInfo) => {
+test('approved administrator signs in with a password and the session survives reload', async ({ page }, testInfo) => {
   const { credentials } = fixturesFor(testInfo.project.name);
   await page.goto('/');
   await page.getByRole('tab', { name: 'Admin Login' }).click();
@@ -36,17 +36,10 @@ test('administrator cannot enter without valid TOTP and succeeds after verificat
   await page.getByLabel('Password').fill(credentials.admin.password);
   await page.getByRole('button', { name: 'Login' }).click();
 
-  const dialog = page.getByRole('dialog', { name: 'Setup Two-Factor Authentication' });
-  await expect(dialog).toBeVisible();
-  const secret = (await dialog.locator('code').innerText()).trim();
-  const codeInput = dialog.getByLabel(/confirmation code/i);
-  await codeInput.fill('000000');
-  await dialog.getByRole('button', { name: 'Activate & Continue' }).click();
-  await expect(dialog.getByRole('alert')).toContainText(/Invalid|verification/i);
-  await expect(page.getByText('Dashboard Overview')).toHaveCount(0);
-
-  await codeInput.fill(generateTotp(secret));
-  await dialog.getByRole('button', { name: 'Activate & Continue' }).click();
   await expect(page.getByText('Dashboard Overview')).toBeVisible();
   await expect(page.getByText('Administrator', { exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: /Two-Factor Authentication/i })).toHaveCount(0);
+
+  await page.reload();
+  await expect(page.getByText('Dashboard Overview')).toBeVisible();
 });

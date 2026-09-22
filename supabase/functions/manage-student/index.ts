@@ -182,10 +182,10 @@ export async function handleManageStudent(
     return json(request, { error: 'Authentication required' }, 401);
   }
 
-  // 7. Cryptographically verify caller has AAL2 administrative authorization in Postgres
+  // 7. Verify the owner-approved administrative authority in Postgres.
   const { data: isAal2Admin, error: rpcError } = await caller.rpc('is_admin_aal2');
   if (rpcError || isAal2Admin !== true) {
-    return json(request, { error: 'Multi-factor authentication (AAL2) required' }, 403);
+    return json(request, { error: 'Active administrator access required' }, 403);
   }
 
   // 8. Verify server-owned profile role
@@ -201,6 +201,32 @@ export async function handleManageStudent(
 
   // 9. Validate Request Body
   const action = String(body?.action || '');
+  if (action === 'create-admin') {
+    const { data: isOwner, error: ownerError } = await caller.rpc('is_root_developer');
+    if (ownerError || isOwner !== true) return json(request, { error: 'Root developer access required' }, 403);
+    const email = String(body.email || '').trim().toLowerCase();
+    const name = String(body.name || '').trim();
+    const password = String(body.password || '');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254
+      || !name || name.length > 120 || password.length < 10 || password.length > 128) {
+      return json(request, { error: 'Enter a valid email, name, and password of 10 to 128 characters' }, 400);
+    }
+    const { data: created, error: createError } = await admin.auth.admin.createUser({
+      email, password, email_confirm: true, user_metadata: { name },
+      app_metadata: { provisioned_by: 'admin', account_type: 'admin' }
+    });
+    if (createError || !created?.user) return json(request, { error: 'Administrator creation failed; check whether the email already exists' }, 400);
+    const id = created.user.id;
+    const { error: finalizeError } = await admin.rpc('complete_account_provisioning', { account_id_param: id });
+    const { error: registerError } = finalizeError ? { error: finalizeError } : await admin.rpc('register_managed_administrator', {
+      account_id_param: id, creator_id_param: user.id
+    });
+    if (registerError) {
+      const { error: rollbackError } = await admin.auth.admin.deleteUser(id);
+      return json(request, { error: rollbackError ? 'Account setup failed; incomplete account needs operator cleanup' : 'Account setup failed and was rolled back' }, 500);
+    }
+    return json(request, { id, email, name }, 201);
+  }
   if (action !== 'create' && action !== 'update-assignment') {
     return json(request, { error: 'Unsupported action' }, 400);
   }

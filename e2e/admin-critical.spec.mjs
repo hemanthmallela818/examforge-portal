@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { fixturesFor, generateTotp } from './support/fixtures.mjs';
+import { fixturesFor } from './support/fixtures.mjs';
 
 const acknowledge = async (page, title = 'Notification') => {
   const dialog = page.getByRole('dialog', { name: title });
@@ -7,18 +7,13 @@ const acknowledge = async (page, title = 'Notification') => {
   await dialog.getByRole('button', { name: title === 'Confirmation Required' ? 'Confirm' : 'OK' }).click();
 };
 
-const loginAal2Administrator = async (page, account) => {
+const loginAdministrator = async (page, account) => {
   await page.goto('/');
   await page.getByRole('tab', { name: 'Admin Login' }).click();
   await page.getByLabel('Admin Email').fill(account.email);
   await page.getByLabel('Password').fill(account.password);
   await page.getByRole('button', { name: 'Login' }).click();
 
-  const setupDialog = page.getByRole('dialog', { name: 'Setup Two-Factor Authentication' });
-  await expect(setupDialog).toBeVisible();
-  const secret = (await setupDialog.locator('code').innerText()).trim();
-  await setupDialog.getByLabel(/confirmation code/i).fill(generateTotp(secret));
-  await setupDialog.getByRole('button', { name: 'Activate & Continue' }).click();
   await expect(page.getByRole('heading', { name: 'Dashboard Overview' })).toBeVisible();
 };
 
@@ -35,7 +30,7 @@ const openExamDetail = async (page, title) => {
 
 test('administrator imports reviewed JSON, assembles an exam, and enforces lifecycle transitions', async ({ page }, testInfo) => {
   const fixture = fixturesFor(testInfo.project.name);
-  await loginAal2Administrator(page, fixture.credentials.operationsAdmin);
+  await loginAdministrator(page, fixture.credentials.operationsAdmin);
 
   await page.getByRole('button', { name: /Operations & Audit/ }).click();
   await expect(page.getByRole('heading', { name: 'Operational Health' })).toBeVisible();
@@ -124,7 +119,7 @@ test('administrator imports reviewed JSON, assembles an exam, and enforces lifec
 
 test('administrator downloads complete audited CSV and PDF result exports', async ({ page }, testInfo) => {
   const fixture = fixturesFor(testInfo.project.name);
-  await loginAal2Administrator(page, fixture.credentials.exportAdmin);
+  await loginAdministrator(page, fixture.credentials.exportAdmin);
   await openExamDetail(page, fixture.reportExam.title);
 
   const csvDownload = page.waitForEvent('download');

@@ -24,25 +24,18 @@ const expectNoHorizontalOverflow = async page => {
   expect(dimensions.content).toBeLessThanOrEqual(dimensions.viewport + 1);
 };
 
-test('MFA setup traps keyboard focus and restores it when cancelled', async ({ page }, testInfo) => {
+test('administrator password login keeps a clear keyboard focus path', async ({ page }, testInfo) => {
   const fixture = fixturesFor(testInfo.project.name);
   await page.goto('/');
   await page.getByRole('tab', { name: 'Admin Login' }).click();
   await page.getByLabel('Admin Email').fill(fixture.credentials.accessibilityAdmin.email);
   await page.getByLabel('Password').fill(fixture.credentials.accessibilityAdmin.password);
   const loginButton = page.getByRole('button', { name: 'Login' });
-  await loginButton.click();
-
-  const dialog = page.getByRole('dialog', { name: 'Setup Two-Factor Authentication' });
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByLabel(/confirmation code/i)).toBeFocused();
-  const lastControl = dialog.getByRole('button', { name: 'Lost your authenticator device?' });
-  await lastControl.focus();
-  await page.keyboard.press('Tab');
-  await expect(dialog.getByRole('button', { name: 'Copy secret key' })).toBeFocused();
-  await page.keyboard.press('Escape');
-  await expect(dialog).toHaveCount(0);
+  await loginButton.focus();
   await expect(loginButton).toBeFocused();
+  await loginButton.click();
+  await expect(page.getByRole('heading', { name: 'Dashboard Overview' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: /Two-Factor Authentication/i })).toHaveCount(0);
 });
 
 test('exam UI announces saves, respects accessibility media, and keeps modal focus contained', async ({ page }, testInfo) => {
@@ -93,7 +86,7 @@ test('exam UI announces saves, respects accessibility media, and keeps modal foc
   await expect(confirmButton).toBeFocused();
   // Fullscreen browsers reserve the first Escape press to leave fullscreen,
   // which intentionally triggers the exam proctoring warning. Exercise the
-  // dialog's explicit close action here; the MFA test covers Escape dismissal.
+  // dialog's explicit close action here because fullscreen browsers reserve Escape.
   await cancelButton.click();
   await expect(submitDialog).toHaveCount(0);
   await expect(submitButton).toBeFocused();

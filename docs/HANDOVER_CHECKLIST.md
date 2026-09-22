@@ -19,7 +19,7 @@ This checklist separates repository work from deployment work. Production remain
 - [ ] Rotate the secret key exposed by the malformed ignored environment-file line.
 - [ ] Enable leaked-password protection in staging and production.
 - [ ] Verify production migration parity and deploy the current Edge Function during deployment.
-- [ ] Configure production Auth URLs, exact CORS origins, email delivery, private Storage, and admin MFA.
+- [ ] Configure production Auth URLs, exact CORS origins, email delivery, and private Storage.
 - [ ] Configure monitoring, alerts, rate limits, backups/PITR, and an on-call owner.
 - [ ] Complete real-device/browser accessibility acceptance and client workflow sign-off.
 

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { createClient } from '@supabase/supabase-js';
-import { fixturesFor, generateTotp } from './support/fixtures.mjs';
+import { fixturesFor } from './support/fixtures.mjs';
 import { readLocalSupabase } from './support/local-supabase.mjs';
 
 const jsonError = (status, message) => ({
@@ -9,18 +9,13 @@ const jsonError = (status, message) => ({
   body: JSON.stringify({ code: `E2E_${status}`, message, details: null, hint: null })
 });
 
-const loginAal2Administrator = async (page, account) => {
+const loginAdministrator = async (page, account) => {
   await page.goto('/');
   await page.getByRole('tab', { name: 'Admin Login' }).click();
   await page.getByLabel('Admin Email').fill(account.email);
   await page.getByLabel('Password').fill(account.password);
   await page.getByRole('button', { name: 'Login' }).click();
 
-  const setupDialog = page.getByRole('dialog', { name: 'Setup Two-Factor Authentication' });
-  await expect(setupDialog).toBeVisible();
-  const secret = (await setupDialog.locator('code').innerText()).trim();
-  await setupDialog.getByLabel(/confirmation code/i).fill(generateTotp(secret));
-  await setupDialog.getByRole('button', { name: 'Activate & Continue' }).click();
   await expect(page.getByRole('heading', { name: 'Dashboard Overview' })).toBeVisible();
 };
 
@@ -59,7 +54,7 @@ test('administrator data failures are visible, bounded, and recover through expl
     await route.continue();
   });
 
-  await loginAal2Administrator(page, fixture.credentials.reliabilityAdmin);
+  await loginAdministrator(page, fixture.credentials.reliabilityAdmin);
   const failure = page.getByRole('alert').filter({ hasText: 'Some administrator data could not be refreshed.' });
   await expect(failure).toBeVisible();
 
