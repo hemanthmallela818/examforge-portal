@@ -51,8 +51,40 @@ const TABLE_METADATA = [
   }
 ];
 
-const AdminDatabaseCleanerView = ({ dbSize, formatBytes, tableCounts, onMaintainTable }) => (
+const AdminDatabaseCleanerView = ({
+  dbSize,
+  formatBytes,
+  tableCounts,
+  onMaintainTable,
+  isRootDeveloper,
+  onResetApplication,
+  isResetting
+}) => (
   <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+    {isRootDeveloper && (
+      <section aria-labelledby="root-reset-title" style={{ backgroundColor: '#fff7f7', padding: '24px', borderRadius: '12px', border: '2px solid #dc2626' }}>
+        <h3 id="root-reset-title" style={{ margin: '0 0 8px', color: '#991b1b' }}>Root Developer Reset</h3>
+        <p style={{ margin: '0 0 10px', color: '#7f1d1d', lineHeight: 1.5 }}>
+          Permanently removes all student accounts and application data so this installation can be reused.
+          Your root account and administrator accounts are preserved.
+        </p>
+        <p style={{ margin: '0 0 18px', color: '#7f1d1d', fontSize: '0.85rem' }}>
+          This includes results, exams, sessions, students, classes, questions, imports, and previous audit events. Private Storage files are not removed.
+        </p>
+        <button
+          type="button"
+          onClick={onResetApplication}
+          disabled={isResetting}
+          style={{
+            width: '100%', padding: '12px', borderRadius: '6px', border: 0,
+            backgroundColor: '#b91c1c', color: 'white', fontWeight: 'bold',
+            cursor: isResetting ? 'wait' : 'pointer', opacity: isResetting ? 0.65 : 1
+          }}
+        >
+          {isResetting ? 'Resetting Application Data…' : '⚠ Reset Application Data'}
+        </button>
+      </section>
+    )}
     <div style={{ backgroundColor: 'var(--panel-bg)', padding: '30px', borderRadius: '12px', border: '1px solid var(--border-color)', boxShadow: '0 4px 6px rgba(0,0,0,0.02)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
         <div>

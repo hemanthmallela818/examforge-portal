@@ -35,6 +35,7 @@ const RESULT_EXPORT_PAGE_SIZE = 500;
 const AdminDashboard = ({ onBackToLogin }) => {
   const [adminAccess, setAdminAccess] = useState('CHECKING');
   const [isRootDeveloper, setIsRootDeveloper] = useState(false);
+  const [isResettingApplication, setIsResettingApplication] = useState(false);
   const [adminAccessError, setAdminAccessError] = useState('');
   const [adminVerificationAttempt, setAdminVerificationAttempt] = useState(0);
   const [dataLoadState, setDataLoadState] = useState({});
@@ -1111,6 +1112,70 @@ const AdminDashboard = ({ onBackToLogin }) => {
       return;
     }
     await customAlert(`No cleanup operation is available for ${tableDisplayName}.`);
+  };
+
+  const handleResetApplicationData = async () => {
+    if (!isRootDeveloper || isResettingApplication) return;
+    setIsResettingApplication(true);
+    try {
+      const previewResult = await supabase.functions.invoke('manage-student', {
+        body: { action: 'preview-reset' }
+      });
+      if (previewResult.error || !previewResult.data?.preview) {
+        throw new Error(previewResult.data?.error || previewResult.error?.message || 'Reset preview failed');
+      }
+      const preview = previewResult.data.preview;
+      const summary = [
+        `${preview.student_accounts || 0} student sign-in account(s)`,
+        `${preview.results || 0} result(s)`,
+        `${preview.exams || 0} exam(s)`,
+        `${preview.active_sessions || 0} active session(s)`,
+        `${preview.questions || 0} reusable question(s)`,
+        `${preview.classes || 0} class(es)`,
+        `${preview.import_history || 0} import-history row(s)`,
+        `${preview.audit_events || 0} previous audit event(s)`
+      ].join('\n');
+      const confirmation = await customPrompt(
+        `This permanently resets the application data below while preserving the root and administrator accounts:\n\n${summary}\n\nType RESET APPLICATION DATA to continue:`
+      );
+      if (confirmation !== 'RESET APPLICATION DATA') {
+        await customAlert('Application reset cancelled because the confirmation text did not match.');
+        return;
+      }
+      if (!await customConfirm('This operation cannot be undone. Reset all application data now?')) return;
+
+      const resetResult = await supabase.functions.invoke('manage-student', {
+        body: { action: 'reset-application', confirmation }
+      });
+      if (resetResult.error || resetResult.data?.reset !== true) {
+        throw new Error(resetResult.data?.error || resetResult.error?.message || 'Application reset failed');
+      }
+
+      setActiveExamId(null);
+      activeExamIdRef.current = null;
+      setActiveExamDetail(null);
+      setSelectedQuestions([]);
+      setStudentResults([]);
+      setResultPageTotal(0);
+      setResultOverallCount(0);
+      setResultSubjects([]);
+      setResultAnalytics(null);
+      loadedCollections.current.clear();
+      await Promise.all([
+        fetchTableCounts(),
+        fetchExams(),
+        fetchStudents(),
+        fetchQuestionBank(),
+        fetchClasses(),
+        fetchOperationalOverview()
+      ]);
+      showToast(`Application data reset completed. ${resetResult.data.deletedAuthUsers || 0} student sign-in account(s) removed.`, 'success');
+    } catch (error) {
+      console.error('Application reset failed:', error);
+      await customAlert(`Application reset failed: ${error.message}`);
+    } finally {
+      setIsResettingApplication(false);
+    }
   };
 
 
@@ -2526,6 +2591,9 @@ const AdminDashboard = ({ onBackToLogin }) => {
               formatBytes={formatBytes}
               tableCounts={tableCounts}
               onMaintainTable={handleClearTable}
+              isRootDeveloper={isRootDeveloper}
+              onResetApplication={handleResetApplicationData}
+              isResetting={isResettingApplication}
             />
           ) : activeExamId ? renderDetailView() : renderMasterView()}
         </div>

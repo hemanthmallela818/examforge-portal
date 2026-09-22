@@ -201,6 +201,62 @@ export async function handleManageStudent(
 
   // 9. Validate Request Body
   const action = String(body?.action || '');
+  if (action === 'preview-reset' || action === 'reset-application') {
+    const { data: isOwner, error: ownerError } = await caller.rpc('is_root_developer');
+    if (ownerError || isOwner !== true) return json(request, { error: 'Root developer access required' }, 403);
+
+    if (action === 'preview-reset') {
+      const { data: preview, error: previewError } = await admin.rpc('root_application_reset_preview_for_actor', {
+        actor_id_param: user.id,
+      });
+      if (previewError) return json(request, { error: 'Unable to preview the application reset' }, 500);
+      return json(request, { preview }, 200);
+    }
+
+    const confirmation = String(body?.confirmation || '');
+    if (confirmation !== 'RESET APPLICATION DATA') {
+      return json(request, { error: 'Exact reset confirmation is required' }, 400);
+    }
+    const { data: resetResult, error: resetError } = await admin.rpc('root_reset_application_data_for_actor', {
+      actor_id_param: user.id,
+      confirmation_param: confirmation,
+    });
+    if (resetError || !resetResult) return json(request, { error: 'Application data reset failed' }, 500);
+
+    const authUserIds = Array.isArray(resetResult.auth_user_ids) ? resetResult.auth_user_ids : [];
+    let deletedAuthUsers = 0;
+    const failedAuthUsers: string[] = [];
+    for (let offset = 0; offset < authUserIds.length; offset += 10) {
+      const batch = authUserIds.slice(offset, offset + 10);
+      const outcomes = await Promise.all(batch.map(async (accountId: string) => {
+        const { error } = await admin.auth.admin.deleteUser(accountId);
+        return { accountId, error };
+      }));
+      for (const outcome of outcomes) {
+        if (outcome.error) failedAuthUsers.push(outcome.accountId);
+        else deletedAuthUsers += 1;
+      }
+    }
+
+    if (failedAuthUsers.length > 0) {
+      const correlationId = crypto.randomUUID();
+      console.error(`[RESET_AUTH_CLEANUP_INCOMPLETE] Correlation: ${correlationId}, Failed: ${failedAuthUsers.length}`);
+      return json(request, {
+        error: 'Database reset completed, but some student sign-in accounts require a reset retry',
+        correlationId,
+        deleted: resetResult.deleted,
+        deletedAuthUsers,
+        failedAuthUsers: failedAuthUsers.length,
+      }, 500);
+    }
+
+    return json(request, {
+      reset: true,
+      deleted: resetResult.deleted,
+      deletedAuthUsers,
+      preserved: 'root_and_administrator_accounts',
+    }, 200);
+  }
   if (action === 'create-admin') {
     const { data: isOwner, error: ownerError } = await caller.rpc('is_root_developer');
     if (ownerError || isOwner !== true) return json(request, { error: 'Root developer access required' }, 403);
