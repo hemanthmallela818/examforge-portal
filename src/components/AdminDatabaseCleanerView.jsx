@@ -4,8 +4,9 @@ const TABLE_METADATA = [
     key: 'student_results',
     name: 'Exam Results',
     desc: 'Permanent academic records for submitted examinations.',
-    warning: 'Protected: submitted results cannot be modified or deleted by the application.',
-    protected: true
+    warning: 'Root developer only: download/export results first, then clear them independently. Student accounts are preserved.',
+    rootOnly: true,
+    rootActionLabel: '🗑️ Clear Exam Results'
   },
   {
     key: 'active_sessions',
@@ -18,15 +19,17 @@ const TABLE_METADATA = [
     key: 'cbt_exams',
     name: 'Exams & Schedules',
     desc: 'Contains all scheduled exams, test papers, and their targeting classes/sections.',
-    warning: 'Protected: bulk deletion is disabled. Only an unused exam can be deleted individually.',
-    protected: true
+    warning: 'Root developer only: clear results and active sessions first. Student accounts and classes remain.',
+    rootOnly: true,
+    rootActionLabel: '🗑️ Clear Exams & Schedules'
   },
   {
     key: 'question_bank',
     name: 'Question Bank',
     desc: 'The central directory holding all imported JEE questions and MCQ choices.',
-    warning: 'Clearing removes reusable questions, but existing exam snapshots and image assets remain intact.',
-    actionLabel: '🧹 Clear Question Bank'
+    warning: 'Root developer only: clearing removes reusable questions; exam snapshots and image assets remain intact.',
+    rootOnly: true,
+    rootActionLabel: '🗑️ Clear Question Bank'
   },
   {
     key: 'students',
@@ -63,9 +66,9 @@ const AdminDatabaseCleanerView = ({
   <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
     {isRootDeveloper && (
       <section aria-labelledby="root-reset-title" style={{ backgroundColor: '#fff7f7', padding: '24px', borderRadius: '12px', border: '2px solid #dc2626' }}>
-        <h3 id="root-reset-title" style={{ margin: '0 0 8px', color: '#991b1b' }}>Root Developer Reset</h3>
+        <h3 id="root-reset-title" style={{ margin: '0 0 8px', color: '#991b1b' }}>Root Developer Reset (Full Installation — Optional)</h3>
         <p style={{ margin: '0 0 10px', color: '#7f1d1d', lineHeight: 1.5 }}>
-          Permanently removes all student accounts and application data so this installation can be reused.
+          This removes all student accounts and application data in one operation. For normal reuse, use the separate root-only buttons below instead.
           Your root account and administrator accounts are preserved.
         </p>
         <p style={{ margin: '0 0 18px', color: '#7f1d1d', fontSize: '0.85rem' }}>
@@ -111,7 +114,7 @@ const AdminDatabaseCleanerView = ({
       <span aria-hidden="true" style={{ fontSize: '1.5rem' }}>💡</span>
       <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: '1.5' }}>
         <strong style={{ display: 'block', fontSize: '0.95rem', color: 'var(--text-main)', marginBottom: '4px' }}>Maintain Storage Efficiency</strong>
-        Production records are retained by default. Only expired attempts and reusable question-bank content have controlled maintenance actions.
+        The root developer can clear results, exams, and reusable questions separately. Student accounts and administrator accounts are never removed by these buttons.
       </div>
     </div>
 
@@ -133,12 +136,12 @@ const AdminDatabaseCleanerView = ({
           <button
             type="button"
             onClick={() => onMaintainTable(table.key, table.name)}
-            disabled={table.protected}
+            disabled={table.protected || (table.rootOnly && !isRootDeveloper)}
             style={{
               width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)',
               backgroundColor: 'transparent', color: 'var(--text-main)', fontWeight: 'bold',
-              cursor: table.protected ? 'not-allowed' : 'pointer', fontSize: '0.85rem', transition: 'all 0.2s',
-              opacity: table.protected ? 0.55 : 1
+              cursor: table.protected || (table.rootOnly && !isRootDeveloper) ? 'not-allowed' : 'pointer', fontSize: '0.85rem', transition: 'all 0.2s',
+              opacity: table.protected || (table.rootOnly && !isRootDeveloper) ? 0.55 : 1
             }}
             onMouseOver={(event) => {
               event.currentTarget.style.borderColor = 'var(--primary)';
@@ -151,7 +154,11 @@ const AdminDatabaseCleanerView = ({
               event.currentTarget.style.color = 'var(--text-main)';
             }}
           >
-            {table.protected ? '🔒 Protected Record' : (table.actionLabel || `🧹 Maintain ${table.name}`)}
+            {table.protected
+              ? '🔒 Protected Record'
+              : (table.rootOnly && !isRootDeveloper
+                ? '🔒 Root Developer Only'
+                : (isRootDeveloper && table.rootActionLabel ? table.rootActionLabel : (table.actionLabel || `🧹 Maintain ${table.name}`)))}
           </button>
         </div>
       ))}

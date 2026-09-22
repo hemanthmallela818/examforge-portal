@@ -182,10 +182,16 @@ export async function handleManageStudent(
     return json(request, { error: 'Authentication required' }, 401);
   }
 
-  // 7. Verify the owner-approved administrative authority in Postgres.
-  const { data: isAal2Admin, error: rpcError } = await caller.rpc('is_admin_aal2');
-  if (rpcError || isAal2Admin !== true) {
-    return json(request, { error: 'Active administrator access required' }, 403);
+  // 7. Root-only destructive actions use the owner authority check below and
+  // intentionally do not require MFA. All ordinary administrator actions
+  // retain the AAL2 requirement.
+  const action = String(body?.action || '');
+  const isRootOnlyAction = ['preview-reset', 'reset-application', 'clear-scoped-data'].includes(action);
+  if (!isRootOnlyAction) {
+    const { data: isAal2Admin, error: rpcError } = await caller.rpc('is_admin_aal2');
+    if (rpcError || isAal2Admin !== true) {
+      return json(request, { error: 'Active administrator access required' }, 403);
+    }
   }
 
   // 8. Verify server-owned profile role
@@ -200,7 +206,27 @@ export async function handleManageStudent(
   }
 
   // 9. Validate Request Body
-  const action = String(body?.action || '');
+  if (action === 'clear-scoped-data') {
+    const target = String(body?.target || '');
+    const confirmations: Record<string, string> = {
+      student_results: 'CLEAR EXAM RESULTS',
+      cbt_exams: 'CLEAR EXAMS',
+      question_bank: 'CLEAR QUESTION BANK',
+    };
+    const expectedConfirmation = confirmations[target];
+    if (!expectedConfirmation || String(body?.confirmation || '') !== expectedConfirmation) {
+      return json(request, { error: 'Exact scoped cleanup confirmation is required' }, 400);
+    }
+    const { data: isOwner, error: ownerError } = await caller.rpc('is_root_developer');
+    if (ownerError || isOwner !== true) return json(request, { error: 'Root developer access required' }, 403);
+    const { data: cleared, error: clearError } = await admin.rpc('root_clear_scoped_data_for_actor', {
+      actor_id_param: user.id,
+      target_param: target,
+      confirmation_param: expectedConfirmation,
+    });
+    if (clearError || !cleared) return json(request, { error: clearError?.message || 'Scoped cleanup failed' }, 500);
+    return json(request, { cleared: true, target, deleted: cleared.deleted }, 200);
+  }
   if (action === 'preview-reset' || action === 'reset-application') {
     const { data: isOwner, error: ownerError } = await caller.rpc('is_root_developer');
     if (ownerError || isOwner !== true) return json(request, { error: 'Root developer access required' }, 403);

@@ -11,6 +11,16 @@ This project has one root developer and no public account creation.
 
 ## Reuse the installation
 
+The root developer can also clear reusable data independently without deleting students:
+
+1. Open **Database Maintenance & Cleaner**.
+2. Download/export **Exam Results**, then select **Clear Exam Results** and type `CLEAR EXAM RESULTS`.
+3. If needed, use the existing **Finalize Expired Attempts** action for active sessions. The exam cleanup will refuse to run while results or active sessions remain.
+4. Select **Clear Exams & Schedules** and type `CLEAR EXAMS`.
+5. Select **Clear Question Bank** and type `CLEAR QUESTION BANK` when reusable questions are no longer needed.
+
+Each action is root-only, audited, and refreshes only the affected collection. Student accounts, student roster records, classes, administrator accounts, and private Storage files are preserved.
+
 Only the root developer can perform a complete application-data reset:
 
 1. Open **Database Maintenance & Cleaner** and select **Reset Application Data**.

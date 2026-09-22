@@ -64,6 +64,7 @@ const AdminDashboard = ({ onBackToLogin }) => {
   const [newClassSections, setNewClassSections] = useState('');
   
   const [newStudentPassword, setNewStudentPassword] = useState('');
+  const [showNewStudentPassword, setShowNewStudentPassword] = useState(false);
   const [isAddingStudent, setIsAddingStudent] = useState(false);
   const [selectedStudentClass, setSelectedStudentClass] = useState('');
   const [selectedStudentSection, setSelectedStudentSection] = useState('');
@@ -1003,6 +1004,7 @@ const AdminDashboard = ({ onBackToLogin }) => {
       setNewStudentName('');
       setNewStudentId('');
       setNewStudentPassword('');
+      setShowNewStudentPassword(false);
       setSelectedStudentClass('');
       setSelectedStudentSection('');
       showToast(`Student "${trimmedName}" added successfully.`, "success");
@@ -1082,7 +1084,55 @@ const AdminDashboard = ({ onBackToLogin }) => {
     }
   };
 
+  const handleRootScopedClear = async (tableName, tableDisplayName) => {
+    if (!isRootDeveloper) {
+      await customAlert('Only the root developer can clear this data. Student accounts remain protected.');
+      return;
+    }
+    const cleanup = {
+      student_results: {
+        confirmation: 'CLEAR EXAM RESULTS',
+        warning: 'Download or export the exam results before continuing. This clears submitted results only; students, exams, and classes remain.'
+      },
+      cbt_exams: {
+        confirmation: 'CLEAR EXAMS',
+        warning: 'This clears all exam schedules and exam snapshots. Results and active sessions must already be cleared; students, classes, and question-bank content remain.'
+      },
+      question_bank: {
+        confirmation: 'CLEAR QUESTION BANK',
+        warning: 'This clears reusable question-bank records only. Existing exam snapshots, image assets, students, and results remain.'
+      }
+    }[tableName];
+    if (!cleanup) return;
+    const typed = await customPrompt(`${cleanup.warning}\n\nType ${cleanup.confirmation} to continue:`);
+    if (typed !== cleanup.confirmation) {
+      await customAlert(`${tableDisplayName} cleanup cancelled because the confirmation text did not match.`);
+      return;
+    }
+    if (!await customConfirm(`This permanently clears ${tableDisplayName}. Student accounts will not be deleted. Continue?`)) return;
+    try {
+      const { data, error } = await supabase.functions.invoke('manage-student', {
+        body: { action: 'clear-scoped-data', target: tableName, confirmation: cleanup.confirmation }
+      });
+      if (error || data?.cleared !== true) throw new Error(data?.error || error?.message || `${tableDisplayName} cleanup failed`);
+      await Promise.all([
+        fetchTableCounts(),
+        tableName === 'student_results' ? fetchResults() : Promise.resolve(),
+        tableName === 'cbt_exams' ? fetchExams() : Promise.resolve(),
+        tableName === 'question_bank' ? fetchQuestionBank() : Promise.resolve()
+      ]);
+      showToast(`${tableDisplayName} cleared. Student accounts were preserved.`, 'success');
+    } catch (err) {
+      console.error(`${tableDisplayName} cleanup failed:`, err);
+      await customAlert(`${tableDisplayName} cleanup failed: ${err.message}`);
+    }
+  };
+
   const handleClearTable = async (tableName, tableDisplayName) => {
+    if (['student_results', 'cbt_exams', 'question_bank'].includes(tableName)) {
+      await handleRootScopedClear(tableName, tableDisplayName);
+      return;
+    }
     if (['student_results', 'cbt_exams', 'students', 'classes', 'import_history'].includes(tableName)) {
       const protectedMessages = {
         student_results: 'Submitted examination results are protected academic records and cannot be cleared.',
@@ -1294,7 +1344,48 @@ const AdminDashboard = ({ onBackToLogin }) => {
         <div style={{ display: 'flex', gap: '10px', marginBottom: '30px', flexWrap: 'wrap', alignItems: 'center' }}>
           <input type="text" placeholder="Student Name" value={newStudentName} onChange={e => setNewStudentName(e.target.value)} onKeyDown={async (e) => { if (e.key === 'Enter') { e.preventDefault(); await handleAddStudent(); } }} style={{ flex: 1, minWidth: '150px', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-color)' }} />
           <input type="text" placeholder="Student ID (Login ID)" value={newStudentId} onChange={e => setNewStudentId(e.target.value)} onKeyDown={async (e) => { if (e.key === 'Enter') { e.preventDefault(); await handleAddStudent(); } }} style={{ flex: 1, minWidth: '150px', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-color)' }} />
-          <input type="password" autoComplete="new-password" aria-label="Initial student password" placeholder="Password (12+ characters)" value={newStudentPassword} onChange={e => setNewStudentPassword(e.target.value)} onKeyDown={async (e) => { if (e.key === 'Enter') { e.preventDefault(); await handleAddStudent(); } }} style={{ flex: 1, minWidth: '150px', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-color)' }} />
+          <div style={{ position: 'relative', flex: 1, minWidth: '150px', display: 'flex', alignItems: 'center' }}>
+            <input
+              type={showNewStudentPassword ? "text" : "password"}
+              autoComplete="new-password"
+              aria-label="Initial student password"
+              placeholder="Password (12+ characters)"
+              value={newStudentPassword}
+              onChange={e => setNewStudentPassword(e.target.value)}
+              onKeyDown={async (e) => { if (e.key === 'Enter') { e.preventDefault(); await handleAddStudent(); } }}
+              style={{ width: '100%', padding: '12px', paddingRight: '40px', borderRadius: '6px', border: '1px solid var(--border-color)', boxSizing: 'border-box' }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowNewStudentPassword(prev => !prev)}
+              aria-label={showNewStudentPassword ? "Hide password" : "Show password"}
+              title={showNewStudentPassword ? "Hide password" : "Show password"}
+              style={{
+                position: 'absolute',
+                right: '8px',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '4px',
+                color: 'var(--text-muted)'
+              }}
+            >
+              {showNewStudentPassword ? (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                  <line x1="1" y1="1" x2="23" y2="23" />
+                </svg>
+              ) : (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              )}
+            </button>
+          </div>
           
           <select 
             value={selectedStudentClass} 
@@ -2560,7 +2651,7 @@ const AdminDashboard = ({ onBackToLogin }) => {
 
         <div className="admin-dashboard-content" style={{ padding: '40px', flex: 1, maxWidth: '1400px', margin: '0 auto', width: '100%' }}>
           {isRootDeveloper && <RootAdministratorManager />}
-          {isAnyDataLoading && <p role="status" aria-live="polite">Refreshing administrator data…</p>}
+          {isAnyDataLoading && <p role="status" aria-live="polite" className="sr-only">Refreshing administrator data…</p>}
           {failedDataLoads.length > 0 && (
             <section role="alert" style={{ marginBottom: '20px', padding: '14px 16px', border: '1px solid #f87171', borderRadius: '8px', background: '#fef2f2', color: '#991b1b' }}>
               <strong>Some administrator data could not be refreshed.</strong>

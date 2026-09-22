@@ -85,7 +85,7 @@ test('database maintenance rendering is isolated from the dashboard controller',
   assert.match(databaseCleanerView, /Supabase Database Storage/);
   assert.match(databaseCleanerView, /Finalize Expired Attempts/);
   assert.match(databaseCleanerView, /Clear Question Bank/);
-  assert.match(databaseCleanerView, /disabled=\{table\.protected\}/);
+  assert.match(databaseCleanerView, /disabled=\{table\.protected \|\| \(table\.rootOnly && !isRootDeveloper\)\}/);
 });
 
 test('student duplicate lookup fails closed and administrator callback is stable', () => {

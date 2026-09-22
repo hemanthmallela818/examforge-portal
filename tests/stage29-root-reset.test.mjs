@@ -30,6 +30,8 @@ test('root reset uses the server function for Auth cleanup and never exposes ser
 
   assert.match(edge, /action === 'preview-reset' \|\| action === 'reset-application'/);
   assert.match(edge, /caller\.rpc\('is_root_developer'\)/);
+  assert.match(edge, /isRootOnlyAction = \['preview-reset', 'reset-application', 'clear-scoped-data'\]/);
+  assert.match(edge, /if \(!isRootOnlyAction\)/);
   assert.match(edge, /admin\.rpc\('root_application_reset_preview_for_actor'/);
   assert.match(edge, /admin\.rpc\('root_reset_application_data_for_actor'/);
   assert.match(edge, /admin\.auth\.admin\.deleteUser\(accountId\)/);
@@ -63,4 +65,28 @@ test('the connected staging reset proof is inert without a second explicit destr
   assert.match(proof, /RESET_CONFIRM_DISPOSABLE/);
   assert.match(proof, /YES_RESET_JEE_STAGING_APPLICATION_DATA/);
   assert.match(proof, /Explicit destructive staging reset confirmation is required/);
+});
+
+test('root cleanup actions are independently scoped and never target student accounts', async () => {
+  const [migration, edge, dashboard, cleaner] = await Promise.all([
+    read('supabase/migrations/20260922110000_root_scoped_cleanup_actions.sql'),
+    read('supabase/functions/manage-student/index.ts'),
+    read('src/components/AdminDashboard.jsx'),
+    read('src/components/AdminDatabaseCleanerView.jsx'),
+  ]);
+
+  assert.match(migration, /root_clear_results/);
+  assert.match(migration, /root_clear_exams/);
+  assert.match(migration, /root_clear_questions/);
+  assert.match(migration, /target_param NOT IN \('student_results', 'cbt_exams', 'question_bank'\)/);
+  assert.doesNotMatch(migration, /DELETE FROM public\.students/);
+  assert.doesNotMatch(migration, /DELETE FROM public\.profiles/);
+  assert.match(edge, /action === 'clear-scoped-data'/);
+  assert.match(edge, /CLEAR EXAM RESULTS/);
+  assert.match(edge, /root_clear_scoped_data_for_actor/);
+  assert.match(dashboard, /handleRootScopedClear/);
+  assert.match(dashboard, /CLEAR EXAMS/);
+  assert.match(cleaner, /Clear Exam Results/);
+  assert.match(cleaner, /Clear Exams & Schedules/);
+  assert.match(cleaner, /Student accounts and administrator accounts are never removed/);
 });
