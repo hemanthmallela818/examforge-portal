@@ -41,8 +41,11 @@ test('administrator imports reviewed JSON, assembles an exam, and enforces lifec
   await expect(page.getByRole('heading', { name: /Supabase Database Storage/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /Finalize Expired Attempts/ })).toBeEnabled();
   const protectedMaintenanceActions = page.getByRole('button', { name: /Protected Record/ });
-  await expect(protectedMaintenanceActions).toHaveCount(5);
-  for (let index = 0; index < 5; index += 1) await expect(protectedMaintenanceActions.nth(index)).toBeDisabled();
+  await expect(protectedMaintenanceActions).toHaveCount(3);
+  for (let index = 0; index < 3; index += 1) await expect(protectedMaintenanceActions.nth(index)).toBeDisabled();
+  const rootOnlyMaintenanceActions = page.getByRole('button', { name: /Root Developer Only/ });
+  await expect(rootOnlyMaintenanceActions).toHaveCount(3);
+  for (let index = 0; index < 3; index += 1) await expect(rootOnlyMaintenanceActions.nth(index)).toBeDisabled();
 
   await page.getByRole('button', { name: /Reviewed JSON Import/ }).click();
   await expect(page.getByRole('heading', { name: 'Reviewed JSON Import' }).first()).toBeVisible();
