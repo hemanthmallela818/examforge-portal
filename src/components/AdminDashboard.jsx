@@ -23,6 +23,7 @@ import {
   validatePdfExport
 } from '../resultExportLogic';
 import { parseResultExportPageResponse, parseResultPageResponse, validateCompleteResultExport } from '../resultPaging';
+import { readFunctionInvocationError } from '../edgeFunctionErrors';
 
 const AdminAnalyticsCharts = React.lazy(() => import('./AdminAnalyticsCharts'));
 const STUDENT_ROSTER_PAGE_SIZE = 100;
@@ -1114,7 +1115,9 @@ const AdminDashboard = ({ onBackToLogin }) => {
       const { data, error } = await supabase.functions.invoke('manage-student', {
         body: { action: 'clear-scoped-data', target: tableName, confirmation: cleanup.confirmation }
       });
-      if (error || data?.cleared !== true) throw new Error(data?.error || error?.message || `${tableDisplayName} cleanup failed`);
+      if (error || data?.cleared !== true) {
+        throw new Error(await readFunctionInvocationError({ data, error }, `${tableDisplayName} cleanup failed`));
+      }
       await Promise.all([
         fetchTableCounts(),
         tableName === 'student_results' ? fetchResults() : Promise.resolve(),
@@ -1172,7 +1175,7 @@ const AdminDashboard = ({ onBackToLogin }) => {
         body: { action: 'preview-reset' }
       });
       if (previewResult.error || !previewResult.data?.preview) {
-        throw new Error(previewResult.data?.error || previewResult.error?.message || 'Reset preview failed');
+        throw new Error(await readFunctionInvocationError(previewResult, 'Reset preview failed'));
       }
       const preview = previewResult.data.preview;
       const summary = [
@@ -1198,7 +1201,7 @@ const AdminDashboard = ({ onBackToLogin }) => {
         body: { action: 'reset-application', confirmation }
       });
       if (resetResult.error || resetResult.data?.reset !== true) {
-        throw new Error(resetResult.data?.error || resetResult.error?.message || 'Application reset failed');
+        throw new Error(await readFunctionInvocationError(resetResult, 'Application reset failed'));
       }
 
       setActiveExamId(null);

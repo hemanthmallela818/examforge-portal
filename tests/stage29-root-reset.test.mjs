@@ -34,6 +34,7 @@ test('root reset uses the server function for Auth cleanup and never exposes ser
   assert.match(edge, /if \(!isRootOnlyAction\)/);
   assert.match(edge, /admin\.rpc\('root_application_reset_preview_for_actor'/);
   assert.match(edge, /admin\.rpc\('root_reset_application_data_for_actor'/);
+  assert.match(edge, /resetError\?\.message \|\| 'Application data reset failed'/);
   assert.match(edge, /admin\.auth\.admin\.deleteUser\(accountId\)/);
   assert.match(edge, /offset \+= 10/);
   assert.doesNotMatch(edge, /return json\(request, \{[^}]*auth_user_ids/);
@@ -57,6 +58,7 @@ test('only the root UI exposes the destructive reset with preview and two confir
   assert.match(dashboard, /Type RESET APPLICATION DATA to continue/);
   assert.match(dashboard, /This operation cannot be undone/);
   assert.match(dashboard, /action: 'reset-application'/);
+  assert.match(dashboard, /readFunctionInvocationError\(resetResult, 'Application reset failed'\)/);
   assert.match(dashboard, /isRootDeveloper=\{isRootDeveloper\}/);
 });
 
@@ -68,8 +70,9 @@ test('the connected staging reset proof is inert without a second explicit destr
 });
 
 test('root cleanup actions are independently scoped and never target student accounts', async () => {
-  const [migration, edge, dashboard, cleaner] = await Promise.all([
+  const [migration, safeUpdateMigration, edge, dashboard, cleaner] = await Promise.all([
     read('supabase/migrations/20260922110000_root_scoped_cleanup_actions.sql'),
+    read('supabase/migrations/20260923080741_make_root_cleanup_safeupdate_compatible.sql'),
     read('supabase/functions/manage-student/index.ts'),
     read('src/components/AdminDashboard.jsx'),
     read('src/components/AdminDatabaseCleanerView.jsx'),
@@ -89,4 +92,9 @@ test('root cleanup actions are independently scoped and never target student acc
   assert.match(cleaner, /Clear Exam Results/);
   assert.match(cleaner, /Clear Exams & Schedules/);
   assert.match(cleaner, /Student accounts and administrator accounts are never removed/);
+  assert.match(safeUpdateMigration, /DELETE FROM public\.student_results WHERE true/);
+  assert.match(safeUpdateMigration, /DELETE FROM public\.cbt_exams_raw WHERE true/);
+  assert.match(safeUpdateMigration, /DELETE FROM public\.question_bank WHERE true/);
+  assert.match(safeUpdateMigration, /DELETE FROM public\.students WHERE true/);
+  assert.doesNotMatch(safeUpdateMigration, /DELETE FROM public\.profiles/);
 });

@@ -235,7 +235,9 @@ export async function handleManageStudent(
       const { data: preview, error: previewError } = await admin.rpc('root_application_reset_preview_for_actor', {
         actor_id_param: user.id,
       });
-      if (previewError) return json(request, { error: 'Unable to preview the application reset' }, 500);
+      if (previewError) {
+        return json(request, { error: previewError.message || 'Unable to preview the application reset' }, 500);
+      }
       return json(request, { preview }, 200);
     }
 
@@ -247,7 +249,9 @@ export async function handleManageStudent(
       actor_id_param: user.id,
       confirmation_param: confirmation,
     });
-    if (resetError || !resetResult) return json(request, { error: 'Application data reset failed' }, 500);
+    if (resetError || !resetResult) {
+      return json(request, { error: resetError?.message || 'Application data reset failed' }, 500);
+    }
 
     const authUserIds = Array.isArray(resetResult.auth_user_ids) ? resetResult.auth_user_ids : [];
     let deletedAuthUsers = 0;

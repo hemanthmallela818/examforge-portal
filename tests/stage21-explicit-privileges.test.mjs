@@ -6,6 +6,7 @@ const migrationUrl = new URL('../supabase/migrations/20260912102558_stage21_expl
 const platformDefaultsMigrationUrl = new URL('../supabase/migrations/20260912103030_stage21_supabase_admin_default_privileges.sql', import.meta.url);
 const deleteBoundaryMigrationUrl = new URL('../supabase/migrations/20260912154147_stage21_restore_audited_delete_boundaries.sql', import.meta.url);
 const serviceRoleMigrationUrl = new URL('../supabase/migrations/20260912154651_stage21_explicit_service_role_privileges.sql', import.meta.url);
+const canonicalQuestionGrantMigrationUrl = new URL('../supabase/migrations/20260923080203_restore_canonical_question_text_execute.sql', import.meta.url);
 
 test('Stage 21 Data API privileges are deny-by-default and explicitly allowlisted', async () => {
   const [migration, platformDefaultsMigration, deleteBoundaryMigration, serviceRoleMigration, config] = await Promise.all([
@@ -54,4 +55,12 @@ test('Stage 21 Data API privileges are deny-by-default and explicitly allowliste
   ]) {
     assert.doesNotMatch(migration, new RegExp(`GRANT EXECUTE ON FUNCTION public\\.${internal}\\([^;]*TO authenticated`));
   }
+});
+
+test('question validation restores only the authenticated canonical-text helper grant', async () => {
+  const migration = await readFile(canonicalQuestionGrantMigrationUrl, 'utf8');
+
+  assert.match(migration, /REVOKE ALL ON FUNCTION public\.canonical_question_text\(text\) FROM PUBLIC, anon/);
+  assert.match(migration, /GRANT EXECUTE ON FUNCTION public\.canonical_question_text\(text\) TO authenticated, service_role/);
+  assert.doesNotMatch(migration, /TO anon/);
 });

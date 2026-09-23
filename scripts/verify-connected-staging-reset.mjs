@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import { readConnectedStaging } from './connected-staging.mjs';
+import { readFunctionInvocationError } from '../src/edgeFunctionErrors.js';
 
 if (process.env.RESET_CONFIRM_DISPOSABLE !== 'YES_RESET_JEE_STAGING_APPLICATION_DATA') {
   throw new Error('Explicit destructive staging reset confirmation is required.');
@@ -46,7 +47,9 @@ if (studentCreation.error || !studentCreation.data?.id) {
 }
 studentUserId = studentCreation.data.id;
 
-const questionInsert = await service.from('question_bank').insert({
+// Use the signed-in root client so this proof also exercises the same
+// authenticated trigger/function permissions as manual question authoring.
+const questionInsert = await root.from('question_bank').insert({
   subject: 'Physics', type: 'MCQ', question_text: `Reset proof ${suffix}`,
   options: ['A', 'B', 'C', 'D'], correct_answer: '0', has_image_or_diagram: false,
 });
@@ -68,7 +71,7 @@ const reset = await root.functions.invoke('manage-student', {
   body: { action: 'reset-application', confirmation: 'RESET APPLICATION DATA' },
 });
 if (reset.error || reset.data?.reset !== true) {
-  throw new Error(`Root reset failed: ${reset.data?.error || reset.error?.message || 'unknown error'}`);
+  throw new Error(`Root reset failed: ${await readFunctionInvocationError(reset, 'unknown error')}`);
 }
 
 const clearedTables = [
