@@ -13,7 +13,8 @@ import RootAdministratorManager from './RootAdministratorManager';
 import { fetchAllRows, parsePagedCollectionResponse } from '../paginatedQuery';
 import { normalizeQuestionBankRow, parseSelectedQuestionsResponse } from '../questionBankPaging';
 import { normalizeExamListRow } from '../examListPaging';
-import { safeStorageRemove, safeStorageSet } from '../browserStorage';
+import AccessibleModal from './AccessibleModal';
+import { safeStorageRemove, safeStorageSet, safeStorageJson } from '../browserStorage';
 import { createLatestRequestTracker, runWithDeadline } from '../adminDataReliability';
 import {
   buildLeaderboardCsv,
@@ -57,6 +58,8 @@ const AdminDashboard = ({ onBackToLogin }) => {
   const [resultSubjects, setResultSubjects] = useState([]);
   const [resultAnalytics, setResultAnalytics] = useState(null);
   const [resultSnapshot, setResultSnapshot] = useState({ examId: null, page: 0, search: '' });
+  const [resultReview, setResultReview] = useState(null);
+  const [resultReviewLoadingId, setResultReviewLoadingId] = useState(null);
   const [studentsList, setStudentsList] = useState([]);
   const [questionBank, setQuestionBank] = useState([]);
   
@@ -81,6 +84,12 @@ const AdminDashboard = ({ onBackToLogin }) => {
   const [studentRosterPage, setStudentRosterPage] = useState(0);
   const [studentRosterTotal, setStudentRosterTotal] = useState(0);
   const [studentRosterSnapshot, setStudentRosterSnapshot] = useState({ page: 0, search: '', className: '', section: '' });
+  const [assignedCredentials, setAssignedCredentials] = useState(() => {
+    return safeStorageJson('localStorage', 'cbt_assigned_student_credentials') || {};
+  });
+  const [createdStudentModal, setCreatedStudentModal] = useState(null);
+  const [visiblePasswords, setVisiblePasswords] = useState({});
+  const locallyAddedStudents = useRef(new Set());
 
   const pendingAdded = useRef([]);
   const pendingDeleted = useRef([]);
@@ -487,6 +496,22 @@ const AdminDashboard = ({ onBackToLogin }) => {
     scheduleTableCounts();
     return true;
   };
+
+  const openStudentResultReview = async (result) => {
+    setResultReviewLoadingId(result.id);
+    try {
+      const { data, error } = await supabase.rpc('get_admin_student_result_review', {
+        result_id_param: result.id
+      });
+      if (error) throw error;
+      setResultReview({ ...data, studentName: result.studentName, result });
+    } catch (error) {
+      console.error('Detailed result review failed:', error);
+      await customAlert(error.message || 'Detailed answer review could not be loaded.');
+    } finally {
+      setResultReviewLoadingId(null);
+    }
+  };
   const fetchStudents = async () => {
     const query = { ...studentRosterQueryRef.current };
     const result = await runAdminDataLoad('students', 'The student roster page could not be loaded. Existing entries may be stale or incomplete.', async () => {
@@ -505,7 +530,7 @@ const AdminDashboard = ({ onBackToLogin }) => {
     });
     if (!result.ok || !result.current) return result.ok;
     const data = result.data;
-    setStudentsList(data.rows.map(s => ({ docId: s.id, id: s.student_id, name: s.name, ...s })));
+    setStudentsList(data.rows.map(s => ({ ...s, docId: s.id, id: s.student_id, student_id: s.student_id })));
     setStudentRosterTotal(data.total);
     setStudentRosterSnapshot(query);
     const lastPage = Math.max(0, Math.ceil(data.total / STUDENT_ROSTER_PAGE_SIZE) - 1);
@@ -622,7 +647,14 @@ const AdminDashboard = ({ onBackToLogin }) => {
 
         // Accumulate details for notifications
         if (payload.eventType === 'INSERT') {
-          pendingAdded.current.push(payload.new.name || payload.new.student_id);
+          const insertId = (payload.new.student_id || '').toLowerCase();
+          const insertName = (payload.new.name || '').toLowerCase();
+          if (locallyAddedStudents.current.has(insertId) || locallyAddedStudents.current.has(insertName)) {
+            locallyAddedStudents.current.delete(insertId);
+            locallyAddedStudents.current.delete(insertName);
+          } else {
+            pendingAdded.current.push(payload.new.name || payload.new.student_id);
+          }
         } else if (payload.eventType === 'DELETE') {
           const matched = studentsListRef.current.find(s => s.docId === payload.old.id);
           const oldName = matched ? matched.name : (payload.old.student_id || `ID: ${payload.old.id}`);
@@ -990,7 +1022,11 @@ const AdminDashboard = ({ onBackToLogin }) => {
         return;
       }
 
-      const { error: createError } = await supabase.functions.invoke('manage-student', {
+      // Record local addition to suppress duplicate realtime toast
+      locallyAddedStudents.current.add(trimmedId.toLowerCase());
+      locallyAddedStudents.current.add(trimmedName.toLowerCase());
+
+      const { data: createResult, error: createError } = await supabase.functions.invoke('manage-student', {
         body: {
           action: 'create',
           studentId: trimmedId,
@@ -1002,6 +1038,26 @@ const AdminDashboard = ({ onBackToLogin }) => {
       });
       if (createError) throw createError;
 
+      const studentKey = trimmedId.toLowerCase();
+      const updatedCreds = {
+        ...assignedCredentials,
+        [studentKey]: newStudentPassword,
+        [trimmedId]: newStudentPassword
+      };
+      if (createResult?.id) {
+        updatedCreds[createResult.id] = newStudentPassword;
+      }
+      setAssignedCredentials(updatedCreds);
+      safeStorageSet('localStorage', 'cbt_assigned_student_credentials', JSON.stringify(updatedCreds));
+
+      setCreatedStudentModal({
+        name: trimmedName,
+        studentId: trimmedId,
+        password: newStudentPassword,
+        className: selectedStudentClass,
+        section: selectedStudentSection
+      });
+
       setNewStudentName('');
       setNewStudentId('');
       setNewStudentPassword('');
@@ -1011,9 +1067,44 @@ const AdminDashboard = ({ onBackToLogin }) => {
       showToast(`Student "${trimmedName}" added successfully.`, "success");
     } catch (err) {
       console.error("Error adding student:", err);
+      locallyAddedStudents.current.delete(trimmedId.toLowerCase());
+      locallyAddedStudents.current.delete(trimmedName.toLowerCase());
       await customAlert("Failed to add student: " + err.message);
     } finally {
       setIsAddingStudent(false);
+    }
+  };
+
+  const handleResetStudentPassword = async (student) => {
+    const studentUsername = student.student_id || student.id;
+    const rawNewPass = await customPrompt(`Enter a new password (min 12 characters) for student "${student.name}" (ID: ${studentUsername}):`);
+    if (rawNewPass === null) return;
+    const newPass = rawNewPass.trim();
+    if (newPass.length < 12 || newPass.length > 128) {
+      await customAlert("Password must be between 12 and 128 characters.");
+      return;
+    }
+    try {
+      const { error } = await supabase.functions.invoke('manage-student', {
+        body: {
+          action: 'reset-student-password',
+          studentUserId: student.docId,
+          password: newPass
+        }
+      });
+      if (error) throw error;
+      const studentKey = (student.student_id || student.id || '').toLowerCase();
+      const updatedCreds = {
+        ...assignedCredentials,
+        [studentKey]: newPass,
+        [student.docId]: newPass
+      };
+      setAssignedCredentials(updatedCreds);
+      safeStorageSet('localStorage', 'cbt_assigned_student_credentials', JSON.stringify(updatedCreds));
+      showToast(`Password updated for ${student.name}.`, 'success');
+    } catch (err) {
+      console.error('Password reset failed:', err);
+      await customAlert(`Failed to reset password: ${err.message}`);
     }
   };
 
@@ -1517,6 +1608,7 @@ const AdminDashboard = ({ onBackToLogin }) => {
                 </th>
                 <th style={{ padding: '16px' }}>Student Name</th>
                 <th style={{ padding: '16px' }}>Student ID (Username)</th>
+                <th style={{ padding: '16px' }}>Assigned Password</th>
                 <th style={{ padding: '16px' }}>Class</th>
                 <th style={{ padding: '16px' }}>Section</th>
                 <th style={{ padding: '16px' }}>Status</th>
@@ -1525,8 +1617,11 @@ const AdminDashboard = ({ onBackToLogin }) => {
             </thead>
             <tbody>
               {filteredStudents.length === 0 ? (
-                <tr><td colSpan="7" style={{ padding: '30px', textAlign: 'center', color: 'var(--text-muted)' }}>No students match the current filters.</td></tr>
-              ) : filteredStudents.map(student => (
+                <tr><td colSpan="8" style={{ padding: '30px', textAlign: 'center', color: 'var(--text-muted)' }}>No students match the current filters.</td></tr>
+              ) : filteredStudents.map(student => {
+                const assignedPass = assignedCredentials[(student.student_id || student.id || '').toLowerCase()] || assignedCredentials[student.docId];
+                const isPassVisible = visiblePasswords[student.docId];
+                return (
                 <tr key={student.docId} style={{ borderBottom: '1px solid var(--border-color)', backgroundColor: selectedStudents.includes(student.docId) ? 'rgba(239, 68, 68, 0.02)' : 'transparent' }}>
                   <td style={{ padding: '16px', textAlign: 'center', width: '50px' }}>
                     <input 
@@ -1545,7 +1640,54 @@ const AdminDashboard = ({ onBackToLogin }) => {
                     />
                   </td>
                   <td style={{ padding: '16px', fontWeight: 'bold' }}>{student.name}</td>
-                  <td style={{ padding: '16px', fontFamily: 'monospace' }}>{student.id}</td>
+                  <td style={{ padding: '16px', fontFamily: 'monospace', fontWeight: 600 }}>{student.student_id || student.id}</td>
+                  <td style={{ padding: '16px' }}>
+                    {assignedPass ? (
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: '#f8fafc', padding: '4px 10px', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
+                        <span style={{ fontFamily: 'monospace', fontSize: '0.88rem', fontWeight: 600, color: '#1e293b' }}>
+                          {isPassVisible ? assignedPass : '••••••••••••'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setVisiblePasswords(prev => ({ ...prev, [student.docId]: !prev[student.docId] }))}
+                          aria-label={isPassVisible ? "Hide password" : "Show password"}
+                          title={isPassVisible ? "Hide password" : "Show password"}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', color: '#64748b' }}
+                        >
+                          {isPassVisible ? (
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                              <line x1="1" y1="1" x2="23" y2="23" />
+                            </svg>
+                          ) : (
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                              <circle cx="12" cy="12" r="3" />
+                            </svg>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await navigator.clipboard.writeText(assignedPass);
+                            showToast('Password copied to clipboard', 'info');
+                          }}
+                          aria-label="Copy password"
+                          title="Copy password"
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', color: '#64748b' }}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                          </svg>
+                        </button>
+                      </div>
+                    ) : (
+                      <span style={{ fontSize: '0.82rem', color: '#94a3b8', fontStyle: 'italic' }}>
+                        •••••••• (Encrypted)
+                      </span>
+                    )}
+                  </td>
                   <td style={{ padding: '16px' }}>
                     <select
                       value={student.class || ''}
@@ -1616,14 +1758,38 @@ const AdminDashboard = ({ onBackToLogin }) => {
                     </span>
                   </td>
                   <td style={{ padding: '16px', textAlign: 'right' }}>
-                    {student.archived_at ? (
-                      <button onClick={() => handleReactivateStudent(student.docId)} style={{ background: 'none', border: 'none', color: 'var(--success)', cursor: 'pointer', padding: '5px' }}>↩ Reactivate</button>
-                    ) : (
-                      <button onClick={() => handleDeactivateStudents([student.docId])} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: '5px' }}>⛔ Deactivate</button>
-                    )}
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', justifyContent: 'flex-end' }}>
+                      <button
+                        type="button"
+                        onClick={() => handleResetStudentPassword(student)}
+                        disabled={Boolean(student.archived_at)}
+                        style={{
+                          background: '#f8fafc',
+                          border: '1px solid #cbd5e1',
+                          borderRadius: '6px',
+                          color: '#334155',
+                          cursor: student.archived_at ? 'not-allowed' : 'pointer',
+                          padding: '5px 10px',
+                          fontSize: '0.8rem',
+                          fontWeight: 500,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                        title="Set or reset student password"
+                      >
+                        🔑 Reset
+                      </button>
+                      {student.archived_at ? (
+                        <button onClick={() => handleReactivateStudent(student.docId)} style={{ background: 'none', border: 'none', color: 'var(--success)', cursor: 'pointer', padding: '5px' }}>↩ Reactivate</button>
+                      ) : (
+                        <button onClick={() => handleDeactivateStudents([student.docId])} style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', padding: '5px' }}>⛔ Deactivate</button>
+                      )}
+                    </div>
                   </td>
                 </tr>
-              ))}
+              );
+            })}
             </tbody>
           </table>
         </div>
@@ -1639,6 +1805,72 @@ const AdminDashboard = ({ onBackToLogin }) => {
             setStudentRosterPage(page => Math.min(totalPages - 1, page + 1));
           }}>Next</button>
         </nav>
+
+        {createdStudentModal && (
+          <AccessibleModal
+            isOpen={true}
+            onClose={() => setCreatedStudentModal(null)}
+            title="Student Account Created"
+            labelledBy="created-student-modal-title"
+          >
+            <div style={{ padding: '24px', maxWidth: '480px', width: '100%' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                <div style={{ width: '42px', height: '42px', borderRadius: '50%', backgroundColor: '#dcfce7', color: '#16a34a', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', fontWeight: 'bold' }}>
+                  ✓
+                </div>
+                <div>
+                  <h3 id="created-student-modal-title" style={{ margin: 0, fontSize: '1.15rem', color: '#0f172a' }}>
+                    Student Account Created
+                  </h3>
+                  <p style={{ margin: '2px 0 0', fontSize: '0.85rem', color: '#64748b' }}>
+                    Share these login credentials with the student.
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px' }}>
+                <div>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Student Name</div>
+                  <div style={{ fontSize: '1rem', fontWeight: 600, color: '#0f172a' }}>{createdStudentModal.name}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Student ID (Login Username)</div>
+                  <div style={{ fontSize: '1.05rem', fontWeight: 700, fontFamily: 'monospace', color: 'var(--primary)' }}>{createdStudentModal.studentId}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Assigned Password</div>
+                  <div style={{ fontSize: '1.05rem', fontWeight: 700, fontFamily: 'monospace', color: '#0f172a', background: '#ffffff', padding: '6px 10px', borderRadius: '6px', border: '1px solid #cbd5e1', display: 'inline-block' }}>{createdStudentModal.password}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Assigned Class &amp; Section</div>
+                  <div style={{ fontSize: '0.9rem', color: '#334155' }}>Class {createdStudentModal.className} — Section {createdStudentModal.section}</div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={async () => {
+                    const text = `Student Name: ${createdStudentModal.name}\nStudent ID: ${createdStudentModal.studentId}\nPassword: ${createdStudentModal.password}\nClass: ${createdStudentModal.className} (${createdStudentModal.section})`;
+                    await navigator.clipboard.writeText(text);
+                    showToast('Credentials copied to clipboard!', 'success');
+                  }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                >
+                  📋 Copy All Credentials
+                </button>
+                <button
+                  type="button"
+                  className="btn-outline"
+                  onClick={() => setCreatedStudentModal(null)}
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          </AccessibleModal>
+        )}
       </div>
     );
   };
@@ -2061,6 +2293,7 @@ const AdminDashboard = ({ onBackToLogin }) => {
                       </React.Fragment>
                     ))}
                     <th style={{ padding: '16px', textAlign: 'right' }}>Total Score</th>
+                    <th style={{ padding: '16px', textAlign: 'center' }}>Answer Review</th>
                   </tr>
                 </thead>
                 <tbody style={{ backgroundColor: 'var(--panel-bg)' }}>
@@ -2086,6 +2319,16 @@ const AdminDashboard = ({ onBackToLogin }) => {
                       <td style={{ padding: '16px', textAlign: 'right', fontWeight: 'bold', color: 'var(--primary)', fontSize: '1.2rem' }}>
                         {result.totalScore} <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)', fontWeight: 'normal' }}>/ {result.maxScore}</span>
                       </td>
+                      <td style={{ padding: '16px', textAlign: 'center' }}>
+                        <button
+                          type="button"
+                          className="btn-outline"
+                          disabled={resultReviewLoadingId === result.id}
+                          onClick={() => openStudentResultReview(result)}
+                        >
+                          {resultReviewLoadingId === result.id ? 'Loading…' : 'Reveal answers'}
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -2098,6 +2341,77 @@ const AdminDashboard = ({ onBackToLogin }) => {
             <button type="button" className="btn-outline" disabled={resultPage + 1 >= totalResultPages || resultActionsDisabled} onClick={() => setResultPage(page => Math.min(totalResultPages - 1, page + 1))}>Next</button>
           </nav>
         </div>
+
+        {resultReview && (() => {
+          const paper = resultReview.paper || {};
+          const subjects = Array.isArray(paper.subjects) ? paper.subjects : Object.keys(paper.questions || {});
+          const responseMap = resultReview.responses || {};
+          const answerKey = resultReview.answer_key || {};
+          const formatSeconds = value => {
+            const seconds = Math.max(0, Number(value) || 0);
+            const minutes = Math.floor(seconds / 60);
+            return `${minutes}m ${Math.floor(seconds % 60)}s`;
+          };
+          const displayAnswer = (question, rawValue) => {
+            if (rawValue === null || rawValue === undefined || rawValue === '') return 'Not answered';
+            if (String(question.type || 'MCQ').toUpperCase() === 'NUMERICAL') return String(rawValue);
+            const index = Number(rawValue);
+            return Number.isInteger(index) && Array.isArray(question.options) && question.options[index] !== undefined
+              ? `${String.fromCharCode(65 + index)}. ${question.options[index]}`
+              : String(rawValue);
+          };
+          return (
+            <AccessibleModal labelledBy="student-answer-review-title" onEscape={() => setResultReview(null)} maxWidth="1000px">
+              <div style={{ textAlign: 'left' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', alignItems: 'flex-start', marginBottom: '20px' }}>
+                  <div>
+                    <h2 id="student-answer-review-title" style={{ margin: 0, color: 'var(--text-main)' }}>Student answer review</h2>
+                    <p style={{ margin: '6px 0 0', color: 'var(--text-muted)' }}>{resultReview.studentName} · {resultReview.student_id}</p>
+                  </div>
+                  <button type="button" className="btn-outline" onClick={() => setResultReview(null)}>Close</button>
+                </div>
+                {subjects.map(subject => {
+                  const questions = paper.questions?.[subject] || [];
+                  const responses = responseMap[subject] || [];
+                  return (
+                    <section key={subject} style={{ marginBottom: '24px' }}>
+                      <h3 style={{ color: 'var(--text-main)', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                        {subject} · time {formatSeconds(resultReview.subject_time_seconds?.[subject])}
+                      </h3>
+                      <div style={{ display: 'grid', gap: '12px' }}>
+                        {questions.map((question, index) => {
+                          const response = responses[index] || {};
+                          const selected = response.selectedOption;
+                          const correct = answerKey[question.id]?.correct_answer;
+                          const answered = ['ANSWERED', 'ANSWERED_MARKED'].includes(response.status) && selected !== null && selected !== undefined && selected !== '';
+                          const isNumerical = ['NUMERICAL', 'NAT'].includes(String(question.type || '').toUpperCase());
+                          const isCorrect = answered && (isNumerical
+                            ? Math.abs(Number(selected) - Number(correct)) < 0.00001
+                            : String(selected) === String(correct));
+                          const outcome = !answered ? 'Unanswered' : isCorrect ? 'Correct' : 'Wrong';
+                          const outcomeColor = isCorrect ? 'var(--success)' : 'var(--danger)';
+                          return (
+                            <article key={question.id || `${subject}-${index}`} style={{ border: '1px solid var(--border-color)', borderRadius: '8px', padding: '14px', background: 'var(--bg-color)' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginBottom: '8px' }}>
+                                <strong>Question {question.questionNumber || index + 1}</strong>
+                                <strong style={{ color: outcomeColor }}>{outcome}</strong>
+                              </div>
+                              <MathRenderer text={question.text || ''} />
+                              <div style={{ marginTop: '10px', display: 'grid', gap: '5px' }}>
+                                <div><strong>Student answer:</strong> <MathRenderer text={displayAnswer(question, selected)} /></div>
+                                {!isCorrect && <div><strong>Correct answer:</strong> <MathRenderer text={displayAnswer(question, correct)} /></div>}
+                              </div>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            </AccessibleModal>
+          );
+        })()}
       </div>
     );
   };

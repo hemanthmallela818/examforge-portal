@@ -110,9 +110,10 @@ function App() {
   const [currentIndices, setCurrentIndices] = useState(() => initialActiveSession.current?.currentIndices || {});
   const [userResponses, setUserResponses] = useState(() => initialActiveSession.current?.userResponses || {});
   const [results, setResults] = useState(null);
-  const [warningMsg, setWarningMsg] = useState('');
   const warningsRef = useRef(0);
   const isAlertingRef = useRef(false);
+  const lockdownActiveRef = useRef(false);
+  const [lockdownActive, setLockdownActive] = useState(false);
   const [offlineSince, setOfflineSince] = useState(null);
   const [offlineDismissed, setOfflineDismissed] = useState(false);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
@@ -131,6 +132,8 @@ function App() {
   const [recoveryNotice, setRecoveryNotice] = useState('');
   const [localRecoveryAvailable, setLocalRecoveryAvailable] = useState(true);
   const sessionVersionRef = useRef(initialActiveSession.current?.version || 1);
+  const subjectTimeRef = useRef(initialActiveSession.current?.subjectTimeSeconds || {});
+  const subjectTickRef = useRef(Date.now());
   const isSavingRef = useRef(false);
   const pendingSaveRef = useRef(null);
   const autosaveGenerationRef = useRef(0);
@@ -333,17 +336,25 @@ function App() {
     }
   }, [currentStudent, flushPendingTermination, flushPendingOfflineSubmission]);
 
-  const handleReturnToExam = async () => {
-    setWarningMsg('');
-    isAlertingRef.current = false;
+  const handleReturnToExam = useCallback(async () => {
     try {
       if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
-        await document.documentElement.requestFullscreen();
+        await document.documentElement.requestFullscreen({ keyboardLock: 'browser' });
+      }
+      if (document.fullscreenElement && navigator.keyboard?.lock) {
+        await navigator.keyboard.lock();
+      }
+      if (document.fullscreenElement && document.visibilityState === 'visible' && document.hasFocus()) {
+        lockdownActiveRef.current = false;
+        setLockdownActive(false);
+        isAlertingRef.current = false;
       }
     } catch (err) {
-      console.warn("Fullscreen request on return failed:", err);
+      // Fullscreen is user-activation gated. The opaque exam cover remains in
+      // place until the next trusted pointer/key interaction can restore it.
+      console.warn('Secure fullscreen restoration is awaiting user activation:', err);
     }
-  };
+  }, []);
 
   const handleSafeLogout = useCallback((options = {}) => {
     const preserveAttempt = options?.preserveAttempt === true;
@@ -590,7 +601,8 @@ function App() {
   const terminateExam = useCallback(async () => {
     if (studentSessionLockedRef.current) return;
     setExamState('TERMINATED');
-    setWarningMsg(null);
+    lockdownActiveRef.current = false;
+    setLockdownActive(false);
     if (document.fullscreenElement) {
       document.exitFullscreen().catch(err => console.error(err));
     }
@@ -631,16 +643,15 @@ function App() {
   useEffect(() => {
     if (examState !== 'ACTIVE') return;
 
-    const handleViolation = (message) => {
+    const handleViolation = () => {
       if (isAlertingRef.current) return;
-
-      // A browser focus event can be caused by an operating-system notification
-      // or accessibility tool. Require three verified violations before ending
-      // an attempt; the server-side time limit remains authoritative.
+      isAlertingRef.current = true;
+      lockdownActiveRef.current = true;
+      setLockdownActive(true);
       if (warningsRef.current < 2) {
         warningsRef.current += 1;
-        isAlertingRef.current = true;
-        setWarningMsg(`${message} Warning ${warningsRef.current} of 3.`);
+        window.focus();
+        handleReturnToExam();
       } else {
         if (terminateExamRef.current) {
           terminateExamRef.current();
@@ -649,48 +660,61 @@ function App() {
     };
 
     const handleKeyDown = (e) => {
-      // Do not block ordinary typing: numerical-answer inputs must remain
-      // usable. Allow candidate exam navigation shortcuts:
-      // Alt+S, Alt+M, Alt+C, Alt+N, Alt+P, Ctrl+Enter, ArrowLeft, ArrowRight
-      const isExamShortcut = 
-        (e.altKey && ['s', 'S', 'm', 'M', 'c', 'C', 'n', 'N', 'p', 'P'].includes(e.key)) ||
-        (e.ctrlKey && e.key === 'Enter');
-
-      if (isExamShortcut) {
-        return; // Allow QuestionPanel to handle the candidate exam shortcut
-      }
-
-      const blockedKeys = ['F5', 'F11', 'F12', 'PrintScreen'];
+      const blockedKeys = ['Escape', 'F1', 'F3', 'F5', 'F6', 'F7', 'F10', 'F11', 'F12', 'PrintScreen'];
       if (e.ctrlKey || e.metaKey || e.altKey || blockedKeys.includes(e.key)) {
         e.preventDefault();
         e.stopPropagation();
+        handleViolation();
       }
     };
 
     const handleContextMenu = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      handleViolation("Right-click is disabled during the exam.");
+      handleViolation();
     };
 
     let blurTimeout;
     const handleBlur = () => {
       blurTimeout = setTimeout(() => {
-        // A native notification or antivirus prompt blurs the window without
-        // hiding the document. Treat only an actual hidden page as a violation.
-        if (document.visibilityState === 'hidden') {
-          handleViolation("You navigated away from the exam window.");
+        if (!document.hasFocus() || document.visibilityState === 'hidden') {
+          handleViolation();
         }
-      }, 1500);
+      }, 250);
     };
     const handleFocus = () => {
       clearTimeout(blurTimeout);
+      if (lockdownActiveRef.current) handleReturnToExam();
     };
 
     const handleFullscreenChange = () => {
       if (!document.fullscreenElement) {
-        handleViolation("You exited fullscreen mode.");
+        handleViolation();
+      } else if (document.visibilityState === 'visible' && document.hasFocus()) {
+        lockdownActiveRef.current = false;
+        setLockdownActive(false);
+        isAlertingRef.current = false;
+        const keyboardLock = navigator.keyboard?.lock?.();
+        keyboardLock?.catch(() => {});
       }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') handleViolation();
+      else if (lockdownActiveRef.current) handleReturnToExam();
+    };
+
+    const handleClipboardOrDrag = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      handleViolation();
+    };
+
+    const handleSecureRestoreGesture = (event) => {
+      if (!lockdownActiveRef.current) return;
+      event.preventDefault();
+      event.stopPropagation();
+      handleReturnToExam();
     };
 
     const handleBeforeUnload = (e) => {
@@ -704,6 +728,12 @@ function App() {
     window.addEventListener('blur', handleBlur);
     window.addEventListener('focus', handleFocus);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    document.addEventListener('copy', handleClipboardOrDrag, { capture: true });
+    document.addEventListener('cut', handleClipboardOrDrag, { capture: true });
+    document.addEventListener('paste', handleClipboardOrDrag, { capture: true });
+    document.addEventListener('dragstart', handleClipboardOrDrag, { capture: true });
+    document.addEventListener('pointerdown', handleSecureRestoreGesture, { capture: true });
     window.addEventListener('beforeunload', handleBeforeUnload);
 
     return () => {
@@ -712,10 +742,51 @@ function App() {
       window.removeEventListener('blur', handleBlur);
       window.removeEventListener('focus', handleFocus);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.removeEventListener('copy', handleClipboardOrDrag, { capture: true });
+      document.removeEventListener('cut', handleClipboardOrDrag, { capture: true });
+      document.removeEventListener('paste', handleClipboardOrDrag, { capture: true });
+      document.removeEventListener('dragstart', handleClipboardOrDrag, { capture: true });
+      document.removeEventListener('pointerdown', handleSecureRestoreGesture, { capture: true });
       window.removeEventListener('beforeunload', handleBeforeUnload);
+      navigator.keyboard?.unlock?.();
       clearTimeout(blurTimeout);
     };
-  }, [examState]);
+  }, [examState, handleReturnToExam]);
+
+  const accrueActiveSubjectTime = useCallback(() => {
+    const now = Date.now();
+    const elapsedSeconds = Math.max(0, Math.floor((now - subjectTickRef.current) / 1000));
+    subjectTickRef.current = now;
+    if (examState !== 'ACTIVE' || !activeSubject || lockdownActiveRef.current
+      || document.visibilityState !== 'visible' || !document.hasFocus() || elapsedSeconds === 0) return;
+    subjectTimeRef.current = {
+      ...subjectTimeRef.current,
+      [activeSubject]: Number(subjectTimeRef.current[activeSubject] || 0) + elapsedSeconds
+    };
+  }, [activeSubject, examState]);
+
+  const syncSubjectTime = useCallback(async () => {
+    accrueActiveSubjectTime();
+    if (!activeExam?.id || !currentStudent || navigator.onLine === false) return;
+    const { error } = await supabase.rpc('sync_exam_subject_time', {
+      exam_id_param: activeExam.id,
+      subject_time_seconds_param: subjectTimeRef.current
+    });
+    if (error) throw error;
+  }, [accrueActiveSubjectTime, activeExam?.id, currentStudent]);
+
+  useEffect(() => {
+    if (examState !== 'ACTIVE') return;
+    subjectTickRef.current = Date.now();
+    const interval = setInterval(() => {
+      syncSubjectTime().catch(error => console.warn('Subject timing sync failed:', error));
+    }, 15000);
+    return () => {
+      clearInterval(interval);
+      accrueActiveSubjectTime();
+    };
+  }, [activeSubject, accrueActiveSubjectTime, examState, syncSubjectTime]);
 
   const confirmSubmitExamRef = useRef();
 
@@ -752,7 +823,9 @@ function App() {
   const handleStartExamFlow = async (exam) => {
     warningsRef.current = 0;
     isAlertingRef.current = false;
-    setWarningMsg('');
+    lockdownActiveRef.current = false;
+    setLockdownActive(false);
+    subjectTimeRef.current = {};
     submissionStartedRef.current = false;
     setActiveExam(exam);
     const data = exam.questionsData || exam.questions_data || { subjects: [], questions: {} };
@@ -773,6 +846,7 @@ function App() {
           restoredResponses = sessionData.user_responses || null;
           restoredExamData = sessionData.jumbled_exam_data || null;
           restoredTimeLeft = sessionData.time_left;
+          subjectTimeRef.current = sessionData.subject_time_seconds || {};
           serverVersion = Number(sessionData.version || 1);
           sessionVersionRef.current = serverVersion;
         }
@@ -855,7 +929,10 @@ function App() {
     // Do not let a browser refusing it bypass creation of the server session.
     try {
       if (document.documentElement.requestFullscreen) {
-        await document.documentElement.requestFullscreen();
+        await document.documentElement.requestFullscreen({ keyboardLock: 'browser' });
+      }
+      if (document.fullscreenElement && navigator.keyboard?.lock) {
+        await navigator.keyboard.lock();
       }
     } catch (err) {
       console.warn('Fullscreen could not be enabled:', err);
@@ -918,6 +995,7 @@ function App() {
 
       // Start Exam after a server-owned session has been created or restored.
       setExamState('ACTIVE');
+      subjectTickRef.current = Date.now();
       announceAssertive(`Examination started. Time remaining: ${Math.round(remainingSeconds / 60)} minutes.`);
     } catch (err) {
       console.error('Unable to create exam session:', err);
@@ -1019,6 +1097,26 @@ function App() {
     if (!currentStudent || !activeExam) {
       throw new Error('An active student and exam are required to submit.');
     }
+
+    // Confirm the final visible answer state before submission so the private
+    // administrator review snapshot and the grade are based on the same data.
+    const deadlinePassed = sessionEndTimeRef.current && Date.now() >= sessionEndTimeRef.current;
+    if (!deadlinePassed) {
+      const { data: syncData, error: syncError } = await supabase.rpc('sync_active_session_progress', {
+        exam_id_param: activeExam.id,
+        responses_param: userResponses,
+        expected_version_param: sessionVersionRef.current
+      });
+      if (syncError) throw syncError;
+      if (syncData?.conflict) {
+        sessionVersionRef.current = syncData.version;
+        if (syncData.user_responses) setUserResponses(syncData.user_responses);
+        throw new Error('A newer server-confirmed answer set was found. Review the restored answers and submit again.');
+      }
+      if (!syncData?.success) throw new Error('The final answer save was not confirmed by the server.');
+      sessionVersionRef.current = syncData.version;
+    }
+    await syncSubjectTime();
 
     // The browser sends only question IDs and responses. Answer keys stay in
     // Supabase and are evaluated by the protected submit_exam RPC.
@@ -1233,6 +1331,11 @@ function App() {
       )}
       {examState === 'ACTIVE' && (
         <div className="active-exam-shell" style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+          <div className="exam-candidate-watermark" aria-hidden="true">
+            {Array.from({ length: 12 }, (_, index) => (
+              <span key={index}>{currentStudent?.id || 'Candidate'} · Secure exam</span>
+            ))}
+          </div>
           {offlineSince && !offlineDismissed && (
             <OfflineOverlay 
               offlineSince={offlineSince}
@@ -1277,15 +1380,16 @@ function App() {
               </button>
             </div>
           )}
-          {warningMsg && (
-            <AccessibleModal labelledBy="security-warning-title" maxWidth="500px">
-                  <h2 id="security-warning-title" style={{ color: 'var(--danger)', marginBottom: '20px', fontSize: '1.8rem', fontWeight: 'bold' }}>⚠️ SECURITY WARNING ⚠️</h2>
-                  <p style={{ marginBottom: '15px', fontSize: '1.2rem', color: 'var(--text-main)' }}>{warningMsg}</p>
-                  <p style={{ marginBottom: '25px', fontWeight: 'bold', color: 'var(--danger)' }}>Return to the exam immediately. A third verified violation will end the attempt.</p>
-                  <button data-modal-autofocus className="btn-primary" onClick={handleReturnToExam} style={{ fontSize: '1.1rem', padding: '12px 24px' }}>
-                    I Understand - Return to Exam
-                  </button>
-            </AccessibleModal>
+          {lockdownActive && (
+            <div
+              role="alert"
+              aria-live="assertive"
+              className="exam-security-cover"
+              onPointerDown={handleReturnToExam}
+            >
+              <div className="exam-security-spinner" aria-hidden="true" />
+              <span>Restoring secure examination view…</span>
+            </div>
           )}
           {showSubmitModal && (
             <AccessibleModal labelledBy="submit-exam-title" onEscape={() => !isSubmitting && setShowSubmitModal(false)} returnFocusRef={submitButtonRef} maxWidth="400px">

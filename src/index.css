@@ -17,6 +17,70 @@
   --border-color: #e2e8f0;
 }
 
+.active-exam-shell {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.exam-security-cover {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: #020617;
+  color: #f8fafc;
+  font-weight: 700;
+  cursor: default;
+}
+
+.exam-candidate-watermark {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  pointer-events: none;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  align-content: space-around;
+  justify-items: center;
+  transform: rotate(-18deg) scale(1.15);
+  opacity: 0.045;
+  color: #0f172a;
+  font: 700 16px/1.2 sans-serif;
+}
+
+.exam-security-spinner {
+  width: 44px;
+  height: 44px;
+  border: 4px solid rgba(255, 255, 255, 0.25);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: exam-security-spin 0.8s linear infinite;
+}
+
+@keyframes exam-security-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media print {
+  .active-exam-shell,
+  .active-exam-shell * {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  body::after {
+    content: 'Printing is disabled during an examination.';
+    display: block;
+    padding: 2rem;
+    font: 700 18pt sans-serif;
+  }
+}
+
 * {
   box-sizing: border-box;
   margin: 0;

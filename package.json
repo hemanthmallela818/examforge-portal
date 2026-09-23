@@ -31,6 +31,8 @@
     "ops:verify-reset-preview:staging": "node scripts/verify-connected-staging-reset-preview.mjs",
     "ops:verify-reset-preview:main": "node scripts/verify-connected-main-reset-preview.mjs",
     "ops:verify-reset:staging": "node scripts/verify-connected-staging-reset.mjs",
+    "ops:verify-stage27:staging": "node scripts/verify-stage27-staging.mjs",
+    "ops:verify-stage27:main": "node scripts/verify-stage27-staging.mjs --main",
     "ops:verify-root:main": "node scripts/verify-connected-main-root.mjs",
     "ops:verify-hierarchy:main": "node scripts/verify-connected-main-hierarchy.mjs",
     "ops:drill:staging": "node scripts/operator-drill-staging.mjs",
