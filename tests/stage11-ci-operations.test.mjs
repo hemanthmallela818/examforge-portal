@@ -96,3 +96,15 @@ test('production Vite builds include only the browser-safe Supabase configuratio
   assert.equal(assignments.length, 2, 'Production browser configuration must contain exactly two public values');
   assert.doesNotMatch(assignments.join('\n'), /service[_-]?role|sb_secret_|SUPABASE_SERVICE_ROLE_KEY/i);
 });
+
+test('Vite maps Vercel Supabase integration public values into the browser build', () => {
+  const viteConfig = readFileSync(resolve('vite.config.js'), 'utf8');
+
+  assert.match(viteConfig, /process\.env\.SUPABASE_URL/);
+  assert.match(viteConfig, /process\.env\.SUPABASE_PUBLISHABLE_KEY/);
+  assert.match(viteConfig, /import\.meta\.env\.VITE_SUPABASE_URL/);
+  assert.match(viteConfig, /import\.meta\.env\.VITE_SUPABASE_ANON_KEY/);
+
+  const executableConfig = viteConfig.replace(/\/\/[^\n]*/g, '');
+  assert.doesNotMatch(executableConfig, /process\.env\.SUPABASE_(?:SECRET_KEY|SERVICE_ROLE_KEY)/);
+});

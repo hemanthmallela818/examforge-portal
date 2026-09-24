@@ -80,7 +80,7 @@ Server-side scripts read their own non-`VITE_` variables. The full list and safe
 
 ## Deployment status
 
-The production backend is the Supabase `jee Project` (`hetaoesxoicqreobjqpy`). The repository includes the browser-safe URL and Supabase publishable key in `.env.production`, plus Vercel security and cache headers in `vercel.json`. Vercel Production environment variables may override those public values when rotating the publishable key. Never place a secret or service-role key in a `VITE_` variable. Use the Vercel project name `examforge-portal` so its production URL is `https://examforge-portal.vercel.app`, which is the exact origin allowed by the production Edge Function.
+The production backend is the Supabase `jee Project` (`hetaoesxoicqreobjqpy`). The repository includes the browser-safe URL and Supabase publishable key in `.env.production`, plus Vercel security and cache headers in `vercel.json`. The Vite build also recognizes the Vercel Supabase integration's public `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` values. Never place a secret or service-role key in a `VITE_` variable. Use the Vercel project name `examforge-portal` so its production URL is `https://examforge-portal.vercel.app`, which is the exact origin allowed by the production Edge Function.
 
 Do not run the staging rehearsal or reset commands against production. Before admitting real candidates, verify the published URL, headers, sign-in, root administrator provisioning, private media, monitoring, and client workflow using [SETUP.md](SETUP.md) and [docs/HANDOVER_CHECKLIST.md](docs/HANDOVER_CHECKLIST.md).
 
