@@ -116,8 +116,8 @@ The production Supabase project is `jee Project` (`hetaoesxoicqreobjqpy`). In Ve
 1. Import `hemanthmallela818/examforge-portal` and select the `main` branch.
 2. Set the project name to `examforge-portal`. This produces the exact production origin currently allowed by the Edge Function: `https://examforge-portal.vercel.app`.
 3. Keep the detected framework as Vite, build command as `npm run build`, and output directory as `dist`.
-4. Add `VITE_SUPABASE_URL=https://hetaoesxoicqreobjqpy.supabase.co` for Production.
-5. Add `VITE_SUPABASE_ANON_KEY` using the production project's **publishable** key from Supabase Project Settings → API Keys. It is a public browser key; never use a secret or service-role key.
+4. The repository's `.env.production` supplies `VITE_SUPABASE_URL` and the production **publishable** key so a clean Vercel build cannot start without its public service configuration.
+5. Vercel Production environment variables with the same names may override these browser-safe defaults when rotating the publishable key. Never use a secret or service-role key.
 6. Deploy, then verify `/` returns the security headers defined in `vercel.json`.
 7. Test student login, administrator login, root administrator creation, private question images, exam start/autosave/offline reconnect/submit, and result revisit on the published domain.
 

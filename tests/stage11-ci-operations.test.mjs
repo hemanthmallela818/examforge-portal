@@ -83,3 +83,16 @@ test('Vercel deployment is pinned to the production backend with defensive heade
   assert.equal(headers.get('x-frame-options'), 'DENY');
   assert.match(headers.get('permissions-policy') || '', /camera=\(\)/);
 });
+
+test('production Vite builds include only the browser-safe Supabase configuration', () => {
+  const productionEnv = readFileSync(resolve('.env.production'), 'utf8');
+  const assignments = productionEnv
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('#'));
+
+  assert.match(productionEnv, /^VITE_SUPABASE_URL=https:\/\/hetaoesxoicqreobjqpy\.supabase\.co$/m);
+  assert.match(productionEnv, /^VITE_SUPABASE_ANON_KEY=sb_publishable_[A-Za-z0-9_-]+$/m);
+  assert.equal(assignments.length, 2, 'Production browser configuration must contain exactly two public values');
+  assert.doesNotMatch(assignments.join('\n'), /service[_-]?role|sb_secret_|SUPABASE_SERVICE_ROLE_KEY/i);
+});
