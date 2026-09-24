@@ -182,11 +182,11 @@ export async function handleManageStudent(
     return json(request, { error: 'Authentication required' }, 401);
   }
 
-  // 7. Root-only destructive actions use the owner authority check below and
-  // intentionally do not require MFA. All ordinary administrator actions
-  // retain the AAL2 requirement.
+  // 7. Root-only account-governance and destructive actions use the owner
+  // authority check below and intentionally do not require MFA. All ordinary
+  // administrator actions retain the AAL2 requirement.
   const action = String(body?.action || '');
-  const isRootOnlyAction = ['preview-reset', 'reset-application', 'clear-scoped-data'].includes(action);
+  const isRootOnlyAction = ['create-admin', 'preview-reset', 'reset-application', 'clear-scoped-data'].includes(action);
   if (!isRootOnlyAction) {
     const { data: isAal2Admin, error: rpcError } = await caller.rpc('is_admin_aal2');
     if (rpcError || isAal2Admin !== true) {
@@ -313,8 +313,34 @@ export async function handleManageStudent(
     }
     return json(request, { id, email, name }, 201);
   }
-  if (action !== 'create' && action !== 'update-assignment') {
+  if (action !== 'create' && action !== 'update-assignment' && action !== 'reset-student-password') {
     return json(request, { error: 'Unsupported action' }, 400);
+  }
+
+  if (action === 'reset-student-password') {
+    const studentUserId = String(body.studentUserId || '').trim();
+    const newPassword = String(body.password || '');
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(studentUserId)) {
+      return json(request, { error: 'A valid student user ID is required' }, 400);
+    }
+    if (newPassword.length < 12 || newPassword.length > 128) {
+      return json(request, { error: 'Password must be between 12 and 128 characters' }, 400);
+    }
+    const { data: targetProfile, error: profileErr } = await admin
+      .from('profiles')
+      .select('role')
+      .eq('id', studentUserId)
+      .maybeSingle();
+    if (profileErr || targetProfile?.role !== 'student') {
+      return json(request, { error: 'Target user is not a student' }, 400);
+    }
+    const { error: updateError } = await admin.auth.admin.updateUserById(studentUserId, {
+      password: newPassword,
+    });
+    if (updateError) {
+      return json(request, { error: 'Failed to update student password' }, 500);
+    }
+    return json(request, { success: true, studentUserId }, 200);
   }
 
   const className = String(body.className || '').trim();

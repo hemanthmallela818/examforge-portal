@@ -6,6 +6,7 @@ const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
 test('root reset is explicitly authorized, confirmed, auditable, and preserves administrator identities', async () => {
   const migration = await read('supabase/migrations/20260922050131_root_application_data_reset.sql');
+  const lintFix = await read('supabase/migrations/20260923175028_fix_optional_legacy_cleanup_lint.sql');
 
   assert.match(migration, /CREATE OR REPLACE FUNCTION public\.root_application_reset_preview\(\)/);
   assert.match(migration, /CREATE OR REPLACE FUNCTION public\.root_reset_application_data\(confirmation_param text\)/);
@@ -20,6 +21,9 @@ test('root reset is explicitly authorized, confirmed, auditable, and preserves a
   assert.match(migration, /to_regclass\('public\.proctor_flags'\)/);
   assert.match(migration, /REVOKE ALL ON FUNCTION public\.root_reset_application_data\(text\) FROM PUBLIC, anon/);
   assert.match(migration, /GRANT EXECUTE ON FUNCTION public\.root_reset_application_data\(text\) TO authenticated/);
+  assert.match(lintFix, /table_name_param NOT IN \('attempts', 'exams', 'questions', 'proctor_flags', 'live_feeds'\)/);
+  assert.match(lintFix, /format\('DELETE FROM %I\.%I WHERE true', 'public', table_name_param\)/);
+  assert.match(lintFix, /REVOKE ALL ON FUNCTION public\.root_delete_optional_legacy_table\(text\) FROM PUBLIC, anon, authenticated/);
 });
 
 test('root reset uses the server function for Auth cleanup and never exposes service credentials', async () => {
@@ -30,7 +34,7 @@ test('root reset uses the server function for Auth cleanup and never exposes ser
 
   assert.match(edge, /action === 'preview-reset' \|\| action === 'reset-application'/);
   assert.match(edge, /caller\.rpc\('is_root_developer'\)/);
-  assert.match(edge, /isRootOnlyAction = \['preview-reset', 'reset-application', 'clear-scoped-data'\]/);
+  assert.match(edge, /isRootOnlyAction = \['create-admin', 'preview-reset', 'reset-application', 'clear-scoped-data'\]/);
   assert.match(edge, /if \(!isRootOnlyAction\)/);
   assert.match(edge, /admin\.rpc\('root_application_reset_preview_for_actor'/);
   assert.match(edge, /admin\.rpc\('root_reset_application_data_for_actor'/);

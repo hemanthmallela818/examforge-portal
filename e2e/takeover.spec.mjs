@@ -28,6 +28,10 @@ const openExam = async (page, exam) => {
 };
 
 test('newest student login takes over atomically and the old device becomes read-only', async ({ browser }, testInfo) => {
+  // WebKit on Windows can spend most of the default budget starting two
+  // isolated contexts and restoring a full exam. Keep assertions bounded,
+  // but allow this intentionally multi-device scenario to finish cleanly.
+  test.setTimeout(90_000);
   const fixture = fixturesFor(testInfo.project.name);
   const takeoverCredentials = { student: fixture.credentials.takeoverStudent };
   const oldContext = await browser.newContext();

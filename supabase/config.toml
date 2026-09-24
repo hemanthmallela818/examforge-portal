@@ -372,8 +372,10 @@ inspector_port = 8083
 # The Deno major version to use.
 deno_version = 2
 
-# [edge_runtime.secrets]
-# secret_key = "env(SECRET_VALUE)"
+[edge_runtime.secrets]
+# Local browser origins only. Hosted environments must set ALLOWED_ORIGINS to
+# their exact HTTPS application origin through Edge Function secrets.
+ALLOWED_ORIGINS = "http://localhost:5173,http://127.0.0.1:4173"
 
 [analytics]
 # The local Windows/Docker Desktop stack cannot expose its log socket safely to

@@ -1101,22 +1101,29 @@ function App() {
     // Confirm the final visible answer state before submission so the private
     // administrator review snapshot and the grade are based on the same data.
     const deadlinePassed = sessionEndTimeRef.current && Date.now() >= sessionEndTimeRef.current;
+    let mayAlreadyBeCommitted = false;
     if (!deadlinePassed) {
       const { data: syncData, error: syncError } = await supabase.rpc('sync_active_session_progress', {
         exam_id_param: activeExam.id,
         responses_param: userResponses,
         expected_version_param: sessionVersionRef.current
       });
-      if (syncError) throw syncError;
-      if (syncData?.conflict) {
+      // A successful first submission removes the active session. If its HTTP
+      // response is lost, the retry must still reach the idempotent submit RPC
+      // so it can return the already-committed result.
+      mayAlreadyBeCommitted = /active (?:exam )?session not found|already submitted/i.test(syncError?.message || '');
+      if (syncError && !mayAlreadyBeCommitted) throw syncError;
+      if (!syncError) {
+        if (syncData?.conflict) {
+          sessionVersionRef.current = syncData.version;
+          if (syncData.user_responses) setUserResponses(syncData.user_responses);
+          throw new Error('A newer server-confirmed answer set was found. Review the restored answers and submit again.');
+        }
+        if (!syncData?.success) throw new Error('The final answer save was not confirmed by the server.');
         sessionVersionRef.current = syncData.version;
-        if (syncData.user_responses) setUserResponses(syncData.user_responses);
-        throw new Error('A newer server-confirmed answer set was found. Review the restored answers and submit again.');
       }
-      if (!syncData?.success) throw new Error('The final answer save was not confirmed by the server.');
-      sessionVersionRef.current = syncData.version;
     }
-    await syncSubjectTime();
+    if (!mayAlreadyBeCommitted) await syncSubjectTime();
 
     // The browser sends only question IDs and responses. Answer keys stay in
     // Supabase and are evaluated by the protected submit_exam RPC.

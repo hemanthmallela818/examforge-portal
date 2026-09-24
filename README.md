@@ -80,7 +80,9 @@ Server-side scripts read their own non-`VITE_` variables. The full list and safe
 
 ## Deployment status
 
-Deployment is intentionally outside this repository-readiness pass. Before serving real candidates, complete the staging rehearsal, hosted CI, expected-concurrency load test, real-device accessibility acceptance, backup/restore drill, monitoring configuration, and hosting-header verification recorded in [PRODUCTION_READINESS_REPORT.md](PRODUCTION_READINESS_REPORT.md).
+The production backend is the Supabase `jee Project` (`hetaoesxoicqreobjqpy`). The repository includes Vercel security and cache headers in `vercel.json`; Vercel must receive the two public browser variables listed above. Use the Vercel project name `examforge-portal` so its production URL is `https://examforge-portal.vercel.app`, which is the exact origin allowed by the production Edge Function.
+
+Do not run the staging rehearsal or reset commands against production. Before admitting real candidates, verify the published URL, headers, sign-in, root administrator provisioning, private media, monitoring, and client workflow using [SETUP.md](SETUP.md) and [docs/HANDOVER_CHECKLIST.md](docs/HANDOVER_CHECKLIST.md).
 
 ## Security
 

@@ -171,8 +171,8 @@ test('Stage 23 UI is reviewed-JSON-only, human-approved, latest-file-wins, and c
   assert.doesNotMatch(importer, /AI Question Importer/);
   assert.doesNotMatch(importer, /EXTRACTION_PROMPT/);
   assert.match(importer, /does not read PDFs, images, OCR output, documents, or invoke an AI service/);
-  assert.match(importer, /Download JSON Example/);
-  assert.match(importer, /Download JSON Schema/);
+  assert.match(importer, /AI Conversion Prompt/);
+  assert.match(importer, /Copy Prompt/);
   assert.match(importer, /accept="\.json,application\/json"/);
   assert.match(importer, /parseImportJsonText/);
   assert.match(importer, /requireExplicitApproval: true/);

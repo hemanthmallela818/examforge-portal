@@ -68,14 +68,8 @@ jobs:
       - name: Install Pinned Browser Runtimes
         run: npx playwright install --with-deps chromium firefox webkit
 
-      - name: Start Pinned Local Supabase Stack
-        run: node scripts/run-supabase.mjs start
-
-      - name: Replay Migrations From a Clean Database
-        run: node scripts/run-supabase.mjs db reset --local
-
       - name: Run Critical Authenticated Browser Paths
-        run: npm run test:e2e:critical
+        run: npm run test:e2e:local -- e2e/auth.spec.mjs e2e/admin-critical.spec.mjs e2e/student-exam.spec.mjs e2e/takeover.spec.mjs
 
       - name: Upload Browser Failure Evidence
         if: failure()

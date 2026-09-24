@@ -11,6 +11,7 @@ const healthCheck = readFileSync(resolve('scripts/operational-health-check.mjs')
 const advisorCleanup = readFileSync(resolve('supabase/migrations/20260913110000_stage25_database_advisor_cleanup.sql'), 'utf8');
 const ciWorkflow = readFileSync(resolve('.github/workflows/ci.yml'), 'utf8');
 const supabaseRunner = readFileSync(resolve('scripts/run-supabase.mjs'), 'utf8');
+const localE2eRunner = readFileSync(resolve('scripts/run-local-e2e.mjs'), 'utf8');
 const restoreProof = readFileSync(resolve('scripts/prove-local-backup-restore.mjs'), 'utf8');
 const storageRestoreProof = readFileSync(resolve('scripts/prove-local-storage-restore.mjs'), 'utf8');
 const supabaseConfig = readFileSync(resolve('supabase/config.toml'), 'utf8');
@@ -19,6 +20,7 @@ test('Stage 25 local runner is restricted to the local Supabase stack and create
   assert.match(localRunner, /readLocalSupabase\(\)/);
   assert.match(localRunner, /account_type: 'admin'/);
   assert.match(localRunner, /complete_account_provisioning/);
+  assert.match(localRunner, /from\('application_owner'\)\.upsert/);
   assert.match(localRunner, /challengeAndVerify/);
   assert.match(localRunner, /REHEARSAL_EXPECTED_PROJECT_REF: 'local'/);
   assert.equal(pkg.scripts['test:rehearsal:local'], 'node scripts/rehearse-local.mjs');
@@ -100,11 +102,14 @@ test('Stage 25 local stack disables the unsupported Windows analytics log collec
 test('Stage 25 CI replays local Supabase and runs authenticated critical paths in every browser', () => {
   assert.match(ciWorkflow, /critical-browser-e2e:/);
   assert.equal(pkg.devDependencies.supabase, '2.117.0');
-  assert.match(ciWorkflow, /node scripts\/run-supabase\.mjs start/);
-  assert.match(ciWorkflow, /node scripts\/run-supabase\.mjs db reset --local/);
+  assert.match(ciWorkflow, /npm run test:e2e:local -- e2e\/auth\.spec\.mjs/);
+  assert.match(localE2eRunner, /\['start'\]/);
+  assert.match(localE2eRunner, /\['db', 'reset', '--local'\]/);
+  assert.match(localE2eRunner, /\[supabaseCli, 'functions', 'serve'\]/);
+  assert.match(localE2eRunner, /Serving functions on/i);
   assert.match(supabaseRunner, /SUPABASE_TELEMETRY_DISABLED: '1'/);
   assert.match(supabaseRunner, /DO_NOT_TRACK: '1'/);
   assert.match(ciWorkflow, /playwright install --with-deps chromium firefox webkit/);
-  assert.match(ciWorkflow, /npm run test:e2e:critical/);
+  assert.match(ciWorkflow, /e2e\/takeover\.spec\.mjs/);
   assert.match(ciWorkflow, /if: always\(\)/);
 });

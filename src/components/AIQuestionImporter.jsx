@@ -5,8 +5,6 @@ import { customAlert, customConfirm } from '../utils';
 import AccessibleModal from './AccessibleModal';
 import {
   MAX_IMPORT_QUESTIONS,
-  IMPORT_EXAMPLE_DOCUMENT,
-  IMPORT_JSON_SCHEMA_DOCUMENT,
   buildAtomicImportPayload,
   parseImportJsonText,
   validateImportQuestions,
@@ -17,6 +15,74 @@ import {
 
 const IMPORT_REQUEST_TIMEOUT_MS = 120000;
 
+const AI_CONVERSION_PROMPT_TEMPLATE = `You are an expert examination digitizer. Please convert all questions in the attached document/PDF/image into a clean, valid JSON file formatted exactly for our Computer-Based Test (CBT) portal.
+
+FILE GENERATION & DOWNLOAD INSTRUCTIONS:
+1. CREATE A DOWNLOADABLE FILE:
+   - Use Python/code execution to write the generated JSON directly to a file named 'questions_import.json' and provide a direct, clickable download link so the user can download the file in one click.
+   - If using an environment with artifacts (like Claude or ChatGPT Canvas), create it as a standalone downloadable JSON artifact/file.
+2. RAW JSON BLOCK:
+   - In addition to the downloadable file, output the complete, valid JSON inside a single \`\`\`json code block.
+   - Do NOT include markdown commentary or explanations before or after.
+
+JSON STRUCTURE & SCHEMA:
+{
+  "version": "1.0",
+  "questions": [
+    {
+      "id": "phy-001",
+      "question_number": 1,
+      "question_text": "In the circuit shown in the figure, find the current through the $5\\\\,\\\\Omega$ resistor.",
+      "question_type": "MCQ",
+      "options": [
+        { "label": "A", "text": "$1\\\\text{ A}$" },
+        { "label": "B", "text": "$2\\\\text{ A}$" },
+        { "label": "C", "text": "$0.5\\\\text{ A}$" },
+        { "label": "D", "text": "$4\\\\text{ A}$" }
+      ],
+      "correct_answer": "B",
+      "subject": "Physics",
+      "has_image_or_diagram": true
+    },
+    {
+      "id": "math-002",
+      "question_number": 2,
+      "question_text": "Let $a_1, a_2, a_3, \\\\ldots$ be a G.P. of positive terms. If $a_1 a_5 = 28$ and $a_2 + a_4 = 29$, then find $a_6$.",
+      "question_type": "NUMERICAL",
+      "options": [],
+      "correct_answer": "112",
+      "subject": "Mathematics",
+      "has_image_or_diagram": false
+    }
+  ]
+}
+
+STRICT CONVERSION RULES:
+1. question_number: Sequential positive integer (1, 2, 3...) preserving original line-wise question order.
+2. question_text: Complete question text.
+   - All mathematical symbols, formulas, equations, superscripts, subscripts, and scientific units MUST be rendered in KaTeX/LaTeX syntax wrapped in $...$ (for inline) or $$...$$ (for display equations).
+   - In JSON strings, ALWAYS double-escape all backslashes (e.g. \\\\frac{a}{b}, \\\\sqrt{x}, \\\\theta, \\\\Delta, \\\\times, \\\\pm, \\\\rightarrow, \\\\text{...}).
+   - Ensure all math delimiters ($ or $$) are strictly balanced with opening and closing pairs.
+3. question_type: Exactly "MCQ" or "NUMERICAL".
+4. options:
+   - For "MCQ": Exactly 4 options labeled "A", "B", "C", and "D" with their corresponding text. Use LaTeX $...$ for mathematical expressions inside options.
+   - For "NUMERICAL": Empty array [].
+5. correct_answer:
+   - For "MCQ": The correct option letter ("A", "B", "C", or "D").
+   - For "NUMERICAL": The numeric answer as a clean decimal string (e.g. "42", "-2.5", "0"). If unknown from the source paper, provide the solved answer or "0".
+6. subject: Exactly one of: "Physics", "Chemistry", or "Mathematics".
+7. AUTOMATIC IMAGE & DIAGRAM DETECTION ("has_image_or_diagram"):
+   - You MUST automatically check every question in the source paper for diagrams or images and set this flag accurately. Do NOT require the user to check it manually!
+   - Set "has_image_or_diagram": true if the question contains OR references ANY visual element, including:
+     * Diagrams, figures, schematics, circuits, electrical setups, or pulleys/mechanics drawings.
+     * Ray optics diagrams, lenses/mirrors, or magnetic/electric field illustrations.
+     * Geometry shapes (triangles, circles, 3D solids, graphs of functions).
+     * Graphs, coordinate plots, curves, $P-V$ diagrams, $v-t$ graphs, or charts.
+     * Chemical structures, organic benzene/ring structures, skeletal formulas, stereochemistry, or reaction mechanisms with structural drawings.
+     * Any question text with "shown in the figure", "in the given diagram", "refer to the graph below", "for the given reaction", etc.
+   - Set "has_image_or_diagram": false ONLY when the question and all its options are 100% self-contained text and mathematical equations without any visual figure, drawing, or diagram.
+8. id: A unique short alphanumeric identifier (e.g. "phy-001", "chem-002", "math-003").`;
+
 const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank }) => {
   const [dragActive, setDragActive] = useState(false);
   const [hasParsedData, setHasParsedData] = useState(false);
@@ -25,6 +91,8 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank }) => {
   const [importHistory, setImportHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [historyError, setHistoryError] = useState('');
+  const [copiedPrompt, setCopiedPrompt] = useState(false);
+  const [showPromptPreview, setShowPromptPreview] = useState(false);
   
   // Import Progress
   const [importing, setImporting] = useState(false);
@@ -84,18 +152,25 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank }) => {
     }
   };
 
-  const downloadJsonArtifact = (document, downloadName) => {
-    const blob = new Blob([JSON.stringify(document, null, 2)], { type: 'application/json;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = window.document.createElement('a');
-    anchor.href = url;
-    anchor.download = downloadName;
-    window.document.body.appendChild(anchor);
+  const handleCopyPrompt = async () => {
     try {
-      anchor.click();
-    } finally {
-      window.document.body.removeChild(anchor);
-      setTimeout(() => URL.revokeObjectURL(url), 0);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(AI_CONVERSION_PROMPT_TEMPLATE);
+      } else {
+        const textarea = window.document.createElement('textarea');
+        textarea.value = AI_CONVERSION_PROMPT_TEMPLATE;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        window.document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        window.document.execCommand('copy');
+        window.document.body.removeChild(textarea);
+      }
+      setCopiedPrompt(true);
+      setTimeout(() => setCopiedPrompt(false), 2500);
+    } catch (err) {
+      console.error('Failed to copy prompt:', err);
     }
   };
 
@@ -369,31 +444,288 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank }) => {
             <span>📋</span> Reviewed JSON Import
           </h2>
           <p style={{ margin: 0, color: '#475569', fontSize: '0.9rem', lineHeight: '1.5' }}>
-            This portal accepts reviewed JSON only. It does not read PDFs, images, OCR output, documents, or invoke an AI service. If source material needs conversion, do that outside the portal, then verify every question, option, answer, subject, equation, and diagram indicator before approval.
+            This portal accepts reviewed JSON only. It does not read PDFs, images, OCR output, documents, or invoke an AI service.
           </p>
 
-          <div style={{ border: '1px solid var(--border-color)', borderRadius: '8px', padding: '14px', backgroundColor: '#f8fafc' }}>
-            <p style={{ margin: '0 0 12px', fontSize: '0.85rem', color: '#475569' }}>
-              Start with the example and validate generated JSON against the schema. A row is never committed until it passes validation and an administrator explicitly approves it.
-            </p>
-            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                onClick={() => downloadJsonArtifact(IMPORT_EXAMPLE_DOCUMENT, 'reviewed-jee-question-import-example.json')}
-                className="btn-primary"
-                style={{ padding: '8px 12px', fontSize: '0.82rem' }}
-              >
-                Download JSON Example
-              </button>
-              <button
-                type="button"
-                onClick={() => downloadJsonArtifact(IMPORT_JSON_SCHEMA_DOCUMENT, 'reviewed-jee-question-import-v1.schema.json')}
-                className="btn-outline"
-                style={{ padding: '8px 12px', fontSize: '0.82rem' }}
-              >
-                Download JSON Schema
-              </button>
+          <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px', padding: '16px', backgroundColor: '#f8fafc' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
+              <div style={{ flex: '1 1 320px' }}>
+                <h3 style={{ margin: '0 0 6px', fontSize: '0.95rem', fontWeight: '600', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span>🤖</span> AI Conversion Prompt
+                </h3>
+                <p style={{ margin: 0, fontSize: '0.85rem', color: '#475569', lineHeight: '1.45' }}>
+                  Copy this prompt to ChatGPT, Gemini, Claude, or DeepSeek to convert your exam documents into uploadable JSON.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button
+                  type="button"
+                  onClick={handleCopyPrompt}
+                  className="btn-primary"
+                  style={{
+                    padding: '8px 16px',
+                    fontSize: '0.85rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    backgroundColor: copiedPrompt ? 'var(--success, #16a34a)' : 'var(--primary, #2563eb)'
+                  }}
+                  aria-label={copiedPrompt ? 'Prompt copied to clipboard' : 'Copy AI conversion prompt'}
+                >
+                  {copiedPrompt ? (
+                    <>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                      Copied!
+                    </>
+                  ) : (
+                    <>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                      </svg>
+                      Copy Prompt
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowPromptPreview(prev => !prev)}
+                  style={{
+                    padding: '8px 12px',
+                    fontSize: '0.85rem',
+                    background: 'none',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '6px',
+                    color: 'var(--text-muted, #64748b)',
+                    cursor: 'pointer'
+                  }}
+                >
+                  {showPromptPreview ? 'Hide Prompt' : 'View Prompt'}
+                </button>
+              </div>
             </div>
+
+            {/* Quick Access AI Services */}
+            <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid var(--border-color, #e2e8f0)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', flexWrap: 'wrap', gap: '6px' }}>
+                <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-muted, #64748b)', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="2" y1="12" x2="22" y2="12" />
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                  </svg>
+                  Open External AI Assistant:
+                </span>
+                <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                  Opens in new tab • sign in with your account
+                </span>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '8px' }}>
+                {/* ChatGPT */}
+                <a
+                  href="https://chatgpt.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Open ChatGPT in a new tab"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    background: '#ffffff',
+                    border: '1px solid #bbf7d0',
+                    color: '#065f46',
+                    textDecoration: 'none',
+                    fontSize: '0.85rem',
+                    fontWeight: 600,
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.backgroundColor = '#f0fdf4';
+                    e.currentTarget.style.borderColor = '#86efac';
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.backgroundColor = '#ffffff';
+                    e.currentTarget.style.borderColor = '#bbf7d0';
+                    e.currentTarget.style.transform = 'none';
+                  }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10a37f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M12 2a10 10 0 0 1 10 10c0 5.523-4.477 10-10 10a9.96 9.96 0 0 1-4.787-1.223L2 22l1.223-5.213A9.96 9.96 0 0 1 2 12C2 6.477 6.477 2 12 2z" />
+                      <circle cx="8" cy="12" r="1" fill="#10a37f" />
+                      <circle cx="12" cy="12" r="1" fill="#10a37f" />
+                      <circle cx="16" cy="12" r="1" fill="#10a37f" />
+                    </svg>
+                    ChatGPT
+                  </span>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#10a37f" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <line x1="7" y1="17" x2="17" y2="7" />
+                    <polyline points="7 7 17 7 17 17" />
+                  </svg>
+                </a>
+
+                {/* Gemini */}
+                <a
+                  href="https://gemini.google.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Open Google Gemini in a new tab"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    background: '#ffffff',
+                    border: '1px solid #bfdbfe',
+                    color: '#1e40af',
+                    textDecoration: 'none',
+                    fontSize: '0.85rem',
+                    fontWeight: 600,
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.backgroundColor = '#eff6ff';
+                    e.currentTarget.style.borderColor = '#93c5fd';
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.backgroundColor = '#ffffff';
+                    e.currentTarget.style.borderColor = '#bfdbfe';
+                    e.currentTarget.style.transform = 'none';
+                  }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="#2563eb" aria-hidden="true">
+                      <path d="M12 2L13.8 8.2L20 10L13.8 11.8L12 18L10.2 11.8L4 10L10.2 8.2L12 2Z" />
+                    </svg>
+                    Gemini
+                  </span>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <line x1="7" y1="17" x2="17" y2="7" />
+                    <polyline points="7 7 17 7 17 17" />
+                  </svg>
+                </a>
+
+                {/* Claude */}
+                <a
+                  href="https://claude.ai"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Open Anthropic Claude in a new tab"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    background: '#ffffff',
+                    border: '1px solid #fed7aa',
+                    color: '#9a3412',
+                    textDecoration: 'none',
+                    fontSize: '0.85rem',
+                    fontWeight: 600,
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.backgroundColor = '#fff7ed';
+                    e.currentTarget.style.borderColor = '#fdba74';
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.backgroundColor = '#ffffff';
+                    e.currentTarget.style.borderColor = '#fed7aa';
+                    e.currentTarget.style.transform = 'none';
+                  }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="#c2410c" aria-hidden="true">
+                      <path d="M12 2l2.4 6.9L21.3 7l-4.5 5.5 5.2 4.8-7-.9L12 23l-3-6.6-7 .9 5.2-4.8L2.7 7l6.9 1.9L12 2z" />
+                    </svg>
+                    Claude
+                  </span>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#c2410c" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <line x1="7" y1="17" x2="17" y2="7" />
+                    <polyline points="7 7 17 7 17 17" />
+                  </svg>
+                </a>
+
+                {/* DeepSeek */}
+                <a
+                  href="https://chat.deepseek.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Open DeepSeek in a new tab"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '8px 12px',
+                    borderRadius: '8px',
+                    background: '#ffffff',
+                    border: '1px solid #bae6fd',
+                    color: '#0369a1',
+                    textDecoration: 'none',
+                    fontSize: '0.85rem',
+                    fontWeight: 600,
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.backgroundColor = '#f0f9ff';
+                    e.currentTarget.style.borderColor = '#7dd3fc';
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.backgroundColor = '#ffffff';
+                    e.currentTarget.style.borderColor = '#bae6fd';
+                    e.currentTarget.style.transform = 'none';
+                  }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0284c7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                      <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                      <line x1="12" y1="22.08" x2="12" y2="12" />
+                    </svg>
+                    DeepSeek
+                  </span>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#0284c7" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <line x1="7" y1="17" x2="17" y2="7" />
+                    <polyline points="7 7 17 7 17 17" />
+                  </svg>
+                </a>
+              </div>
+            </div>
+
+            {showPromptPreview && (
+              <div style={{ marginTop: '12px' }}>
+                <pre style={{
+                  maxHeight: '260px',
+                  overflowY: 'auto',
+                  backgroundColor: '#0f172a',
+                  color: '#e2e8f0',
+                  padding: '14px',
+                  borderRadius: '6px',
+                  fontSize: '0.8rem',
+                  lineHeight: '1.45',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  fontFamily: 'Consolas, Monaco, monospace'
+                }}>
+                  {AI_CONVERSION_PROMPT_TEMPLATE}
+                </pre>
+              </div>
+            )}
           </div>
         </div>
 

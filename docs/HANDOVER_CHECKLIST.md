@@ -1,6 +1,6 @@
 # ExamForge client handover checklist
 
-This checklist separates repository work from deployment work. Production remains untouched by the repository-readiness work.
+This checklist separates verified repository/backend work from the final Vercel publication and client acceptance work.
 
 ## Completed evidence
 
@@ -18,8 +18,10 @@ This checklist separates repository work from deployment work. Production remain
 
 - [ ] Rotate the secret key exposed by the malformed ignored environment-file line.
 - [ ] Enable leaked-password protection in staging and production.
-- [ ] Verify production migration parity and deploy the current Edge Function during deployment.
-- [ ] Configure production Auth URLs, exact CORS origins, email delivery, and private Storage.
+- [x] Reconcile production migration history, apply the final migration, and deploy the current Edge Function.
+- [x] Configure the expected production Vercel CORS origin and verify private Storage remains protected.
+- [ ] Publish the `main` branch as Vercel project `examforge-portal` and verify the exact public URL and headers.
+- [ ] Configure production Auth Site URL/redirect URLs and email delivery for the published domain.
 - [ ] Configure monitoring, alerts, rate limits, backups/PITR, and an on-call owner.
 - [ ] Complete real-device/browser accessibility acceptance and client workflow sign-off.
 

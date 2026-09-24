@@ -60,6 +60,26 @@ test('package.json defines operational and linting commands', () => {
 
   assert.ok(pkg.scripts['lint'], 'package.json must declare a "lint" script');
   assert.ok(pkg.scripts['ops:check'], 'package.json must declare an "ops:check" script');
+  assert.ok(pkg.scripts['ops:check:main'], 'package.json must declare a production health-check script');
   assert.ok(pkg.scripts['build'], 'package.json must declare a "build" script');
   assert.ok(pkg.scripts['test'], 'package.json must declare a "test" script');
+});
+
+test('Vercel deployment is pinned to the production backend with defensive headers', () => {
+  const config = JSON.parse(readFileSync(resolve('vercel.json'), 'utf8'));
+  assert.equal(config.framework, 'vite');
+  assert.equal(config.outputDirectory, 'dist');
+
+  const globalHeaders = config.headers.find(entry => entry.source === '/(.*)')?.headers || [];
+  const headers = new Map(globalHeaders.map(({ key, value }) => [key.toLowerCase(), value]));
+  const csp = headers.get('content-security-policy') || '';
+
+  assert.match(csp, /default-src 'self'/);
+  assert.match(csp, /frame-ancestors 'none'/);
+  assert.match(csp, /https:\/\/hetaoesxoicqreobjqpy\.supabase\.co/);
+  assert.doesNotMatch(csp, /https?:\/\/\*/);
+  assert.equal(headers.get('strict-transport-security'), 'max-age=63072000; includeSubDomains; preload');
+  assert.equal(headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(headers.get('x-frame-options'), 'DENY');
+  assert.match(headers.get('permissions-policy') || '', /camera=\(\)/);
 });

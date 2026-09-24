@@ -108,3 +108,17 @@ It verifies AAL1 denial, AAL2 exam lifecycle controls, emergency exam ending, lo
 ## 7. Release rule
 
 Do not admit real candidates until every release blocker in `PRODUCTION_READINESS_REPORT.md` has objective evidence. Deployment-time items include expected-concurrency load evidence, real-device and assisted accessibility acceptance, hosted backup/restore timing, monitoring and alerting, operator ownership, rate-limit tuning, secret rotation, and security-header verification on the real domain.
+
+## 8. Production Vercel deployment
+
+The production Supabase project is `jee Project` (`hetaoesxoicqreobjqpy`). In Vercel:
+
+1. Import `hemanthmallela818/examforge-portal` and select the `main` branch.
+2. Set the project name to `examforge-portal`. This produces the exact production origin currently allowed by the Edge Function: `https://examforge-portal.vercel.app`.
+3. Keep the detected framework as Vite, build command as `npm run build`, and output directory as `dist`.
+4. Add `VITE_SUPABASE_URL=https://hetaoesxoicqreobjqpy.supabase.co` for Production.
+5. Add `VITE_SUPABASE_ANON_KEY` using the production project's **publishable** key from Supabase Project Settings → API Keys. It is a public browser key; never use a secret or service-role key.
+6. Deploy, then verify `/` returns the security headers defined in `vercel.json`.
+7. Test student login, administrator login, root administrator creation, private question images, exam start/autosave/offline reconnect/submit, and result revisit on the published domain.
+
+If the Vercel project name or custom domain differs, update the Supabase `ALLOWED_ORIGINS` Edge Function secret to that exact HTTPS origin before using administrator/student provisioning. Do not add a wildcard or preview-domain pattern to the production backend.

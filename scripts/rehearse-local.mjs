@@ -29,6 +29,15 @@ const { error: finalizeError } = await service.rpc('complete_account_provisionin
 });
 if (finalizeError) throw finalizeError;
 
+// A clean database has no application owner yet. Register the disposable
+// harness account through the server-owned authority table so the current
+// administrator hierarchy recognizes it during Edge Function provisioning.
+const { error: ownerError } = await service.from('application_owner').upsert({
+  singleton: true,
+  user_id: created.user.id
+}, { onConflict: 'singleton' });
+if (ownerError) throw ownerError;
+
 const { error: signInError } = await browser.auth.signInWithPassword({ email, password });
 if (signInError) throw signInError;
 const { data: enrollment, error: enrollmentError } = await browser.auth.mfa.enroll({ factorType: 'totp' });
