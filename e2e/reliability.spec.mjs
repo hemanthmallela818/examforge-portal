@@ -127,11 +127,10 @@ test('a response lost after committed submission recovers idempotently with one 
   await page.getByRole('button', { name: 'Submit Exam' }).click();
   const confirmation = page.getByRole('dialog', { name: 'Submit Exam?' });
   await confirmation.getByRole('button', { name: 'Yes, Submit' }).click();
-  const failureDialog = page.getByRole('dialog', { name: 'Notification' });
-  await expect(failureDialog).toBeVisible();
-  await failureDialog.getByRole('button', { name: 'OK' }).click();
-  await page.getByRole('button', { name: /Retry Submit Exam/ }).click();
-  await expect(page.getByRole('heading', { name: 'Exam Results' })).toBeVisible();
+  // The lost response is a transient network failure, so the client retries the
+  // idempotent submit automatically and the candidate reaches the result without
+  // a manual retry. The retry returns the already-committed result.
+  await expect(page.getByRole('heading', { name: 'Exam Results' })).toBeVisible({ timeout: 20000 });
   expect(committedResponseStatus).toBe(200);
   expect(submitAttempts).toBe(2);
 

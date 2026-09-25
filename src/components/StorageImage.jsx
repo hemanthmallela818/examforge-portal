@@ -1,15 +1,25 @@
 import { useEffect, useRef, useState } from 'react';
+import { ImageOff, Lock, RotateCw } from 'lucide-react';
 import { supabase } from '../supabase';
+import { Button, Skeleton } from './ui';
 
+/** @param {string | null | undefined} value */
 const isDirectImage = (value) => /^data:image\/|^https?:\/\//i.test(value || '');
 
+/** @typedef {{ url: string, expires: number }} SignedUrlEntry */
+
+/** @type {Map<string, SignedUrlEntry>} */
 const signedUrlCache = new Map();
 
+/**
+ * @param {string | null | undefined} src
+ * @returns {string | null}
+ */
 export const getCachedSignedUrl = (src) => {
   if (!src) return null;
   if (isDirectImage(src)) return src;
   if (signedUrlCache.has(src)) {
-    const cached = signedUrlCache.get(src);
+    const cached = /** @type {SignedUrlEntry} */ (signedUrlCache.get(src));
     if (cached.expires > Date.now()) return cached.url;
     signedUrlCache.delete(src);
   }
@@ -26,6 +36,10 @@ export const getCachedSignedUrl = (src) => {
   return null;
 };
 
+/**
+ * @param {string | null | undefined} src
+ * @param {string | null | undefined} url
+ */
 export const setCachedSignedUrl = (src, url) => {
   if (!src || !url) return;
   const entry = { url, expires: Date.now() + 55 * 60 * 1000 };
@@ -38,6 +52,7 @@ export const setCachedSignedUrl = (src, url) => {
   } catch {}
 };
 
+/** @param {string} src */
 const clearCachedSignedUrl = (src) => {
   signedUrlCache.delete(src);
   try {
@@ -48,8 +63,13 @@ const clearCachedSignedUrl = (src) => {
   } catch {}
 };
 
+/**
+ * Pre-fetches signed URLs for every storage-hosted diagram in a server paper.
+ * @param {import('../types').UntrustedInput} examData
+ */
 export const preloadExamImages = async (examData) => {
   if (!examData?.questions) return;
+  /** @type {Set<string>} */
   const pathsToFetch = new Set();
 
   Object.values(examData.questions).forEach(subQuestions => {
@@ -62,7 +82,7 @@ export const preloadExamImages = async (examData) => {
         pathsToFetch.add(q.imageUrl);
       }
       if (Array.isArray(q.optionImageUrls)) {
-        q.optionImageUrls.forEach(optUrl => {
+        q.optionImageUrls.forEach((/** @type {string | null | undefined} */ optUrl) => {
           if (optUrl && !isDirectImage(optUrl) && !getCachedSignedUrl(optUrl)) {
             pathsToFetch.add(optUrl);
           }
@@ -90,6 +110,9 @@ export const preloadExamImages = async (examData) => {
   );
 };
 
+/**
+ * @param {Omit<import('react').ImgHTMLAttributes<HTMLImageElement>, 'src'> & { src?: string | null }} props
+ */
 const StorageImage = ({ src, alt, onError, onLoad, ...props }) => {
   const [resolvedSrc, setResolvedSrc] = useState(() => getCachedSignedUrl(src));
   const [refreshKey, setRefreshKey] = useState(0);
@@ -153,20 +176,9 @@ const StorageImage = ({ src, alt, onError, onLoad, ...props }) => {
     return (
       <div
         role="alert"
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '8px',
-          padding: '8px 12px',
-          borderRadius: '6px',
-          backgroundColor: '#fef2f2',
-          border: '1px solid #f87171',
-          color: '#991b1b',
-          fontSize: '0.8rem',
-          margin: '6px 0'
-        }}
+        className="my-1.5 inline-flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-800"
       >
-        <span>🔒</span>
+        <Lock className="size-4 shrink-0 text-red-600" aria-hidden="true" />
         <span>Insecure HTTP image URL blocked for security.</span>
       </div>
     );
@@ -177,55 +189,40 @@ const StorageImage = ({ src, alt, onError, onLoad, ...props }) => {
       <div
         role="img"
         aria-label={alt ? `Diagram unavailable: ${alt}` : 'Diagram unavailable - image failed to load'}
-        style={{
-          display: 'inline-flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '14px 18px',
-          borderRadius: '8px',
-          border: '1px dashed #ef4444',
-          backgroundColor: '#fef2f2',
-          color: '#991b1b',
-          fontSize: '0.85rem',
-          gap: '6px',
-          margin: '8px 0',
-          maxWidth: '100%'
-        }}
+        className="my-2 inline-flex max-w-full flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-red-300 bg-red-50/70 px-5 py-4 text-center text-sm text-red-800"
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
-          <span>⚠️</span>
+        <div className="flex items-center gap-1.5 font-semibold">
+          <ImageOff className="size-4 shrink-0 text-red-600" aria-hidden="true" />
           <span>Diagram unavailable</span>
         </div>
-        <span style={{ fontSize: '0.75rem', color: '#b91c1c' }}>Image could not be loaded from storage.</span>
-        <button
-          type="button"
+        <span className="text-xs text-red-700">Image could not be loaded from storage.</span>
+        <Button
+          variant="secondary"
+          size="sm"
+          className="mt-1"
           onClick={() => {
             retryRef.current = 0;
             setLoadError(false);
-            clearCachedSignedUrl(src);
+            clearCachedSignedUrl(/** @type {string} */ (src));
             setResolvedSrc(null);
             setRefreshKey(v => v + 1);
           }}
-          style={{
-            marginTop: '4px',
-            padding: '4px 10px',
-            fontSize: '0.75rem',
-            fontWeight: 'bold',
-            backgroundColor: '#ffffff',
-            border: '1px solid #dc2626',
-            borderRadius: '4px',
-            color: '#b91c1c',
-            cursor: 'pointer'
-          }}
         >
-          🔄 Retry Loading
-        </button>
+          <RotateCw aria-hidden="true" />
+          Retry
+        </Button>
       </div>
     );
   }
 
-  if (!resolvedSrc) return null;
+  if (!resolvedSrc) {
+    if (!src) return null;
+    return (
+      <span role="status" aria-label="Loading image" className="my-1 inline-flex items-center justify-center">
+        <Skeleton className="h-16 w-28 rounded-lg" />
+      </span>
+    );
+  }
 
   return (
     <img
@@ -240,7 +237,7 @@ const StorageImage = ({ src, alt, onError, onLoad, ...props }) => {
         onError?.(event);
         if (!isDirectImage(src) && retryRef.current < 2) {
           retryRef.current += 1;
-          clearCachedSignedUrl(src);
+          clearCachedSignedUrl(/** @type {string} */ (src));
           setResolvedSrc(null);
           setRefreshKey(value => value + 1);
         } else {

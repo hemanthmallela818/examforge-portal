@@ -2,12 +2,19 @@
   "compilerOptions": {
     "target": "es2023",
     "module": "esnext",
-    "lib": ["ES2023", "DOM"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "types": ["vite/client"],
     "skipLibCheck": true,
     "allowJs": true,
-    "checkJs": false,
     "jsx": "react-jsx",
+
+    /* JSDoc type checking for all of src/ (see "include").
+       Full `strict` (noImplicitAny, strictNullChecks, strictFunctionTypes, ...).
+       Untrusted JSON/server payloads are typed with the explicit
+       `UntrustedInput` alias from src/types.d.ts at each validation boundary. */
+    "checkJs": true,
+    "strict": true,
+    "noFallthroughCasesInSwitch": true,
 
     /* Bundler mode */
     "moduleResolution": "bundler",
@@ -17,5 +24,7 @@
     "noEmit": true,
     "isolatedModules": true
   },
-  "include": ["src/**/*.js", "src/**/*.jsx"]
+  /* Every source module (logic, hooks and React components) is type-checked
+     under the strict settings above. Shared typedefs live in src/types.d.ts. */
+  "include": ["src/**/*.js", "src/**/*.jsx", "src/**/*.d.ts"]
 }

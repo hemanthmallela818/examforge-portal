@@ -88,6 +88,19 @@ if (!url || !key) {
     if (healthData.questions_missing_required_media > 0) {
       issues.push(`${healthData.questions_missing_required_media} question(s) require diagram uploads.`);
     }
+    if (Number(healthData.client_errors_last_hour) > 25) {
+      issues.push(`${healthData.client_errors_last_hour} client error(s) reported in the last hour.`);
+    }
+    metrics.clientErrorsLastHour = healthData.client_errors_last_hour ?? 0;
+    const scheduler = healthData.scheduler;
+    if (scheduler) {
+      metrics.schedulerAvailable = scheduler.available;
+      metrics.schedulerLastRunAt = scheduler.last_run_at ?? null;
+      metrics.schedulerFailuresLastHour = scheduler.failures_last_hour ?? 0;
+      if (scheduler.available && scheduler.healthy === false) {
+        issues.push(`Expired-attempt finalizer is unhealthy (last status: ${scheduler.last_status || 'none'}, failures in last hour: ${scheduler.failures_last_hour ?? 0}).`);
+      }
+    }
   }
 
   // 2. Scan for unreferenced storage assets if permitted

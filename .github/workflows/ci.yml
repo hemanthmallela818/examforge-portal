@@ -38,6 +38,15 @@ jobs:
       - name: JavaScript & JSX Project Verification
         run: npm run typecheck
 
+      - name: Schema Reference Is Current
+        run: npm run schema:reference:check
+
+      - name: Component Behaviour Tests
+        run: npm run test:components
+
+      - name: Database Behaviour Tests (all migrations replayed)
+        run: npm run test:db
+
       - name: Run Test Suite With Coverage Gates
         run: npm run test:coverage
 
@@ -69,7 +78,7 @@ jobs:
         run: npx playwright install --with-deps chromium firefox webkit
 
       - name: Run Critical Authenticated Browser Paths
-        run: npm run test:e2e:local -- e2e/auth.spec.mjs e2e/admin-critical.spec.mjs e2e/student-exam.spec.mjs e2e/takeover.spec.mjs
+        run: npm run test:e2e:local -- e2e/auth.spec.mjs e2e/admin-critical.spec.mjs e2e/student-exam.spec.mjs e2e/takeover.spec.mjs e2e/axe.spec.mjs
 
       - name: Upload Browser Failure Evidence
         if: failure()

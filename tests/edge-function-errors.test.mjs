@@ -25,3 +25,16 @@ test('Edge Function errors retain safe SDK and fallback messages', async () => {
   );
   assert.equal(await readFunctionInvocationError({}, 'Fallback'), 'Fallback');
 });
+
+test('server correlation IDs are appended so support can trace the failure', async () => {
+  const { readFunctionInvocationError } = await import('../src/edgeFunctionErrors.js');
+  const withReference = await readFunctionInvocationError({
+    data: { error: 'Failed to update student password', correlationId: '7f3a9c2e-1b4d-4e8f-9a0b-123456789abc' }
+  }, 'fallback');
+  assert.equal(withReference, 'Failed to update student password (Reference: 7f3a9c2e-1b4d-4e8f-9a0b-123456789abc)');
+
+  const unsafeReference = await readFunctionInvocationError({
+    data: { error: 'Denied', correlationId: '<script>alert(1)</script>' }
+  }, 'fallback');
+  assert.equal(unsafeReference, 'Denied');
+});

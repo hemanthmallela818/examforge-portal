@@ -1,7 +1,17 @@
+import { memo } from 'react';
 import { getStatusGlyph, getStatusLabel } from '../accessibilityLogic';
+import { cn } from './ui';
 
 export { getStatusGlyph, getStatusLabel };
 
+/**
+ * @param {{
+ *   totalQuestions: number,
+ *   questionStatuses: import('../types').ResponseStatus[],
+ *   currentQuestionIndex: number,
+ *   setCurrentQuestionIndex: (index: number) => void
+ * }} props
+ */
 const GridPanel = ({ 
   totalQuestions, 
   questionStatuses, 
@@ -26,6 +36,7 @@ const GridPanel = ({
     else if (status === 'ANSWERED_MARKED') counts.answeredMarked++;
   });
 
+  /** @param {import('../types').ResponseStatus} status */
   const getStatusClass = (status) => {
     switch(status) {
       case 'NOT_VISITED': return 'status-not-visited';
@@ -37,6 +48,10 @@ const GridPanel = ({
     }
   };
 
+  /**
+   * @param {import('react').KeyboardEvent<HTMLButtonElement>} e
+   * @param {number} idx
+   */
   const handleKeyDown = (e, idx) => {
     let nextIdx = null;
     if (e.key === 'ArrowRight') {
@@ -61,86 +76,85 @@ const GridPanel = ({
     }
   };
 
+  const legendChip = 'flex size-7 shrink-0 items-center justify-center rounded-md text-xs font-bold tabular-nums';
+  const legendItem = 'flex items-center gap-2 rounded-lg px-1.5 py-1 text-slate-700';
+  const legendGlyph = 'inline-block w-5 text-center font-bold text-slate-500';
+
   return (
-    <aside className="exam-grid-panel" aria-label="Question navigator" style={{ width: '30%', backgroundColor: 'var(--bg-color)', display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>
-      {/* Legend */}
-      <div style={{ padding: '15px', borderBottom: '1px solid var(--border-color)', backgroundColor: 'white' }}>
-        <h4 style={{ marginBottom: '15px', fontSize: '1rem', fontWeight: 'bold' }}>Status Legend</h4>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '0.85rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div className="status-not-visited" style={{ width: '25px', height: '25px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '4px' }}>{counts.notVisited}</div>
-            <span><span aria-hidden="true" style={{ fontWeight: 'bold' }}>·</span> Not Visited</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div className="status-not-answered" style={{ width: '25px', height: '25px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{counts.notAnswered}</div>
-            <span><span aria-hidden="true" style={{ fontWeight: 'bold' }}>—</span> Not Answered</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div className="status-answered" style={{ width: '25px', height: '25px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{counts.answered}</div>
-            <span><span aria-hidden="true" style={{ fontWeight: 'bold' }}>✓</span> Answered</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div className="status-marked" style={{ width: '25px', height: '25px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{counts.marked}</div>
-            <span><span aria-hidden="true" style={{ fontWeight: 'bold' }}>⚑</span> Marked for Review</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', gridColumn: 'span 2' }}>
-            <div className="status-answered-marked" style={{ width: '25px', height: '25px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{counts.answeredMarked}</div>
-            <span><span aria-hidden="true" style={{ fontWeight: 'bold' }}>✓⚑</span> Answered & Marked</span>
+    <aside className="exam-grid-panel" aria-label="Question navigator" style={{ width: '30%', display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>
+      <div className="flex flex-1 flex-col bg-slate-50">
+        {/* Legend */}
+        <div className="border-b border-slate-200 bg-white p-4">
+          <h4 className="mb-3 text-sm font-semibold text-slate-900">Status Legend</h4>
+          <div className="grid grid-cols-2 gap-x-2 gap-y-1.5 text-xs font-medium">
+            <div className={legendItem}>
+              <div className={cn('status-not-visited', legendChip)}>{counts.notVisited}</div>
+              <span><span aria-hidden="true" className={legendGlyph}>·</span> Not Visited</span>
+            </div>
+            <div className={legendItem}>
+              <div className={cn('status-not-answered', legendChip)}>{counts.notAnswered}</div>
+              <span><span aria-hidden="true" className={legendGlyph}>—</span> Not Answered</span>
+            </div>
+            <div className={legendItem}>
+              <div className={cn('status-answered', legendChip)}>{counts.answered}</div>
+              <span><span aria-hidden="true" className={legendGlyph}>✓</span> Answered</span>
+            </div>
+            <div className={legendItem}>
+              <div className={cn('status-marked', legendChip)}>{counts.marked}</div>
+              <span><span aria-hidden="true" className={legendGlyph}>⚑</span> Marked for Review</span>
+            </div>
+            <div className={cn(legendItem, 'col-span-2')}>
+              <div className={cn('status-answered-marked', legendChip)}>{counts.answeredMarked}</div>
+              <span><span aria-hidden="true" className={legendGlyph}>✓⚑</span> Answered & Marked</span>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Grid */}
-      <div style={{ padding: '20px', backgroundColor: 'var(--bg-color)' }}>
-        <h4 style={{ marginBottom: '15px', color: 'var(--text-main)', fontWeight: 'bold' }}>Choose a Question</h4>
-        <div
-          role="region"
-          aria-label="Question palette"
-          style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(44px, 1fr))', gap: '10px' }}
-        >
-          {Array.from({ length: totalQuestions }).map((_, idx) => {
-            const status = questionStatuses[idx] || 'NOT_VISITED';
-            const isActive = idx === currentQuestionIndex;
-            const glyph = getStatusGlyph(status);
-            return (
-              <button
-                key={idx}
-                id={`q-palette-btn-${idx}`}
-                className={getStatusClass(status)}
-                aria-label={`Question ${idx + 1}, ${getStatusLabel(status)}${isActive ? ', current question' : ''}`}
-                aria-current={isActive ? 'step' : undefined}
-                onClick={() => setCurrentQuestionIndex(idx)}
-                onKeyDown={(e) => handleKeyDown(e, idx)}
-                style={{
-                  width: '100%',
-                  minHeight: '44px',
-                  aspectRatio: '1',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  padding: '2px',
-                  fontSize: '0.88rem',
-                  fontWeight: 'bold',
-                  border: isActive ? '2px solid black' : '1px solid var(--border-color)',
-                  boxShadow: isActive ? '0 0 0 2px rgba(37,99,235,0.3)' : 'none',
-                  cursor: 'pointer',
-                  position: 'relative'
-                }}
-              >
-                <span>{idx + 1}</span>
-                {glyph !== '·' && (
-                  <span aria-hidden="true" style={{ fontSize: '0.65rem', lineHeight: 1, marginTop: '1px' }}>
-                    {glyph}
-                  </span>
-                )}
-              </button>
-            );
-          })}
+        {/* Grid */}
+        <div className="flex-1 p-4">
+          <h4 className="mb-3 flex items-center justify-between text-sm font-semibold text-slate-900">
+            <span>Choose a Question</span>
+            <span className="text-xs font-medium text-slate-500 tabular-nums">{totalQuestions} total</span>
+          </h4>
+          <div
+            role="region"
+            aria-label="Question palette"
+            className="grid grid-cols-[repeat(auto-fill,minmax(44px,1fr))] gap-2.5"
+          >
+            {Array.from({ length: totalQuestions }).map((_, idx) => {
+              const status = questionStatuses[idx] || 'NOT_VISITED';
+              const isActive = idx === currentQuestionIndex;
+              const glyph = getStatusGlyph(status);
+              return (
+                <button
+                  key={idx}
+                  id={`q-palette-btn-${idx}`}
+                  className={cn(
+                    getStatusClass(status),
+                    'relative flex aspect-square min-h-11 w-full flex-col items-center justify-center rounded-lg p-0.5 text-sm font-bold tabular-nums shadow-sm transition hover:brightness-95',
+                    isActive && 'exam-question-item-active ring-2 ring-brand-600 ring-offset-2 ring-offset-slate-50'
+                  )}
+                  aria-label={`Question ${idx + 1}, ${getStatusLabel(status)}${isActive ? ', current question' : ''}`}
+                  aria-current={isActive ? 'step' : undefined}
+                  onClick={() => setCurrentQuestionIndex(idx)}
+                  onKeyDown={(e) => handleKeyDown(e, idx)}
+                >
+                  <span>{idx + 1}</span>
+                  {glyph !== '·' && (
+                    <span aria-hidden="true" className="mt-px text-[0.65rem] leading-none">
+                      {glyph}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
     </aside>
   );
 };
 
-export default GridPanel;
+// Memoized: the session memoizes questionStatuses per subject and passes a
+// stable navigation callback, so the palette re-renders only on real changes.
+export default memo(GridPanel);

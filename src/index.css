@@ -1,6 +1,54 @@
+@import "tailwindcss";
+
+/* Dark theme (U3): `.dark` on <html>, set by src/theme/theme.js. Use `dark:` only for the
+   few places the variable remapping at the end of this file cannot express. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------- Design system theme (Tailwind v4) ----------
+   Brand: calm academic blue on slate neutrals. See docs/UI_DESIGN_SYSTEM.md.
+   The brand-* utilities read --brand-50…950, which institution branding
+   (src/branding/brandingStore.js) overrides inline on <html>. */
+@theme {
+  --font-sans: "Inter Variable", Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --color-brand-50: var(--brand-50);
+  --color-brand-100: var(--brand-100);
+  --color-brand-200: var(--brand-200);
+  --color-brand-300: var(--brand-300);
+  --color-brand-400: var(--brand-400);
+  --color-brand-500: var(--brand-500);
+  --color-brand-600: var(--brand-600);
+  --color-brand-700: var(--brand-700);
+  --color-brand-800: var(--brand-800);
+  --color-brand-900: var(--brand-900);
+  --color-brand-950: var(--brand-950);
+
+  --radius-xl: 0.875rem;
+  --radius-2xl: 1.125rem;
+
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 1px 3px rgb(15 23 42 / 0.06);
+  --shadow-elevated: 0 10px 30px -10px rgb(15 23 42 / 0.25);
+
+  --animate-fade-in: fadeIn 0.25s ease-out both;
+}
+
 :root {
-  --primary: #2563eb;
-  --primary-hover: #1d4ed8;
+  /* Default brand scale (blue); replaced by the institution colour when set. */
+  --brand-50: #eff6ff;
+  --brand-100: #dbeafe;
+  --brand-200: #bfdbfe;
+  --brand-300: #93c5fd;
+  --brand-400: #60a5fa;
+  --brand-500: #3b82f6;
+  --brand-600: #2563eb;
+  --brand-700: #1d4ed8;
+  --brand-800: #1e40af;
+  --brand-900: #1e3a8a;
+  --brand-950: #172554;
+
+  --primary: var(--color-brand-600);
+  --primary-hover: var(--color-brand-700);
   --success: #22c55e;
   --success-hover: #16a34a;
   --warning: #f59e0b;
@@ -15,6 +63,28 @@
   --text-main: #0f172a;
   --text-muted: #64748b;
   --border-color: #e2e8f0;
+
+  /* Design tokens (U1): shared radius, elevation, spacing and tinted surfaces */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.18);
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --surface-danger: #fef2f2;
+  --surface-warning: #fffbeb;
+  --surface-success: #f0fdf4;
+  --surface-info: #eff6ff;
+  --text-danger: #991b1b;
+  --text-warning: #92400e;
+  --text-success: #166534;
+  --text-info: #1e40af;
 }
 
 .active-exam-shell {
@@ -81,38 +151,49 @@
   }
 }
 
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
+/* Global element defaults live in the base layer so Tailwind utilities can override them. */
+@layer base {
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
 
-body {
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background-color: var(--bg-color);
-  color: var(--text-main);
-  overflow-x: hidden;
-}
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--bg-color);
+    color: var(--text-main);
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
 
-/* Base button styles */
-button {
-  font-family: inherit;
-  cursor: pointer;
-  border: none;
-  border-radius: 6px;
-  padding: 8px 16px;
-  font-weight: 500;
-  transition: all 0.2s ease;
-}
+  /* Base button styles */
+  button {
+    font-family: inherit;
+    cursor: pointer;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+  }
 
-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
+  button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
 
-:focus-visible {
-  outline: 3px solid rgba(37, 99, 235, 0.7);
-  outline-offset: 2px;
+  input, select, textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  :focus-visible {
+    outline: 3px solid color-mix(in oklab, var(--color-brand-600) 70%, transparent);
+    outline-offset: 2px;
+  }
 }
 
 /* Screen reader only and skip links */
@@ -192,7 +273,7 @@ button:disabled {
 .btn-info:hover:not(:disabled) { background-color: var(--info-hover); }
 
 .btn-outline {
-  background-color: white;
+  background-color: var(--panel-bg);
   color: var(--text-main);
   border: 1px solid var(--border-color);
 }
@@ -539,3 +620,481 @@ button:disabled {
     min-height: 44px !important;
   }
 }
+
+/* ---------- Shared UI primitives (U1) ---------- */
+.ui-icon {
+  flex-shrink: 0;
+  vertical-align: -0.15em;
+}
+
+.ui-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.btn-danger {
+  background-color: var(--danger);
+  color: white;
+}
+.btn-danger:hover:not(:disabled) { background-color: var(--danger-hover); }
+
+.btn-primary,
+.btn-success,
+.btn-warning,
+.btn-info,
+.btn-outline,
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.ui-card {
+  background: var(--panel-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-5);
+}
+
+.ui-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.ui-badge--neutral { background: var(--bg-color); color: var(--text-muted); border-color: var(--border-color); }
+.ui-badge--success { background: var(--surface-success); color: var(--text-success); }
+.ui-badge--warning { background: var(--surface-warning); color: var(--text-warning); }
+.ui-badge--danger  { background: var(--surface-danger);  color: var(--text-danger); }
+.ui-badge--info    { background: var(--surface-info);    color: var(--text-info); }
+
+.ui-callout {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.ui-callout--info    { background: var(--surface-info);    color: var(--text-info); }
+.ui-callout--warning { background: var(--surface-warning); color: var(--text-warning); }
+.ui-callout--danger  { background: var(--surface-danger);  color: var(--text-danger); }
+
+/* Exam navbar status pills (U12) */
+.exam-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.22);
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.exam-status-pill__detail {
+  font-weight: 500;
+  opacity: 0.85;
+}
+.exam-timer--urgent {
+  background-color: #b91c1c !important;
+}
+
+/* Destructive action dialog (U8) */
+.destructive-dialog {
+  text-align: left;
+}
+.destructive-dialog__header {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  margin-bottom: var(--space-4);
+}
+.destructive-dialog__icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--surface-danger);
+  color: var(--danger-hover);
+  flex-shrink: 0;
+}
+.destructive-dialog__list {
+  list-style: none;
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.destructive-dialog__list li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  font-size: 0.88rem;
+  border-bottom: 1px solid var(--border-color);
+}
+.destructive-dialog__list li:last-child { border-bottom: 0; }
+.destructive-dialog__list strong { font-variant-numeric: tabular-nums; }
+.destructive-dialog__phrase {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--surface-danger);
+  color: var(--text-danger);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 700;
+}
+.destructive-dialog input[type='text'] {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  margin-top: var(--space-2);
+}
+.destructive-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+  flex-wrap: wrap;
+}
+
+/* Admin sidebar icons (U2) */
+.admin-nav-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+@keyframes ui-spin { to { transform: rotate(360deg); } }
+.animate-spin { animation: ui-spin 0.9s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .animate-spin { animation: none; }
+}
+
+/* ==========================================================================
+   Dark theme (U3)
+   --------------------------------------------------------------------------
+   src/theme/theme.js puts `.dark` on <html> (Light / Dark / System). Instead of
+   adding dark: variants to every component, the Tailwind colour variables are
+   remapped here so the existing utilities render dark:
+   - slate-50…900 are inverted (page, surfaces, borders, text); slate-950 stays
+     dark because it is used for overlays and backdrops;
+   - `white` becomes the card surface (bg-white); real white text is restored
+     below for text-white;
+   - status and brand tints (-50…-300: alert/badge backgrounds, borders,
+     rings) become translucent tints of the hue over the dark surface;
+   - -500…-900 text on those tints is lightened by the class overrides below.
+     Solid -400…-950 backgrounds (buttons, the exam header) are unchanged, so
+     white text on them keeps its contrast.
+   Elements with a fixed dark or coloured look (admin sidebar, exam header,
+   security cover, score banner, code blocks) carry `theme-island`, which
+   restores the light palette inside them.
+   ========================================================================== */
+
+/* Before theme.js runs, follow the system setting for the page background. */
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme]) {
+    color-scheme: dark;
+    background-color: #0b1120;
+  }
+}
+
+.dark {
+  color-scheme: dark;
+  --theme-surface: #131c2e;
+  --color-white: var(--theme-surface);
+
+  --bg-color: #0b1120;
+  --panel-bg: #131c2e;
+  --text-main: #eef2f7;
+  --text-muted: #9ba8bc;
+  --border-color: #2a3549;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3), 0 1px 3px rgb(0 0 0 / 0.35);
+  --surface-danger: #3a1d27;
+  --surface-warning: #3a2c16;
+  --surface-success: #12302a;
+  --surface-info: #172a4a;
+  --text-danger: #fca5a5;
+  --text-warning: #fcd34d;
+  --text-success: #6ee7b7;
+  --text-info: #93c5fd;
+}
+
+/* White text stays white (buttons and badges on solid colours). */
+.dark .text-white,
+.dark .hover\:text-white:hover,
+.dark .group:hover .group-hover\:text-white { color: #fff; }
+
+/* Dark chips and code blocks that used slate-900 as a background. */
+.dark .bg-slate-900:not(.theme-island *) { background-color: #334155; }
+.dark .border-slate-900:not(.theme-island *) { border-color: #334155; }
+.dark .bg-slate-900\/60 { background-color: rgb(2 6 23 / 0.7); }
+
+.dark .exam-candidate-watermark { color: #f8fafc; }
+
+/* --- generated: dark palette --- */
+.dark {
+  --color-slate-50: #0b1120;
+  --color-slate-100: #1b2538;
+  --color-slate-200: #2a3549;
+  --color-slate-300: #3d4a60;
+  --color-slate-400: #8492a8;
+  --color-slate-500: #9ba8bc;
+  --color-slate-600: #b4bfce;
+  --color-slate-700: #cbd3de;
+  --color-slate-800: #dde3eb;
+  --color-slate-900: #eef2f7;
+  --color-red-50: color-mix(in oklab, var(--color-red-500) 14%, var(--theme-surface));
+  --color-red-100: color-mix(in oklab, var(--color-red-500) 22%, var(--theme-surface));
+  --color-red-200: color-mix(in oklab, var(--color-red-500) 34%, var(--theme-surface));
+  --color-red-300: color-mix(in oklab, var(--color-red-500) 48%, var(--theme-surface));
+  --color-orange-50: color-mix(in oklab, var(--color-orange-500) 14%, var(--theme-surface));
+  --color-orange-100: color-mix(in oklab, var(--color-orange-500) 22%, var(--theme-surface));
+  --color-orange-200: color-mix(in oklab, var(--color-orange-500) 34%, var(--theme-surface));
+  --color-orange-300: color-mix(in oklab, var(--color-orange-500) 48%, var(--theme-surface));
+  --color-amber-50: color-mix(in oklab, var(--color-amber-500) 14%, var(--theme-surface));
+  --color-amber-100: color-mix(in oklab, var(--color-amber-500) 22%, var(--theme-surface));
+  --color-amber-200: color-mix(in oklab, var(--color-amber-500) 34%, var(--theme-surface));
+  --color-amber-300: color-mix(in oklab, var(--color-amber-500) 48%, var(--theme-surface));
+  --color-emerald-50: color-mix(in oklab, var(--color-emerald-500) 14%, var(--theme-surface));
+  --color-emerald-100: color-mix(in oklab, var(--color-emerald-500) 22%, var(--theme-surface));
+  --color-emerald-200: color-mix(in oklab, var(--color-emerald-500) 34%, var(--theme-surface));
+  --color-emerald-300: color-mix(in oklab, var(--color-emerald-500) 48%, var(--theme-surface));
+  --color-violet-50: color-mix(in oklab, var(--color-violet-500) 14%, var(--theme-surface));
+  --color-violet-100: color-mix(in oklab, var(--color-violet-500) 22%, var(--theme-surface));
+  --color-violet-200: color-mix(in oklab, var(--color-violet-500) 34%, var(--theme-surface));
+  --color-violet-300: color-mix(in oklab, var(--color-violet-500) 48%, var(--theme-surface));
+  --color-rose-50: color-mix(in oklab, var(--color-rose-500) 14%, var(--theme-surface));
+  --color-rose-100: color-mix(in oklab, var(--color-rose-500) 22%, var(--theme-surface));
+  --color-rose-200: color-mix(in oklab, var(--color-rose-500) 34%, var(--theme-surface));
+  --color-rose-300: color-mix(in oklab, var(--color-rose-500) 48%, var(--theme-surface));
+  --color-brand-50: color-mix(in oklab, var(--color-brand-500) 14%, var(--theme-surface));
+  --color-brand-100: color-mix(in oklab, var(--color-brand-500) 22%, var(--theme-surface));
+  --color-brand-200: color-mix(in oklab, var(--color-brand-500) 34%, var(--theme-surface));
+  --color-brand-300: color-mix(in oklab, var(--color-brand-500) 48%, var(--theme-surface));
+}
+/* --- generated: island restore --- */
+.dark .theme-island {
+  --color-white: #fff;
+  --color-slate-50: oklch(98.4% 0.003 247.858);
+  --color-slate-100: oklch(96.8% 0.007 247.896);
+  --color-slate-200: oklch(92.9% 0.013 255.508);
+  --color-slate-300: oklch(86.9% 0.022 252.894);
+  --color-slate-400: oklch(70.4% 0.04 256.788);
+  --color-slate-500: oklch(55.4% 0.046 257.417);
+  --color-slate-600: oklch(44.6% 0.043 257.281);
+  --color-slate-700: oklch(37.2% 0.044 257.287);
+  --color-slate-800: oklch(27.9% 0.041 260.031);
+  --color-slate-900: oklch(20.8% 0.042 265.755);
+  --color-red-50: oklch(97.1% 0.013 17.38);
+  --color-red-100: oklch(93.6% 0.032 17.717);
+  --color-red-200: oklch(88.5% 0.062 18.334);
+  --color-red-300: oklch(80.8% 0.114 19.571);
+  --color-orange-50: oklch(98% 0.016 73.684);
+  --color-orange-100: oklch(95.4% 0.038 75.164);
+  --color-orange-200: oklch(90.1% 0.076 70.697);
+  --color-orange-300: oklch(83.7% 0.128 66.29);
+  --color-amber-50: oklch(98.7% 0.022 95.277);
+  --color-amber-100: oklch(96.2% 0.059 95.617);
+  --color-amber-200: oklch(92.4% 0.12 95.746);
+  --color-amber-300: oklch(87.9% 0.169 91.605);
+  --color-emerald-50: oklch(97.9% 0.021 166.113);
+  --color-emerald-100: oklch(95% 0.052 163.051);
+  --color-emerald-200: oklch(90.5% 0.093 164.15);
+  --color-emerald-300: oklch(84.5% 0.143 164.978);
+  --color-violet-50: oklch(96.9% 0.016 293.756);
+  --color-violet-100: oklch(94.3% 0.029 294.588);
+  --color-violet-200: oklch(89.4% 0.057 293.283);
+  --color-violet-300: oklch(81.1% 0.111 293.571);
+  --color-rose-50: oklch(96.9% 0.015 12.422);
+  --color-rose-100: oklch(94.1% 0.03 12.58);
+  --color-rose-200: oklch(89.2% 0.058 10.001);
+  --color-rose-300: oklch(81% 0.117 11.638);
+  --color-brand-50: var(--brand-50);
+  --color-brand-100: var(--brand-100);
+  --color-brand-200: var(--brand-200);
+  --color-brand-300: var(--brand-300);
+}
+/* --- generated: text overrides --- */
+.dark .text-red-500:not(.theme-island *),
+.dark .hover\:text-red-500:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-red-500:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-red-500:not(.theme-island *) > svg { color: oklch(70.4% 0.191 22.216); }
+.dark .text-red-600:not(.theme-island *),
+.dark .hover\:text-red-600:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-red-600:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-red-600:not(.theme-island *) > svg { color: oklch(70.4% 0.191 22.216); }
+.dark .text-red-700:not(.theme-island *),
+.dark .hover\:text-red-700:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-red-700:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-red-700:not(.theme-island *) > svg { color: oklch(80.8% 0.114 19.571); }
+.dark .text-red-800:not(.theme-island *),
+.dark .hover\:text-red-800:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-red-800:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-red-800:not(.theme-island *) > svg { color: oklch(88.5% 0.062 18.334); }
+.dark .text-red-900:not(.theme-island *),
+.dark .hover\:text-red-900:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-red-900:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-red-900:not(.theme-island *) > svg { color: oklch(93.6% 0.032 17.717); }
+.dark .text-orange-500:not(.theme-island *),
+.dark .hover\:text-orange-500:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-orange-500:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-orange-500:not(.theme-island *) > svg { color: oklch(75% 0.183 55.934); }
+.dark .text-orange-600:not(.theme-island *),
+.dark .hover\:text-orange-600:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-orange-600:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-orange-600:not(.theme-island *) > svg { color: oklch(75% 0.183 55.934); }
+.dark .text-orange-700:not(.theme-island *),
+.dark .hover\:text-orange-700:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-orange-700:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-orange-700:not(.theme-island *) > svg { color: oklch(83.7% 0.128 66.29); }
+.dark .text-orange-800:not(.theme-island *),
+.dark .hover\:text-orange-800:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-orange-800:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-orange-800:not(.theme-island *) > svg { color: oklch(90.1% 0.076 70.697); }
+.dark .text-orange-900:not(.theme-island *),
+.dark .hover\:text-orange-900:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-orange-900:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-orange-900:not(.theme-island *) > svg { color: oklch(95.4% 0.038 75.164); }
+.dark .text-amber-500:not(.theme-island *),
+.dark .hover\:text-amber-500:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-amber-500:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-amber-500:not(.theme-island *) > svg { color: oklch(82.8% 0.189 84.429); }
+.dark .text-amber-600:not(.theme-island *),
+.dark .hover\:text-amber-600:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-amber-600:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-amber-600:not(.theme-island *) > svg { color: oklch(82.8% 0.189 84.429); }
+.dark .text-amber-700:not(.theme-island *),
+.dark .hover\:text-amber-700:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-amber-700:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-amber-700:not(.theme-island *) > svg { color: oklch(87.9% 0.169 91.605); }
+.dark .text-amber-800:not(.theme-island *),
+.dark .hover\:text-amber-800:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-amber-800:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-amber-800:not(.theme-island *) > svg { color: oklch(92.4% 0.12 95.746); }
+.dark .text-amber-900:not(.theme-island *),
+.dark .hover\:text-amber-900:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-amber-900:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-amber-900:not(.theme-island *) > svg { color: oklch(96.2% 0.059 95.617); }
+.dark .text-emerald-500:not(.theme-island *),
+.dark .hover\:text-emerald-500:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-emerald-500:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-emerald-500:not(.theme-island *) > svg { color: oklch(76.5% 0.177 163.223); }
+.dark .text-emerald-600:not(.theme-island *),
+.dark .hover\:text-emerald-600:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-emerald-600:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-emerald-600:not(.theme-island *) > svg { color: oklch(76.5% 0.177 163.223); }
+.dark .text-emerald-700:not(.theme-island *),
+.dark .hover\:text-emerald-700:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-emerald-700:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-emerald-700:not(.theme-island *) > svg { color: oklch(84.5% 0.143 164.978); }
+.dark .text-emerald-800:not(.theme-island *),
+.dark .hover\:text-emerald-800:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-emerald-800:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-emerald-800:not(.theme-island *) > svg { color: oklch(90.5% 0.093 164.15); }
+.dark .text-emerald-900:not(.theme-island *),
+.dark .hover\:text-emerald-900:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-emerald-900:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-emerald-900:not(.theme-island *) > svg { color: oklch(95% 0.052 163.051); }
+.dark .text-violet-500:not(.theme-island *),
+.dark .hover\:text-violet-500:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-violet-500:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-violet-500:not(.theme-island *) > svg { color: oklch(70.2% 0.183 293.541); }
+.dark .text-violet-600:not(.theme-island *),
+.dark .hover\:text-violet-600:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-violet-600:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-violet-600:not(.theme-island *) > svg { color: oklch(70.2% 0.183 293.541); }
+.dark .text-violet-700:not(.theme-island *),
+.dark .hover\:text-violet-700:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-violet-700:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-violet-700:not(.theme-island *) > svg { color: oklch(81.1% 0.111 293.571); }
+.dark .text-violet-800:not(.theme-island *),
+.dark .hover\:text-violet-800:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-violet-800:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-violet-800:not(.theme-island *) > svg { color: oklch(89.4% 0.057 293.283); }
+.dark .text-violet-900:not(.theme-island *),
+.dark .hover\:text-violet-900:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-violet-900:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-violet-900:not(.theme-island *) > svg { color: oklch(94.3% 0.029 294.588); }
+.dark .text-rose-500:not(.theme-island *),
+.dark .hover\:text-rose-500:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-rose-500:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-rose-500:not(.theme-island *) > svg { color: oklch(71.2% 0.194 13.428); }
+.dark .text-rose-600:not(.theme-island *),
+.dark .hover\:text-rose-600:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-rose-600:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-rose-600:not(.theme-island *) > svg { color: oklch(71.2% 0.194 13.428); }
+.dark .text-rose-700:not(.theme-island *),
+.dark .hover\:text-rose-700:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-rose-700:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-rose-700:not(.theme-island *) > svg { color: oklch(81% 0.117 11.638); }
+.dark .text-rose-800:not(.theme-island *),
+.dark .hover\:text-rose-800:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-rose-800:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-rose-800:not(.theme-island *) > svg { color: oklch(89.2% 0.058 10.001); }
+.dark .text-rose-900:not(.theme-island *),
+.dark .hover\:text-rose-900:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-rose-900:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-rose-900:not(.theme-island *) > svg { color: oklch(94.1% 0.03 12.58); }
+.dark .text-brand-500:not(.theme-island *),
+.dark .hover\:text-brand-500:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-brand-500:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-brand-500:not(.theme-island *) > svg { color: var(--brand-300); }
+.dark .text-brand-600:not(.theme-island *),
+.dark .hover\:text-brand-600:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-brand-600:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-brand-600:not(.theme-island *) > svg { color: var(--brand-300); }
+.dark .text-brand-700:not(.theme-island *),
+.dark .hover\:text-brand-700:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-brand-700:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-brand-700:not(.theme-island *) > svg { color: var(--brand-200); }
+.dark .text-brand-800:not(.theme-island *),
+.dark .hover\:text-brand-800:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-brand-800:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-brand-800:not(.theme-island *) > svg { color: var(--brand-100); }
+.dark .text-brand-900:not(.theme-island *),
+.dark .hover\:text-brand-900:hover:not(.theme-island *),
+.dark .group:hover .group-hover\:text-brand-900:not(.theme-island *),
+.dark .\[\&\>svg\]\:text-brand-900:not(.theme-island *) > svg { color: var(--brand-50); }
+
+/* A subtree with its own brand scale (the Branding settings live preview sets
+   --brand-50…950 inline on the element). */
+.brand-scope {
+  --color-brand-50: var(--brand-50);
+  --color-brand-100: var(--brand-100);
+  --color-brand-200: var(--brand-200);
+  --color-brand-300: var(--brand-300);
+  --color-brand-400: var(--brand-400);
+  --color-brand-500: var(--brand-500);
+  --color-brand-600: var(--brand-600);
+  --color-brand-700: var(--brand-700);
+  --color-brand-800: var(--brand-800);
+  --color-brand-900: var(--brand-900);
+  --color-brand-950: var(--brand-950);
+}
+.dark .brand-scope {
+  --color-brand-50: color-mix(in oklab, var(--brand-500) 14%, var(--theme-surface));
+  --color-brand-100: color-mix(in oklab, var(--brand-500) 22%, var(--theme-surface));
+  --color-brand-200: color-mix(in oklab, var(--brand-500) 34%, var(--theme-surface));
+  --color-brand-300: color-mix(in oklab, var(--brand-500) 48%, var(--theme-surface));
+}
+
+/* The security cover is always dark (its className is asserted, so no island class). */
+.dark .exam-security-cover { --color-brand-300: var(--brand-300); }

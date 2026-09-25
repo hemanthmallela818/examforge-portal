@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { normalizeQuestionBankRow, parseSelectedQuestionsResponse } from '../src/questionBankPaging.js';
+import { adminSource } from './support/adminSource.mjs';
 
 test('selected-question responses require an exact, ordered match', () => {
   const row = id => ({ id, subject: 'Physics', type: 'MCQ', question_number: 1, question_text: 'Q', options: [], correct_answer: '0' });
@@ -84,7 +85,7 @@ test('question-bank RPCs are AAL2-only, bounded, filterable, and preserve cross-
 });
 
 test('administrator Question Bank uses server pages and verified selected-ID assembly', async () => {
-  const source = await readFile(new URL('../src/components/AdminDashboard.jsx', import.meta.url), 'utf8');
+  const source = await adminSource();
   assert.match(source, /get_admin_question_bank_page/);
   assert.match(source, /page_size_param:\s*QUESTION_BANK_PAGE_SIZE/);
   assert.match(source, /get_admin_questions_by_ids/);

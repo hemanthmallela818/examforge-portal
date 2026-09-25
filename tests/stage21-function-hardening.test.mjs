@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { adminSource } from './support/adminSource.mjs';
 
 const identityMigrationUrl = new URL(
   '../supabase/migrations/20260912103415_stage21_identity_session_function_hardening.sql',
@@ -93,7 +94,7 @@ test('Stage 21 removes raw papers from Realtime and publishes metadata only', as
     readFile(realtimeMigrationUrl, 'utf8'),
     readFile(new URL('../src/components/StudentDashboard.jsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/components/PreExam.jsx', import.meta.url), 'utf8'),
-    readFile(new URL('../src/components/AdminDashboard.jsx', import.meta.url), 'utf8')
+    adminSource()
   ]);
 
   assert.match(sql, /ALTER PUBLICATION supabase_realtime DROP TABLE public\.cbt_exams_raw/);

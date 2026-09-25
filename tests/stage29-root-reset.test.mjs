@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { adminSource } from './support/adminSource.mjs';
+import { edgeSource } from './support/edgeSource.mjs';
 
 const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -28,20 +30,28 @@ test('root reset is explicitly authorized, confirmed, auditable, and preserves a
 
 test('root reset uses the server function for Auth cleanup and never exposes service credentials', async () => {
   const [edge, authority] = await Promise.all([
-    read('supabase/functions/manage-student/index.ts'),
+    edgeSource(),
     read('supabase/migrations/20260922051425_root_reset_edge_only_authority.sql'),
   ]);
 
-  assert.match(edge, /action === 'preview-reset' \|\| action === 'reset-application'/);
+  // The if-chain became an action table: root authority is declared per action
+  // and enforced by the router, so assert the table and the router check.
+  assert.match(edge, /'preview-reset': defineAction\(\{ authority: 'root', validate: validateNothing, handle: previewReset \}\)/);
+  assert.match(edge, /'reset-application': defineAction\(\{ authority: 'root', validate: validateResetApplication, handle: resetApplication \}\)/);
   assert.match(edge, /caller\.rpc\('is_root_developer'\)/);
-  assert.match(edge, /isRootOnlyAction = \['create-admin', 'preview-reset', 'reset-application', 'clear-scoped-data'\]/);
+  assert.match(edge, /definition\.authority === 'root' && !\(await isRootDeveloper\(caller\)\)[\s\S]*?'Root developer access required'/);
+  const rootActions = [...edge.matchAll(/'([a-z-]+)': defineAction\(\{\s*authority: 'root'/g)].map(match => match[1]);
+  assert.deepEqual(rootActions.sort(), ['clear-scoped-data', 'create-admin', 'preview-reset', 'reset-application']);
+  assert.match(edge, /const isRootOnlyAction = definition\?\.authority === 'root'/);
   assert.match(edge, /if \(!isRootOnlyAction\)/);
   assert.match(edge, /admin\.rpc\('root_application_reset_preview_for_actor'/);
   assert.match(edge, /admin\.rpc\('root_reset_application_data_for_actor'/);
-  assert.match(edge, /resetError\?\.message \|\| 'Application data reset failed'/);
+  // Unexpected database errors are logged, not returned verbatim (safeDbMessage).
+  assert.match(edge, /safeDbMessage\(resetError, 'Application data reset failed'\)/);
   assert.match(edge, /admin\.auth\.admin\.deleteUser\(accountId\)/);
   assert.match(edge, /offset \+= 10/);
-  assert.doesNotMatch(edge, /return json\(request, \{[^}]*auth_user_ids/);
+  // json() is now bound per request (json({ ... })); cover both call shapes.
+  assert.doesNotMatch(edge, /json\((?:request, )?\{[^}]*auth_user_ids/);
   assert.match(authority, /REVOKE ALL ON FUNCTION public\.root_reset_application_data\(text\) FROM authenticated/);
   assert.match(authority, /application_owner[\s\S]*?owner\.user_id = actor_id_param/);
   assert.match(authority, /GRANT EXECUTE ON FUNCTION public\.root_reset_application_data_for_actor\(uuid, text\) TO service_role/);
@@ -50,7 +60,7 @@ test('root reset uses the server function for Auth cleanup and never exposes ser
 
 test('only the root UI exposes the destructive reset with preview and two confirmations', async () => {
   const [dashboard, cleaner] = await Promise.all([
-    read('src/components/AdminDashboard.jsx'),
+    adminSource(),
     read('src/components/AdminDatabaseCleanerView.jsx'),
   ]);
 
@@ -59,7 +69,7 @@ test('only the root UI exposes the destructive reset with preview and two confir
   assert.match(cleaner, /root account and administrator accounts are preserved/i);
   assert.match(cleaner, /Private Storage files are not removed/);
   assert.match(dashboard, /action: 'preview-reset'/);
-  assert.match(dashboard, /Type RESET APPLICATION DATA to continue/);
+  assert.match(dashboard, /phrase: 'RESET APPLICATION DATA'/);
   assert.match(dashboard, /This operation cannot be undone/);
   assert.match(dashboard, /action: 'reset-application'/);
   assert.match(dashboard, /readFunctionInvocationError\(resetResult, 'Application reset failed'\)/);
@@ -77,8 +87,8 @@ test('root cleanup actions are independently scoped and never target student acc
   const [migration, safeUpdateMigration, edge, dashboard, cleaner] = await Promise.all([
     read('supabase/migrations/20260922110000_root_scoped_cleanup_actions.sql'),
     read('supabase/migrations/20260923080741_make_root_cleanup_safeupdate_compatible.sql'),
-    read('supabase/functions/manage-student/index.ts'),
-    read('src/components/AdminDashboard.jsx'),
+    edgeSource(),
+    adminSource(),
     read('src/components/AdminDatabaseCleanerView.jsx'),
   ]);
 
@@ -88,7 +98,7 @@ test('root cleanup actions are independently scoped and never target student acc
   assert.match(migration, /target_param NOT IN \('student_results', 'cbt_exams', 'question_bank'\)/);
   assert.doesNotMatch(migration, /DELETE FROM public\.students/);
   assert.doesNotMatch(migration, /DELETE FROM public\.profiles/);
-  assert.match(edge, /action === 'clear-scoped-data'/);
+  assert.match(edge, /'clear-scoped-data': defineAction\(\{\s*authority: 'root',\s*validateBeforeAuthority: true,\s*validate: validateScopedCleanup,\s*handle: clearScopedData/);
   assert.match(edge, /CLEAR EXAM RESULTS/);
   assert.match(edge, /root_clear_scoped_data_for_actor/);
   assert.match(dashboard, /handleRootScopedClear/);

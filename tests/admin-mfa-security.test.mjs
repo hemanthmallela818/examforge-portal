@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
-import ts from 'typescript';
+import { adminSource } from './support/adminSource.mjs';
+import { loadEdgeModule } from './support/edgeSource.mjs';
 
 test('Stage 2: Comprehensive RLS Policy History Cleanup, Active-Session Boundary, and AAL2 Enforcement', async () => {
   const db = new PGlite();
@@ -493,19 +494,8 @@ test('Stage 2: Comprehensive RLS Policy History Cleanup, Active-Session Boundary
 });
 
 test('Stage 2: Edge Function Origin and Security Behavioral Contracts', async () => {
-  const edgeSource = await readFile(new URL('../supabase/functions/manage-student/index.ts', import.meta.url), 'utf8');
-
-  const supabaseJsUrl = import.meta.resolve('@supabase/supabase-js');
-  const nodeCompatible = edgeSource
-    .replace(/from\s+['"]jsr:@supabase\/supabase-js@2['"]/g, `from '${supabaseJsUrl}'`)
-    .replace('Deno.serve(handleManageStudent);', '');
-
-  const { outputText: jsCode } = ts.transpileModule(nodeCompatible, {
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 }
-  });
-
-  const dataUri = 'data:text/javascript;base64,' + Buffer.from(jsCode).toString('base64');
-  const edgeModule = await import(dataUri);
+  // The function spans several modules; load the real module graph under Node.
+  const edgeModule = await loadEdgeModule();
   const { isOriginAllowed, handleManageStudent } = edgeModule;
 
   // 1. Strict URL origin verification behavior
@@ -643,11 +633,11 @@ test('Root hierarchy: password login configuration and client contracts', async 
   const [configToml, authPortal, dashboard, rootManager] = await Promise.all([
     readFile(new URL('../supabase/config.toml', import.meta.url), 'utf8'),
     readFile(new URL('../src/components/AuthPortal.jsx', import.meta.url), 'utf8'),
-    readFile(new URL('../src/components/AdminDashboard.jsx', import.meta.url), 'utf8'),
+    adminSource(),
     readFile(new URL('../src/components/RootAdministratorManager.jsx', import.meta.url), 'utf8'),
   ]);
 
-  assert.match(configToml, /minimum_password_length\s*=\s*10/, 'config.toml must require minimum password length 10');
+  assert.match(configToml, /minimum_password_length\s*=\s*12/, 'config.toml must require minimum password length 12');
   assert.match(configToml, /secure_password_change\s*=\s*true/, 'config.toml must require secure password change');
   assert.match(configToml, /\[auth\][\s\S]*?enable_signup\s*=\s*false/, 'Global public sign-up must remain disabled');
   assert.match(configToml, /\[auth\.email\][\s\S]*?enable_signup\s*=\s*true/, 'Email/password login provider must remain enabled');

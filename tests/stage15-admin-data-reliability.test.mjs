@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createLatestRequestTracker, runWithDeadline } from '../src/adminDataReliability.js';
+import { adminSourceSync } from './support/adminSource.mjs';
 
-const dashboard = readFileSync(resolve('src/components/AdminDashboard.jsx'), 'utf8');
+const dashboard = adminSourceSync();
 const operationsView = readFileSync(resolve('src/components/AdminOperationsView.jsx'), 'utf8');
 const databaseCleanerView = readFileSync(resolve('src/components/AdminDatabaseCleanerView.jsx'), 'utf8');
 const app = readFileSync(resolve('src/App.jsx'), 'utf8');

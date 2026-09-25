@@ -1,8 +1,20 @@
+/**
+ * @import {
+ *   AutoTableLike, LeaderboardRow, PdfConstructorLike, PdfExportValidation, ResultAnalytics, ResultInput
+ * } from './types'
+ */
+
 export const MAX_PDF_RESULT_ROWS = 2000;
 export const MAX_PDF_TABLE_COLUMNS = 12;
 
 const PDF_ASCII_TEXT = /^[\x20-\x7E]*$/;
 
+/**
+ * Strict number coercion: null, undefined, '', booleans and non-finite values throw.
+ * @param {unknown} value
+ * @param {string} label Used in the error message.
+ * @returns {number}
+ */
 const finiteNumber = (value, label) => {
   if (value === null || value === undefined || value === '' || typeof value === 'boolean') {
     throw new Error(`${label} is missing or invalid.`);
@@ -12,19 +24,33 @@ const finiteNumber = (value, label) => {
   return parsed;
 };
 
+/**
+ * Trimmed, non-empty, de-duplicated (case-sensitive) subject names.
+ * @param {unknown} subjects
+ * @returns {string[]}
+ */
 export const normalizeResultSubjects = (subjects) => {
+  /** @type {Set<string>} */
   const seen = new Set();
   return (Array.isArray(subjects) ? subjects : [])
     .map(subject => String(subject ?? '').trim())
     .filter(subject => subject && !seen.has(subject) && seen.add(subject));
 };
 
+/**
+ * Validates results and assigns competition ranks (1, 1, 3) overall and per subject.
+ * Ties are ordered by student ID (numeric-aware).
+ * @param {Array<ResultInput | null | undefined>} results
+ * @param {unknown} [subjects]
+ * @returns {LeaderboardRow[]}
+ */
 export const buildLeaderboard = (results, subjects = []) => {
   if (!Array.isArray(results)) throw new Error('Result data is invalid.');
   const normalizedSubjects = normalizeResultSubjects(subjects);
+  /** @type {Set<string>} */
   const studentIds = new Set();
 
-  const leaderboard = results.map((result, index) => {
+  const leaderboard = /** @type {LeaderboardRow[]} */ (results.map((result, index) => {
     const rowNumber = index + 1;
     const studentId = String(result?.studentId ?? '').trim();
     const studentName = String(result?.studentName ?? '').trim();
@@ -33,6 +59,7 @@ export const buildLeaderboard = (results, subjects = []) => {
     if (studentIds.has(studentId)) throw new Error(`Duplicate result found for student ${studentId}.`);
     studentIds.add(studentId);
 
+    /** @type {Record<string, number>} */
     const subjectScores = {};
     normalizedSubjects.forEach(subject => {
       const rawScore = result?.subjectScores?.[subject];
@@ -50,7 +77,7 @@ export const buildLeaderboard = (results, subjects = []) => {
       subjectScores,
       subjectRanks: {}
     };
-  });
+  }));
 
   leaderboard.sort((left, right) => (
     right.totalScore - left.totalScore
@@ -80,6 +107,11 @@ export const buildLeaderboard = (results, subjects = []) => {
   return leaderboard;
 };
 
+/**
+ * @param {Array<ResultInput | null | undefined>} results
+ * @param {unknown} [subjects]
+ * @returns {ResultAnalytics | null} null when there are no results.
+ */
 export const calculateResultAnalytics = (results, subjects = []) => {
   if (!Array.isArray(results) || results.length === 0) return null;
   const normalizedSubjects = normalizeResultSubjects(subjects);
@@ -115,14 +147,30 @@ export const calculateResultAnalytics = (results, subjects = []) => {
   };
 };
 
+/**
+ * Quoted CSV cell with spreadsheet formula-injection protection.
+ * @param {unknown} value
+ * @returns {string}
+ */
 const csvTextCell = (value) => {
   let text = String(value ?? '').replace(/[\r\n]+/g, ' ');
   if (/^[\s\u0000-\u001F]*[=+@-]/.test(text)) text = `'${text}`;
   return `"${text.replace(/"/g, '""')}"`;
 };
 
+/**
+ * @param {unknown} value
+ * @param {string} label
+ * @returns {string}
+ */
 const csvNumberCell = (value, label) => String(finiteNumber(value, label));
 
+/**
+ * UTF-8 (BOM) CSV with CRLF line endings.
+ * @param {Array<ResultInput | null | undefined>} results
+ * @param {unknown} [subjects]
+ * @returns {string}
+ */
 export const buildLeaderboardCsv = (results, subjects = []) => {
   const normalizedSubjects = normalizeResultSubjects(subjects);
   const leaderboard = buildLeaderboard(results, normalizedSubjects);
@@ -145,6 +193,12 @@ export const buildLeaderboardCsv = (results, subjects = []) => {
   return `\uFEFF${lines.join('\r\n')}\r\n`;
 };
 
+/**
+ * Filesystem-safe base name (no reserved characters or Windows device names).
+ * @param {unknown} value
+ * @param {unknown} [fallback]
+ * @returns {string}
+ */
 export const safeDownloadName = (value, fallback = 'Exam') => {
   const fallbackName = String(fallback || 'Exam').trim() || 'Exam';
   let cleaned = String(value || fallbackName)
@@ -157,6 +211,12 @@ export const safeDownloadName = (value, fallback = 'Exam') => {
   return cleaned;
 };
 
+/**
+ * @param {unknown} results
+ * @param {unknown} subjects
+ * @param {unknown} examTitle
+ * @returns {PdfExportValidation}
+ */
 export const validatePdfExport = (results, subjects, examTitle) => {
   if (!Array.isArray(results) || results.length === 0) return { ok: false, error: 'There are no results to export.' };
   const normalizedSubjects = normalizeResultSubjects(subjects);
@@ -174,10 +234,21 @@ export const validatePdfExport = (results, subjects, examTitle) => {
   try {
     return { ok: true, results: buildLeaderboard(results, normalizedSubjects), subjects: normalizedSubjects };
   } catch (error) {
-    return { ok: false, error: error.message };
+    return { ok: false, error: /** @type {Error} */ (error).message };
   }
 };
 
+/**
+ * @param {{
+ *   PdfConstructor: PdfConstructorLike,
+ *   autoTable: AutoTableLike,
+ *   results: unknown,
+ *   subjects: unknown,
+ *   examTitle: unknown,
+ *   generatedAt?: Date
+ * }} input
+ * @returns {{ doc: import('./types').PdfDocumentLike, filename: string }}
+ */
 export const createLeaderboardPdfDocument = ({
   PdfConstructor,
   autoTable,

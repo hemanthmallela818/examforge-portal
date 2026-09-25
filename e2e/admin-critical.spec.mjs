@@ -79,7 +79,7 @@ test('administrator imports reviewed JSON, assembles an exam, and enforces lifec
   });
   await expect(page.getByRole('heading', { name: /Review Questions \(3 total\)/ })).toBeVisible();
   await page.getByRole('button', { name: 'Approve All Valid' }).click();
-  await page.getByRole('button', { name: '📥 Import Approved (3)' }).click();
+  await page.getByRole('button', { name: 'Import Approved (3)' }).click();
   await acknowledge(page, 'Confirmation Required');
   const importResult = page.getByRole('dialog', { name: 'Notification' });
   await expect(importResult).toContainText('Successfully imported: 3');

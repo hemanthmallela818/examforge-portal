@@ -49,7 +49,7 @@
 
 ### QA‑B1 — Student login (happy path)
 - **Steps:** Enter Student ID + password.
-- **Expected:** ID is upper‑cased and mapped to `<id>@student.com` if no `@`; `claim_student_session` binds the JWT; dashboard loads.
+- **Expected:** ID is upper‑cased and mapped to `<id>@students.examforge.invalid` if no `@`; `claim_student_session` binds the JWT; dashboard loads.
 - **Edge:** ID already an email; inactive roster entry → "account is inactive"; not a student → "not configured as an active student".
 
 ### QA‑B2 — Password whitespace is significant *(guards positive control)*

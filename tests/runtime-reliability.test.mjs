@@ -31,3 +31,18 @@ test('safe client error details expose bounded operational context without a sta
   assert.doesNotMatch(details.message, /admin@example\.com/);
   assert.equal('stack' in details, false);
 });
+
+test('redacted incidents are handed to the registered transport, and a failing transport never throws', async () => {
+  const { reportClientError, setClientErrorTransport } = await import('../src/runtimeDiagnostics.js');
+  const sent = [];
+  setClientErrorTransport(report => sent.push(report));
+  const id = reportClientError(new Error('Login failed for someone@example.com with password=hunter2'), 'transport.test');
+  assert.ok(id);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].incidentId, id);
+  assert.doesNotMatch(sent[0].message, /someone@example\.com|hunter2/);
+
+  setClientErrorTransport(() => { throw new Error('network down'); });
+  assert.doesNotThrow(() => reportClientError(new Error('second distinct failure'), 'transport.test'));
+  setClientErrorTransport(null);
+});

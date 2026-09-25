@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { edgeSource } from './support/edgeSource.mjs';
 
 test('Stage 24 provisioning tolerates GoTrue insert ordering and finalizes only through service role', async () => {
   const [migration, edgeFunction, bootstrap, e2eSetup] = await Promise.all([
     readFile(new URL('../supabase/migrations/20260913090000_stage24_auth_provisioning_compatibility.sql', import.meta.url), 'utf8'),
-    readFile(new URL('../supabase/functions/manage-student/index.ts', import.meta.url), 'utf8'),
+    edgeSource(),
     readFile(new URL('../scripts/bootstrap-admin.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../e2e/global-setup.mjs', import.meta.url), 'utf8')
   ]);

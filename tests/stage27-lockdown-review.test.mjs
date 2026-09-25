@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { readExamSource } from './support/examSource.mjs';
+import { adminSource } from './support/adminSource.mjs';
 
 const source = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -16,7 +18,7 @@ test('Stage 27 keeps detailed answer reviews private and administrator-audited',
 });
 
 test('Stage 27 lockdown removes acknowledgement flow and uses strict browser controls', async () => {
-  const [app, css] = await Promise.all([source('src/App.jsx'), source('src/index.css')]);
+  const [app, css] = await Promise.all([readExamSource(), source('src/index.css')]);
   assert.doesNotMatch(app, /I Understand - Return to Exam/);
   assert.match(app, /requestFullscreen\(\{ keyboardLock: 'browser' \}\)/);
   assert.match(app, /navigator\.keyboard\?\.lock/);
@@ -29,7 +31,7 @@ test('Stage 27 lockdown removes acknowledgement flow and uses strict browser con
 
 test('Stage 27 administrator UI exposes private per-student review', async () => {
   const [dashboard, migration] = await Promise.all([
-    source('src/components/AdminDashboard.jsx'),
+    adminSource(),
     source('supabase/migrations/20260923143000_stage27_lockdown_reviews_and_admin_reliability.sql')
   ]);
   assert.match(dashboard, /get_admin_student_result_review/);

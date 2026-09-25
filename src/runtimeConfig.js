@@ -1,6 +1,14 @@
 const PLACEHOLDER_PATTERN = /YOUR_|example|replace[-_ ]?me/i;
 
+/** @import { BrowserEnvironment, StorageLike } from './types' */
+
+/**
+ * @param {unknown} supabaseUrl
+ * @param {unknown} anonKey
+ * @returns {{ valid: boolean, errors: string[] }}
+ */
 export const validateRuntimeConfiguration = (supabaseUrl, anonKey) => {
+  /** @type {string[]} */
   const errors = [];
   let parsedUrl = null;
   try {
@@ -46,8 +54,17 @@ export const SUPPORTED_ENVIRONMENTS = Object.freeze({
   ]
 });
 
+/**
+ * @param {BrowserEnvironment} [env] Defaults to `window` in browsers.
+ * @returns {{ compatible: boolean, missingFeatures: string[], supportedEnvironments: typeof SUPPORTED_ENVIRONMENTS }}
+ */
 export const checkBrowserCompatibility = (env = (typeof window !== 'undefined' ? window : {})) => {
+  /** @type {string[]} */
   const missingFeatures = [];
+  /**
+   * @param {Partial<StorageLike> | null | undefined} storage
+   * @param {string} label
+   */
   const storageProbe = (storage, label) => {
     if (!storage || typeof storage.setItem !== 'function' || typeof storage.getItem !== 'function' || typeof storage.removeItem !== 'function') {
       missingFeatures.push(`${label} (Offline Recovery Storage)`);
@@ -87,6 +104,10 @@ export const checkBrowserCompatibility = (env = (typeof window !== 'undefined' ?
   };
 };
 
+/**
+ * @param {unknown} [width]
+ * @returns {boolean}
+ */
 export const isNarrowViewport = (width = (typeof window !== 'undefined' ? window.innerWidth : 1024)) => {
   return typeof width === 'number' && width < 768;
 };

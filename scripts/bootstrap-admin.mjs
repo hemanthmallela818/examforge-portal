@@ -10,8 +10,8 @@ const explicitUserId = process.env.BOOTSTRAP_ROOT_USER_ID?.trim();
 if (!url || !serviceRoleKey || !email || !password) {
   throw new Error('SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, BOOTSTRAP_ROOT_EMAIL, and BOOTSTRAP_ROOT_PASSWORD are required.');
 }
-if (password.length < 10) {
-  throw new Error('The root developer password must contain at least 10 characters.');
+if (password.length < 12) {
+  throw new Error('The root developer password must contain at least 12 characters.');
 }
 
 const admin = createClient(url, serviceRoleKey, {

@@ -48,6 +48,33 @@ export default [
     }
   },
   {
+    // Vitest + Testing Library component tests (jsdom). Vitest APIs are imported explicitly.
+    files: ['tests/components/**/*.{js,jsx}'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      parserOptions: {
+        ecmaFeatures: { jsx: true }
+      },
+      globals: {
+        ...globals.browser,
+        ...globals.node,
+        ...globals.es2023
+      }
+    },
+    plugins: {
+      'react-hooks': reactHooks
+    },
+    rules: {
+      'react-hooks/rules-of-hooks': 'error',
+      'no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        caughtErrors: 'none',
+        varsIgnorePattern: '^_'
+      }]
+    }
+  },
+  {
     files: ['*.{js,mjs}', 'e2e/**/*.mjs', 'scripts/**/*.mjs', 'tests/**/*.mjs'],
     languageOptions: {
       ecmaVersion: 'latest',

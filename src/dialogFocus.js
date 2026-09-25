@@ -9,6 +9,22 @@ export const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])'
 ].join(',');
 
+/**
+ * @typedef {object} DialogFocusTrapOptions
+ * @property {boolean} [active] Trap focus while true (default true).
+ * @property {unknown} [activationKey] Changes when a new activation starts (defaults to `active`).
+ * @property {() => void} [onEscape]
+ * @property {import('react').RefObject<HTMLElement | null>} [initialFocusRef]
+ * @property {import('react').RefObject<HTMLElement | null>} [returnFocusRef]
+ */
+
+/**
+ * @param {DialogFocusTrapOptions} [options]
+ * @returns {{
+ *   dialogRef: import('react').RefObject<HTMLElement | null>,
+ *   handleDialogKeyDown: (event: import('react').KeyboardEvent) => void
+ * }}
+ */
 export const useDialogFocusTrap = ({
   active = true,
   activationKey = active,
@@ -16,10 +32,10 @@ export const useDialogFocusTrap = ({
   initialFocusRef,
   returnFocusRef
 } = {}) => {
-  const dialogRef = useRef(null);
+  const dialogRef = useRef(/** @type {HTMLElement | null} */ (null));
   const escapeHandlerRef = useRef(onEscape);
-  const capturedReturnFocusRef = useRef(null);
-  const capturedActivationKeyRef = useRef(Symbol('uninitialized-dialog-activation'));
+  const capturedReturnFocusRef = useRef(/** @type {Element | null} */ (null));
+  const capturedActivationKeyRef = useRef(/** @type {unknown} */ (Symbol('uninitialized-dialog-activation')));
   escapeHandlerRef.current = onEscape;
 
   useEffect(() => {
@@ -33,10 +49,11 @@ export const useDialogFocusTrap = ({
     }
     const frame = requestAnimationFrame(() => {
       const preferred = initialFocusRef?.current
-        || dialogRef.current?.querySelector('[data-modal-autofocus]');
-      const first = dialogRef.current?.querySelector(FOCUSABLE_SELECTOR);
+        || /** @type {HTMLElement | null | undefined} */ (dialogRef.current?.querySelector('[data-modal-autofocus]'));
+      const first = /** @type {HTMLElement | null | undefined} */ (dialogRef.current?.querySelector(FOCUSABLE_SELECTOR));
       (preferred || first || dialogRef.current)?.focus();
     });
+    /** @param {KeyboardEvent} event */
     const handleDocumentEscape = (event) => {
       if (event.key !== 'Escape' || !escapeHandlerRef.current) return;
       event.preventDefault();
@@ -56,10 +73,11 @@ export const useDialogFocusTrap = ({
     };
   }, [active, activationKey, initialFocusRef, returnFocusRef]);
 
+  /** @param {import('react').KeyboardEvent} event */
   const handleDialogKeyDown = (event) => {
     if (event.key === 'Escape') return;
     if (event.key !== 'Tab') return;
-    const focusable = [...(dialogRef.current?.querySelectorAll(FOCUSABLE_SELECTOR) || [])]
+    const focusable = /** @type {HTMLElement[]} */ ([...(dialogRef.current?.querySelectorAll(FOCUSABLE_SELECTOR) || [])])
       .filter(element => element.getClientRects().length > 0);
     if (focusable.length === 0) {
       event.preventDefault();

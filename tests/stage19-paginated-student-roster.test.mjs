@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { parsePagedCollectionResponse } from '../src/paginatedQuery.js';
+import { adminSource } from './support/adminSource.mjs';
 
 test('paged collection responses are validated before replacing confirmed UI data', () => {
   assert.deepEqual(parsePagedCollectionResponse({ page: 1, page_size: 2, total: 3, rows: [{ id: 3 }] }, {
@@ -77,7 +78,7 @@ test('student roster RPC is AAL2-only, bounded, filterable, and correctly pagina
 });
 
 test('administrator roster uses server paging and disables stale-page actions', async () => {
-  const source = await readFile(new URL('../src/components/AdminDashboard.jsx', import.meta.url), 'utf8');
+  const source = await adminSource();
   assert.match(source, /get_admin_student_roster_page/);
   assert.match(source, /page_size_param:\s*STUDENT_ROSTER_PAGE_SIZE/);
   assert.match(source, /search_param:\s*query\.search \|\| null/);

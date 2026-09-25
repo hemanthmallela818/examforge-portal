@@ -1,5 +1,12 @@
 import { AUTHOR_NUMERICAL_MAX_LENGTH, isValidNumericalAnswer } from './numericalAnswerPolicy.js';
 
+/**
+ * @import {
+ *   AtomicImportRow, ImportFileLike, ImportFileValidation, ImportOptions, ImportQuestion,
+ *   ImportRowError, QuestionTextLike, UntrustedInput, ValidatedImportQuestion
+ * } from './types'
+ */
+
 export const MAX_IMPORT_FILE_BYTES = 5 * 1024 * 1024;
 export const MAX_IMPORT_QUESTIONS = 500;
 export const MAX_IMPORT_FILE_NAME_LENGTH = 255;
@@ -9,8 +16,48 @@ export const MAX_IMPORT_JSON_DEPTH = 12;
 // maximum batch size.
 export const MAX_IMPORT_JSON_NODES = 25000;
 export const MAX_IMPORT_JSON_STRING_LENGTH = 10000;
+// Default subjects for installations that have not configured their own. The app
+// passes the administrator-configured list via `options.allowedSubjects`.
+/** @type {readonly string[]} */
 export const ALLOWED_IMPORT_SUBJECTS = Object.freeze(['Physics', 'Chemistry', 'Mathematics']);
-const SUBJECT_BY_KEY = new Map(ALLOWED_IMPORT_SUBJECTS.map(subject => [subject.toLowerCase(), subject]));
+
+/**
+ * Trimmed, de-duplicated (case-insensitive) subject list, or the defaults.
+ * @param {unknown} list
+ * @returns {readonly string[]}
+ */
+export const resolveAllowedSubjects = list => {
+  if (!Array.isArray(list)) return ALLOWED_IMPORT_SUBJECTS;
+  /** @type {Set<string>} */
+  const seen = new Set();
+  /** @type {string[]} */
+  const cleaned = [];
+  for (const entry of list) {
+    const name = String(entry ?? '').trim();
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    cleaned.push(name);
+  }
+  return cleaned.length > 0 ? cleaned : ALLOWED_IMPORT_SUBJECTS;
+};
+
+/**
+ * "A", "A or B", "A, B, or C"
+ * @param {unknown} list
+ * @returns {string}
+ */
+export const formatSubjectList = list => {
+  const items = resolveAllowedSubjects(list);
+  if (items.length === 1) return items[0];
+  if (items.length === 2) return `${items[0]} or ${items[1]}`;
+  return `${items.slice(0, -1).join(', ')}, or ${items[items.length - 1]}`;
+};
+
+/**
+ * @param {unknown} list
+ * @returns {string}
+ */
+export const subjectRequirementMessage = list => `Subject must be ${formatSubjectList(list)}.`;
 
 export const IMPORT_EXAMPLE_DOCUMENT = Object.freeze({
   version: '1.0',
@@ -100,6 +147,10 @@ const SOURCE_QUESTION_KEYS = new Set([
   'correct_answer', 'subject', 'has_image_or_diagram'
 ]);
 
+/**
+ * @param {unknown} value
+ * @returns {string} Problem description, or '' when balanced.
+ */
 const checkLatexDelimiters = value => {
   const text = String(value ?? '');
   const sanitized = text.replace(/\\\$/g, '');
@@ -109,11 +160,16 @@ const checkLatexDelimiters = value => {
   return inlineCount % 2 !== 0 ? 'Unmatched inline math delimiter ($).' : '';
 };
 
+/**
+ * Throws when parsed JSON is too deep, too large, or uses unsafe keys.
+ * @param {unknown} root
+ */
 const assertImportJsonComplexity = root => {
+  /** @type {Array<{ value: unknown, depth: number }>} */
   const stack = [{ value: root, depth: 0 }];
   let visited = 0;
   while (stack.length > 0) {
-    const { value, depth } = stack.pop();
+    const { value, depth } = /** @type {{ value: unknown, depth: number }} */ (stack.pop());
     visited += 1;
     if (visited > MAX_IMPORT_JSON_NODES) throw new Error('JSON contains too many nested values. Split the import into smaller files.');
     if (depth > MAX_IMPORT_JSON_DEPTH) throw new Error(`JSON nesting exceeds the supported depth of ${MAX_IMPORT_JSON_DEPTH}.`);
@@ -136,18 +192,33 @@ const assertImportJsonComplexity = root => {
   }
 };
 
+/**
+ * Normalised text used for duplicate detection.
+ * @param {unknown} value
+ * @returns {string}
+ */
 export const canonicalQuestionText = value => String(value ?? '')
   .normalize('NFKC')
   .trim()
   .replace(/\s+/gu, ' ')
   .toLocaleLowerCase('en-US');
 
+/**
+ * @param {UntrustedInput} option String or `{ label, text }`.
+ * @returns {string}
+ */
 const normalizeOption = option => {
   if (typeof option === 'string') return option.trim();
   if (option && typeof option === 'object' && typeof option.text === 'string') return option.text.trim();
   return '';
 };
 
+/**
+ * MCQ letters A-D become '0'-'3'; anything else is returned trimmed.
+ * @param {unknown} value
+ * @param {string} type
+ * @returns {string}
+ */
 const normalizeCorrectAnswer = (value, type) => {
   const answer = String(value ?? '').trim();
   if (type !== 'MCQ') return answer;
@@ -155,9 +226,24 @@ const normalizeCorrectAnswer = (value, type) => {
   return /^[A-D]$/.test(upper) ? String(upper.charCodeAt(0) - 65) : answer;
 };
 
-const normalizeSubject = value => SUBJECT_BY_KEY.get(String(value ?? '').trim().toLowerCase()) || String(value ?? '').trim();
+/**
+ * @param {unknown} value
+ * @param {readonly string[]} allowedSubjects
+ * @returns {string} Canonical casing when allowed, otherwise the trimmed input.
+ */
+const normalizeSubject = (value, allowedSubjects) => {
+  const trimmed = String(value ?? '').trim();
+  return allowedSubjects.find(subject => subject.toLowerCase() === trimmed.toLowerCase()) || trimmed;
+};
 
-const normalizeRawQuestion = (raw, index, strictSource = false) => {
+/**
+ * @param {UntrustedInput} raw One source row (reviewed schema or editor shape).
+ * @param {number} index
+ * @param {boolean} [strictSource]
+ * @param {readonly string[]} [allowedSubjects]
+ * @returns {ImportQuestion}
+ */
+const normalizeRawQuestion = (raw, index, strictSource = false, allowedSubjects = ALLOWED_IMPORT_SUBJECTS) => {
   const rawType = String(raw?.question_type ?? raw?.type ?? '').trim().toUpperCase();
   // 'NAT' (Numerical Answer Type) is a canonical alias for NUMERICAL across the
   // database (migration 20260910110000), the exam preflight, and the question
@@ -165,6 +251,7 @@ const normalizeRawQuestion = (raw, index, strictSource = false) => {
   // as an unknown type.
   const type = rawType === 'NAT' ? 'NUMERICAL' : rawType;
   const rawOptions = Array.isArray(raw?.options) ? raw.options : [];
+  /** @type {string[]} */
   const schemaWarnings = strictSource
     ? []
     : (Array.isArray(raw?.schemaWarnings) ? raw.schemaWarnings.map(String) : []);
@@ -189,7 +276,7 @@ const normalizeRawQuestion = (raw, index, strictSource = false) => {
   }
 
   if (type === 'MCQ' && Array.isArray(raw?.options)) {
-    raw.options.forEach((option, optionIndex) => {
+    raw.options.forEach((/** @type {UntrustedInput} */ option, /** @type {number} */ optionIndex) => {
       if (option && typeof option === 'object' && !Array.isArray(option)) {
         const expectedLabel = String.fromCharCode(65 + optionIndex);
         if (option.label !== expectedLabel || typeof option.text !== 'string') {
@@ -215,19 +302,25 @@ const normalizeRawQuestion = (raw, index, strictSource = false) => {
     type,
     options: rawOptions.map(normalizeOption),
     correctAnswer: normalizeCorrectAnswer(raw?.correct_answer ?? raw?.correctAnswer, type),
-    subject: normalizeSubject(raw?.subject),
+    subject: normalizeSubject(raw?.subject, allowedSubjects),
     hasImageOrDiagram: Boolean(raw?.has_image_or_diagram ?? raw?.hasImageOrDiagram),
     schemaWarnings,
     approved: typeof raw?.approved === 'boolean' ? raw.approved : undefined
   };
 };
 
-const validateOne = question => {
+/**
+ * @param {ImportQuestion} question
+ * @param {readonly string[]} [allowedSubjects]
+ * @returns {{ warnings: string[], rowErrors: ImportRowError[] }}
+ */
+const validateOne = (question, allowedSubjects = ALLOWED_IMPORT_SUBJECTS) => {
   const warnings = [...(question.schemaWarnings || [])];
+  /** @type {ImportRowError[]} */
   const rowErrors = [];
 
-  if (!ALLOWED_IMPORT_SUBJECTS.includes(question.subject)) {
-    const msg = 'Subject must be Physics, Chemistry, or Mathematics.';
+  if (!allowedSubjects.includes(question.subject)) {
+    const msg = subjectRequirementMessage(allowedSubjects);
     warnings.push(msg);
     rowErrors.push({ code: 'ROW_INVALID_SUBJECT', field: 'subject', message: msg });
   }
@@ -302,11 +395,21 @@ const validateOne = question => {
   return { warnings, rowErrors };
 };
 
+/**
+ * Normalises and validates rows, including duplicates against the bank and within the file.
+ * @param {UntrustedInput[]} inputQuestions
+ * @param {QuestionTextLike[]} [questionBank]
+ * @param {ImportOptions} [options]
+ * @returns {ValidatedImportQuestion[]}
+ */
 export const validateImportQuestions = (inputQuestions, questionBank = [], options = {}) => {
   if (!Array.isArray(inputQuestions)) throw new Error('Questions must be provided as an array.');
-  const normalized = inputQuestions.map((question, index) => normalizeRawQuestion(question, index, options.strictSource === true));
+  const allowedSubjects = resolveAllowedSubjects(options.allowedSubjects);
+  const normalized = inputQuestions.map((question, index) => normalizeRawQuestion(question, index, options.strictSource === true, allowedSubjects));
   const bankKeys = new Set((Array.isArray(questionBank) ? questionBank : []).map(question => canonicalQuestionText(question.text ?? question.question_text)).filter(Boolean));
+  /** @type {Map<string, number>} */
   const uploadCounts = new Map();
+  /** @type {Map<string, number>} */
   const sourceIdCounts = new Map();
   normalized.forEach(question => {
     const key = canonicalQuestionText(question.text);
@@ -315,19 +418,19 @@ export const validateImportQuestions = (inputQuestions, questionBank = [], optio
   });
 
   return normalized.map(question => {
-    const { warnings, rowErrors } = validateOne(question);
+    const { warnings, rowErrors } = validateOne(question, allowedSubjects);
     const key = canonicalQuestionText(question.text);
     if (key && bankKeys.has(key)) {
       const msg = 'A matching question already exists in the Question Bank.';
       warnings.push(msg);
       rowErrors.push({ code: 'ROW_DUPLICATE_QUESTION_BANK', field: 'text', message: msg });
     }
-    if (key && uploadCounts.get(key) > 1) {
+    if (key && /** @type {number} */ (uploadCounts.get(key)) > 1) {
       const msg = 'This question appears more than once in the uploaded file.';
       warnings.push(msg);
       rowErrors.push({ code: 'ROW_DUPLICATE_IN_FILE', field: 'text', message: msg });
     }
-    if (question.sourceId && sourceIdCounts.get(question.sourceId) > 1) {
+    if (question.sourceId && /** @type {number} */ (sourceIdCounts.get(question.sourceId)) > 1) {
       const msg = `Question id "${question.sourceId}" appears more than once in the uploaded file.`;
       warnings.push(msg);
       rowErrors.push({ code: 'ROW_DUPLICATE_SOURCE_ID', field: 'id', message: msg });
@@ -342,6 +445,10 @@ export const validateImportQuestions = (inputQuestions, questionBank = [], optio
   });
 };
 
+/**
+ * @param {ImportFileLike | null | undefined} file
+ * @returns {ImportFileValidation}
+ */
 export const validateImportFile = (file) => {
   if (!file || typeof file.name !== 'string' || !Number.isFinite(file.size) || file.size < 0) {
     return { valid: false, error: 'Select a valid JSON file.' };
@@ -364,6 +471,12 @@ export const validateImportFile = (file) => {
   return { valid: true, fileName };
 };
 
+/**
+ * @param {UntrustedInput} data Import RPC response `{ imported, batch_id, idempotent }`.
+ * @param {number} expectedCount
+ * @param {unknown} expectedBatchId
+ * @returns {{ imported: number, idempotent: boolean }}
+ */
 export const validateImportConfirmation = (data, expectedCount, expectedBatchId) => {
   const imported = Number(data?.imported);
   if (!Number.isInteger(imported) || imported !== expectedCount) {
@@ -375,6 +488,12 @@ export const validateImportConfirmation = (data, expectedCount, expectedBatchId)
   return { imported, idempotent: data?.idempotent === true };
 };
 
+/**
+ * @param {UntrustedInput} document Parsed `{ version: '1.0', questions: [...] }` document.
+ * @param {QuestionTextLike[]} [questionBank]
+ * @param {ImportOptions} [options]
+ * @returns {ValidatedImportQuestion[]}
+ */
 export const parseImportDocument = (document, questionBank = [], options = {}) => {
   if (!document || typeof document !== 'object' || Array.isArray(document)) throw new Error('Invalid JSON structure.');
   assertImportJsonComplexity(document);
@@ -389,12 +508,18 @@ export const parseImportDocument = (document, questionBank = [], options = {}) =
   if (document.questions.length > MAX_IMPORT_QUESTIONS) {
     throw new Error(`A single import is limited to ${MAX_IMPORT_QUESTIONS} questions.`);
   }
-  const validated = validateImportQuestions(document.questions, questionBank, { strictSource: true });
+  const validated = validateImportQuestions(document.questions, questionBank, { strictSource: true, allowedSubjects: options.allowedSubjects });
   return options.requireExplicitApproval === true
     ? validated.map(question => ({ ...question, approved: false }))
     : validated;
 };
 
+/**
+ * @param {unknown} input UTF-8 decoded file text.
+ * @param {QuestionTextLike[]} [questionBank]
+ * @param {ImportOptions} [options]
+ * @returns {ValidatedImportQuestion[]}
+ */
 export const parseImportJsonText = (input, questionBank = [], options = {}) => {
   if (typeof input !== 'string') throw new Error('The selected file could not be decoded as UTF-8 JSON text.');
   const text = input.startsWith('\uFEFF') ? input.slice(1) : input;
@@ -414,6 +539,10 @@ export const parseImportJsonText = (input, questionBank = [], options = {}) => {
   return parseImportDocument(document, questionBank, options);
 };
 
+/**
+ * @param {ValidatedImportQuestion[]} questions
+ * @returns {AtomicImportRow[]}
+ */
 export const buildAtomicImportPayload = questions => questions.filter(question => question.approved).map(question => ({
   subject: question.subject,
   type: question.type,
@@ -426,6 +555,10 @@ export const buildAtomicImportPayload = questions => questions.filter(question =
   neg_points: -1
 }));
 
+/**
+ * @param {Array<Partial<ValidatedImportQuestion> & Pick<ImportQuestion, 'type' | 'correctAnswer'>>} questions
+ * @returns {string} Pretty-printed JSON in the reviewed import format.
+ */
 export const exportFailedImportRows = (questions) => {
   const failedQuestions = questions.filter(q => (q.warnings?.length || 0) > 0 || (q.rowErrors?.length || 0) > 0);
   const exportPayload = {

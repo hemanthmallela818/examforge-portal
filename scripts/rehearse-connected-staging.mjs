@@ -50,7 +50,8 @@ try {
   phase = 'candidate rehearsal';
   const outcome = await new Promise((resolveRun, rejectRun) => {
     const child = spawn(process.execPath, [resolve('scripts/rehearse-staging.mjs')], {
-      stdio: ['ignore', 'pipe', 'pipe'], timeout: 20 * 60 * 1000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 20 * 60 * 1000 + (Number.parseInt(process.env.REHEARSAL_SOAK_SECONDS || '60', 10) || 0) * 1000,
       env: { ...process.env,
         REHEARSAL_SUPABASE_URL: url, REHEARSAL_SUPABASE_ANON_KEY: publicKey,
         REHEARSAL_SUPABASE_SERVICE_ROLE_KEY: serviceKey,
@@ -66,11 +67,15 @@ try {
     child.on('error', rejectRun);
     child.on('close', code => resolveRun({ code, output, errorOutput }));
   });
+  const outputLines = outcome.output.trim().split(/\r?\n/);
+  // Human-readable load summary (phase progress and latency table) first, even
+  // when thresholds fail, so the operator can see which operation regressed.
+  for (const line of outputLines.slice(0, -1)) console.log(redactChildError(line));
   if (outcome.code !== 0) {
     const safeDetails = redactChildError(outcome.errorOutput).trim();
     throw new Error(`Candidate rehearsal failed.${safeDetails ? ` ${safeDetails}` : ''}`);
   }
-  const report = JSON.parse(outcome.output.trim().split(/\r?\n/).at(-1));
+  const report = JSON.parse(outputLines.at(-1));
   console.log(JSON.stringify(report));
 } catch (error) {
   console.error(`Staging rehearsal failed during ${phase}. Credentials were not logged.`);

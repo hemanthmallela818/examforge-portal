@@ -1,9 +1,17 @@
+/** @import { ImageFileLike, ImageValidationResult } from './types' */
+
 export const MAX_IMAGE_FILE_BYTES = 5 * 1024 * 1024; // 5 MB
 export const MAX_IMAGE_DIMENSION = 4096; // 4096 px
 export const MAX_IMAGE_MEGAPIXELS = 16 * 1000 * 1000; // 16 Megapixels
 export const DECODE_TIMEOUT_MS = 5000; // 5 seconds
+/** @type {readonly string[]} */
 export const ALLOWED_MIME_TYPES = Object.freeze(['image/jpeg', 'image/png', 'image/webp']);
 
+/**
+ * Cheap checks on declared type, extension and size (SVG always rejected).
+ * @param {ImageFileLike | null | undefined} file
+ * @returns {ImageValidationResult}
+ */
 export const validateImageMimeAndSize = (file) => {
   if (!file) return { valid: false, error: 'No file was provided.' };
   if (file.type === 'image/svg+xml' || (file.name && file.name.toLowerCase().endsWith('.svg'))) {
@@ -30,6 +38,11 @@ export const validateImageMimeAndSize = (file) => {
   return { valid: true };
 };
 
+/**
+ * Verifies the JPEG/PNG/WebP signature; `format` is the detected MIME type.
+ * @param {Pick<ImageFileLike, 'slice'>} file
+ * @returns {Promise<ImageValidationResult>}
+ */
 export const verifyImageMagicBytes = async (file) => {
   try {
     const slice = file.slice(0, 16);
@@ -66,10 +79,15 @@ export const verifyImageMagicBytes = async (file) => {
       error: 'File extension does not match true image content. Header verification failed.'
     };
   } catch (err) {
-    return { valid: false, error: `Could not verify image headers: ${err.message}` };
+    return { valid: false, error: `Could not verify image headers: ${/** @type {Error} */ (err).message}` };
   }
 };
 
+/**
+ * @param {number} width
+ * @param {number} height
+ * @returns {ImageValidationResult}
+ */
 export const validateImageDimensions = (width, height) => {
   if (!width || !height || width <= 0 || height <= 0) {
     return { valid: false, error: 'Invalid image dimensions (0x0).' };
@@ -93,11 +111,17 @@ export const validateImageDimensions = (width, height) => {
   return { valid: true, dimensions: { width, height } };
 };
 
+/**
+ * Decodes the image (with a timeout) and validates its dimensions. Outside a
+ * browser (no `Image`) it reports a fixed 800x600 success.
+ * @param {File | string} source File, or an already-created URL.
+ * @returns {Promise<ImageValidationResult>}
+ */
 export const inspectImageDimensions = (source) => {
   return new Promise((resolve) => {
     // If source is a File, create an Object URL; otherwise use the string directly
     const isFile = typeof File !== 'undefined' && source instanceof File;
-    const url = isFile ? URL.createObjectURL(source) : source;
+    const url = isFile ? URL.createObjectURL(source) : /** @type {string} */ (source);
 
     if (typeof Image === 'undefined') {
       // In non-browser test environment, allow clean mock or return valid
@@ -151,6 +175,11 @@ export const inspectImageDimensions = (source) => {
   });
 };
 
+/**
+ * Full upload check: MIME/size, magic bytes (must match the declared type), then decoded dimensions.
+ * @param {File} file
+ * @returns {Promise<ImageValidationResult>}
+ */
 export const validateImageUpload = async (file) => {
   const mimeAndSize = validateImageMimeAndSize(file);
   if (!mimeAndSize.valid) return mimeAndSize;

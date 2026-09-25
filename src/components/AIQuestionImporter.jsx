@@ -1,19 +1,80 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { supabase } from '../supabase';
 import MathRenderer from './MathRenderer';
 import { customAlert, customConfirm } from '../utils';
 import AccessibleModal from './AccessibleModal';
 import {
+  AlertTriangle,
+  Bot,
+  Check,
+  CheckCircle2,
+  Circle,
+  Copy,
+  DatabaseZap,
+  Download,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  FileJson,
+  FileUp,
+  Filter,
+  Globe,
+  Hash,
+  History,
+  Image as ImageIcon,
+  Inbox,
+  ListChecks,
+  Loader2,
+  RefreshCw,
+  Sparkles,
+  Trash2,
+  UploadCloud
+} from 'lucide-react';
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Checkbox,
+  EmptyState,
+  Field,
+  Input,
+  LoadingBlock,
+  Select,
+  Table,
+  TBody,
+  TD,
+  TH,
+  THead,
+  TR,
+  Textarea,
+  cn
+} from './ui';
+import {
   MAX_IMPORT_QUESTIONS,
   buildAtomicImportPayload,
   parseImportJsonText,
-  validateImportQuestions,
+  resolveAllowedSubjects,
+  validateImportQuestions as validateImportRowsForSubjects,
   validateImportConfirmation,
   validateImportFile,
   exportFailedImportRows
 } from '../importLogic';
 
 const IMPORT_REQUEST_TIMEOUT_MS = 120000;
+
+const IMPORT_STEPS = ['Prepare JSON', 'Upload & validate', 'Review & approve', 'Import'];
+
+const EXTERNAL_ASSISTANTS = [
+  { name: 'ChatGPT', href: 'https://chatgpt.com', title: 'Open ChatGPT in a new tab' },
+  { name: 'Gemini', href: 'https://gemini.google.com', title: 'Open Google Gemini in a new tab' },
+  { name: 'Claude', href: 'https://claude.ai', title: 'Open Anthropic Claude in a new tab' },
+  { name: 'DeepSeek', href: 'https://chat.deepseek.com', title: 'Open DeepSeek in a new tab' }
+];
 
 const AI_CONVERSION_PROMPT_TEMPLATE = `You are an expert examination digitizer. Please convert all questions in the attached document/PDF/image into a clean, valid JSON file formatted exactly for our Computer-Based Test (CBT) portal.
 
@@ -70,7 +131,7 @@ STRICT CONVERSION RULES:
 5. correct_answer:
    - For "MCQ": The correct option letter ("A", "B", "C", or "D").
    - For "NUMERICAL": The numeric answer as a clean decimal string (e.g. "42", "-2.5", "0"). If unknown from the source paper, provide the solved answer or "0".
-6. subject: Exactly one of: "Physics", "Chemistry", or "Mathematics".
+6. subject: __SUBJECT_RULE__
 7. AUTOMATIC IMAGE & DIAGRAM DETECTION ("has_image_or_diagram"):
    - You MUST automatically check every question in the source paper for diagrams or images and set this flag accurately. Do NOT require the user to check it manually!
    - Set "has_image_or_diagram": true if the question contains OR references ANY visual element, including:
@@ -83,12 +144,49 @@ STRICT CONVERSION RULES:
    - Set "has_image_or_diagram": false ONLY when the question and all its options are 100% self-contained text and mathematical equations without any visual figure, drawing, or diagram.
 8. id: A unique short alphanumeric identifier (e.g. "phy-001", "chem-002", "math-003").`;
 
-const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank }) => {
+/**
+ * @typedef {import('../types').ValidatedImportQuestion & { question_number?: number }} ReviewQuestion Legacy `question_number` is only a display fallback.
+ * @typedef {object} ImportHistoryRow
+ * @property {string} id
+ * @property {string} file_name
+ * @property {string} imported_at
+ * @property {number} total_questions
+ * @property {number} successful_imports
+ * @property {number} rejected_questions
+ * @property {string} status
+ * @typedef {'neutral' | 'success' | 'warning'} PillTone
+ */
+
+/** @param {readonly string[]} subjects */
+const buildConversionPrompt = subjects => {
+  const quoted = subjects.map(subject => `"${subject}"`);
+  const list = quoted.length === 1 ? quoted[0]
+    : quoted.length === 2 ? `${quoted[0]} or ${quoted[1]}`
+      : `${quoted.slice(0, -1).join(', ')}, or ${quoted[quoted.length - 1]}`;
+  return AI_CONVERSION_PROMPT_TEMPLATE.replace('__SUBJECT_RULE__', `Exactly one of: ${list}.`);
+};
+
+/**
+ * @typedef {object} ReviewedJsonImporterProps
+ * @property {import('../types').QuestionTextLike[]} questionBank
+ * @property {() => Promise<unknown>} refreshQuestionBank
+ * @property {unknown} [allowedSubjects] Configured subject names; defaults apply until they load.
+ */
+
+/** @param {ReviewedJsonImporterProps} props */
+const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank, allowedSubjects }) => {
+  // F1: subjects come from Subjects & Patterns; the defaults apply until they load.
+  const subjectList = useMemo(() => resolveAllowedSubjects(allowedSubjects), [allowedSubjects]);
+  const conversionPrompt = useMemo(() => buildConversionPrompt(subjectList), [subjectList]);
+  const validateImportQuestions = useCallback(
+    (/** @type {import('../types').UntrustedInput[]} */ rows, /** @type {import('../types').QuestionTextLike[]} */ bank) => validateImportRowsForSubjects(rows, bank, { allowedSubjects: subjectList }),
+    [subjectList]
+  );
   const [dragActive, setDragActive] = useState(false);
   const [hasParsedData, setHasParsedData] = useState(false);
-  const [questions, setQuestions] = useState([]);
+  const [questions, setQuestions] = useState(/** @type {ReviewQuestion[]} */ ([]));
   const [filterTab, setFilterTab] = useState('ALL'); // 'ALL' | 'VALID' | 'FAILED'
-  const [importHistory, setImportHistory] = useState([]);
+  const [importHistory, setImportHistory] = useState(/** @type {ImportHistoryRow[]} */ ([]));
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [historyError, setHistoryError] = useState('');
   const [copiedPrompt, setCopiedPrompt] = useState(false);
@@ -99,11 +197,11 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank }) => {
   const [importProgress, setImportProgress] = useState(0);
   const [importStats, setImportStats] = useState({ success: 0, rejected: 0, total: 0 });
   const [fileName, setFileName] = useState('');
-  const [importBatchId, setImportBatchId] = useState(null);
+  const [importBatchId, setImportBatchId] = useState(/** @type {string | null} */ (null));
   const [readingFile, setReadingFile] = useState(false);
 
-  const fileInputRef = useRef(null);
-  const activeFileReaderRef = useRef(null);
+  const fileInputRef = useRef(/** @type {HTMLInputElement | null} */ (null));
+  const activeFileReaderRef = useRef(/** @type {FileReader | null} */ (null));
   const fileReadGenerationRef = useRef(0);
   const importInFlightRef = useRef(false);
   const questionBankRef = useRef(questionBank);
@@ -123,7 +221,8 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank }) => {
     setQuestions(previous => previous.length > 0
       ? validateImportQuestions(previous, questionBank)
       : previous);
-  }, [questionBank]);
+    // Also re-runs when the configured subject list arrives or changes.
+  }, [questionBank, validateImportQuestions]);
 
   useEffect(() => {
     if (!hasParsedData || questions.length !== 0) return;
@@ -155,10 +254,10 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank }) => {
   const handleCopyPrompt = async () => {
     try {
       if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(AI_CONVERSION_PROMPT_TEMPLATE);
+        await navigator.clipboard.writeText(conversionPrompt);
       } else {
         const textarea = window.document.createElement('textarea');
-        textarea.value = AI_CONVERSION_PROMPT_TEMPLATE;
+        textarea.value = conversionPrompt;
         textarea.style.position = 'fixed';
         textarea.style.opacity = '0';
         window.document.body.appendChild(textarea);
@@ -175,6 +274,7 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank }) => {
   };
 
   // Drag and Drop handlers
+  /** @param {import('react').DragEvent<HTMLElement>} e */
   const handleDrag = (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -185,17 +285,19 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank }) => {
     }
   };
 
+  /** @param {import('react').DragEvent<HTMLElement>} e */
   const handleDrop = async (e) => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    if (e.dataTransfer.files?.length > 1) {
+    if (/** @type {number} */ (e.dataTransfer.files?.length) > 1) {
       await customAlert('Drop one JSON file at a time.');
     } else if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       processFile(e.dataTransfer.files[0]);
     }
   };
 
+  /** @param {import('react').ChangeEvent<HTMLInputElement>} e */
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files[0]) {
       processFile(e.target.files[0]);
@@ -203,6 +305,7 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank }) => {
     e.target.value = '';
   };
 
+  /** @param {File} file */
   const processFile = (file) => {
     if (importInFlightRef.current) {
       customAlert('Wait for the current import to finish before selecting another file.');
@@ -224,9 +327,9 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank }) => {
       if (generation !== fileReadGenerationRef.current) return;
       try {
         const validatedQuestions = parseImportJsonText(
-          e.target.result,
+          /** @type {FileReader} */ (e.target).result,
           questionBankRef.current,
-          { requireExplicitApproval: true }
+          { requireExplicitApproval: true, allowedSubjects: subjectList }
         );
         if (generation !== fileReadGenerationRef.current) return;
         setQuestions(validatedQuestions.map(question => ({ ...question, id: crypto.randomUUID() })));
@@ -257,11 +360,16 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank }) => {
     } catch (error) {
       activeFileReaderRef.current = null;
       setReadingFile(false);
-      customAlert(`The JSON file could not be read: ${error.message}`);
+      customAlert(`The JSON file could not be read: ${/** @type {Error} */ (error).message}`);
     }
   };
 
   // Edit Handlers
+  /**
+   * @param {string} id
+   * @param {string} field
+   * @param {unknown} value
+   */
   const handleUpdateQuestionField = (id, field, value) => {
     setQuestions(previous => validateImportQuestions(
       previous.map(question => {
@@ -278,6 +386,11 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank }) => {
     ));
   };
 
+  /**
+   * @param {string} qId
+   * @param {number} optIdx
+   * @param {string} val
+   */
   const handleUpdateOption = (qId, optIdx, val) => {
     const q = questions.find(item => item.id === qId);
     if (!q) return;
@@ -286,6 +399,7 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank }) => {
     handleUpdateQuestionField(qId, 'options', newOptions);
   };
 
+  /** @param {string} id */
   const handleDeleteQuestion = (id) => {
     setQuestions(previous => {
       const remaining = previous.filter(question => question.id !== id);
@@ -293,6 +407,7 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank }) => {
     });
   };
 
+  /** @param {string} id */
   const toggleApproval = (id) => {
     setQuestions(prev => prev.map(q => {
       if (q.id === id) {
@@ -359,7 +474,7 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank }) => {
       } catch (error) {
         console.error('Atomic question import was not confirmed:', error);
         setImportStats({ success: 0, rejected: 0, total: approvedQs.length });
-        await customAlert(`Import was not confirmed. The transaction cannot partially import a batch, but it may have committed before the connection failed. Keep this page open and retry the same batch safely.\n\n${error.message}`);
+        await customAlert(`Import was not confirmed. The transaction cannot partially import a batch, but it may have committed before the connection failed. Keep this page open and retry the same batch safely.\n\n${/** @type {Error} */ (error).message}`);
         return;
       }
 
@@ -415,13 +530,6 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank }) => {
     }
   };
 
-  const getStatusStyle = (q) => {
-    if (q.warnings.length > 0) {
-      return { border: '1px solid rgba(245, 158, 11, 0.4)', backgroundColor: 'rgba(245, 158, 11, 0.02)' };
-    }
-    return { border: '1px solid var(--border-color)' };
-  };
-
   const validCount = questions.filter(q => q.warnings.length === 0).length;
   const failedCount = questions.filter(q => q.warnings.length > 0).length;
   const approvedCount = questions.filter(q => q.approved && q.warnings.length === 0).length;
@@ -432,379 +540,251 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank }) => {
     return true;
   });
 
-  return (
-    <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-      
-      {/* Upper Area: reviewed schema guidance and JSON upload */}
-      <div className="responsive-two-column-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
-        
-        {/* Downloadable example/schema and external-conversion boundary */}
-        <div style={{ backgroundColor: 'var(--panel-bg)', padding: '24px', borderRadius: '12px', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '15px' }}>
-          <h2 style={{ margin: 0, color: '#1e293b', fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span>📋</span> Reviewed JSON Import
-          </h2>
-          <p style={{ margin: 0, color: '#475569', fontSize: '0.9rem', lineHeight: '1.5' }}>
-            This portal accepts reviewed JSON only. It does not read PDFs, images, OCR output, documents, or invoke an AI service.
-          </p>
+  // Purely presentational: which step of the flow the administrator is on.
+  const currentStep = !hasParsedData ? 2 : approvedCount === 0 ? 3 : 4;
 
-          <div style={{ border: '1px solid var(--border-color)', borderRadius: '10px', padding: '16px', backgroundColor: '#f8fafc' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
-              <div style={{ flex: '1 1 320px' }}>
-                <h3 style={{ margin: '0 0 6px', fontSize: '0.95rem', fontWeight: '600', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span>🤖</span> AI Conversion Prompt
-                </h3>
-                <p style={{ margin: 0, fontSize: '0.85rem', color: '#475569', lineHeight: '1.45' }}>
-                  Copy this prompt to ChatGPT, Gemini, Claude, or DeepSeek to convert your exam documents into uploadable JSON.
-                </p>
-              </div>
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <button
-                  type="button"
-                  onClick={handleCopyPrompt}
-                  className="btn-primary"
-                  style={{
-                    padding: '8px 16px',
-                    fontSize: '0.85rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    backgroundColor: copiedPrompt ? 'var(--success, #16a34a)' : 'var(--primary, #2563eb)'
-                  }}
-                  aria-label={copiedPrompt ? 'Prompt copied to clipboard' : 'Copy AI conversion prompt'}
-                >
-                  {copiedPrompt ? (
-                    <>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                      Copied!
-                    </>
-                  ) : (
-                    <>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                      </svg>
-                      Copy Prompt
-                    </>
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowPromptPreview(prev => !prev)}
-                  style={{
-                    padding: '8px 12px',
-                    fontSize: '0.85rem',
-                    background: 'none',
-                    border: '1px solid var(--border-color)',
-                    borderRadius: '6px',
-                    color: 'var(--text-muted, #64748b)',
-                    cursor: 'pointer'
-                  }}
-                >
-                  {showPromptPreview ? 'Hide Prompt' : 'View Prompt'}
-                </button>
-              </div>
+  /**
+   * @param {boolean} active
+   * @param {PillTone} tone
+   */
+  const filterPillClass = (active, tone) => cn(
+    'inline-flex h-7 items-center gap-1 rounded-full border px-3 text-xs font-semibold transition-colors',
+    active
+      ? {
+          neutral: 'border-slate-900 bg-slate-900 text-white',
+          success: 'border-emerald-600 bg-emerald-600 text-white',
+          warning: 'border-amber-500 bg-amber-500 text-white'
+        }[tone]
+      : {
+          neutral: 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+          success: 'border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50',
+          warning: 'border-amber-200 bg-white text-amber-700 hover:bg-amber-50'
+        }[tone]
+  );
+
+  return (
+    <div className="animate-fade-in flex flex-col gap-6">
+
+      {/* Header with step indicator */}
+      <Card>
+        <CardContent className="flex flex-col gap-5">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand-600 ring-1 ring-brand-100">
+              <FileJson className="size-5" aria-hidden="true" />
             </div>
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold tracking-tight text-slate-900">Reviewed JSON Import</h2>
+              <p className="mt-0.5 text-sm leading-relaxed text-slate-500">
+                This portal accepts reviewed JSON only. It does not read PDFs, images, OCR output, documents, or invoke an AI service.
+              </p>
+            </div>
+          </div>
+
+          <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4" aria-label="Import steps">
+            {IMPORT_STEPS.map((label, index) => {
+              const step = index + 1;
+              const done = step < currentStep;
+              const active = step === currentStep;
+              return (
+                <li
+                  key={label}
+                  aria-current={active ? 'step' : undefined}
+                  className={cn(
+                    'flex items-center gap-3 rounded-xl border px-3 py-2.5 text-sm transition-colors',
+                    active ? 'border-brand-200 bg-brand-50 text-brand-900' : done ? 'border-emerald-200 bg-emerald-50/60 text-emerald-900' : 'border-slate-200 bg-white text-slate-500'
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'grid size-7 shrink-0 place-items-center rounded-full text-xs font-bold',
+                      active ? 'bg-brand-600 text-white' : done ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-500'
+                    )}
+                    aria-hidden="true"
+                  >
+                    {done ? <Check className="size-4" /> : step}
+                  </span>
+                  <span className="font-medium">{label}</span>
+                </li>
+              );
+            })}
+          </ol>
+        </CardContent>
+      </Card>
+
+      {/* Upper Area: reviewed schema guidance and JSON upload */}
+      <div className="grid gap-6 lg:grid-cols-2">
+
+        {/* Downloadable example/schema and external-conversion boundary */}
+        <Card className="flex flex-col">
+          <CardHeader>
+            <div className="min-w-0 flex-1 basis-64">
+              <p className="text-xs font-semibold uppercase tracking-wide text-brand-700">Step 1 · Prepare JSON</p>
+              <h3 className="mt-1 flex items-center gap-2 text-base font-semibold text-slate-900">
+                <Sparkles className="size-5 text-slate-500" aria-hidden="true" />
+                AI Conversion Prompt
+              </h3>
+              <CardDescription>
+                Copy this prompt to ChatGPT, Gemini, Claude, or DeepSeek to convert your exam documents into uploadable JSON.
+              </CardDescription>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                variant={copiedPrompt ? 'success' : 'primary'}
+                onClick={handleCopyPrompt}
+                aria-label={copiedPrompt ? 'Prompt copied to clipboard' : 'Copy AI conversion prompt'}
+              >
+                {copiedPrompt ? (
+                  <>
+                    <Check aria-hidden="true" />
+                    Copied!
+                  </>
+                ) : (
+                  <>
+                    <Copy aria-hidden="true" />
+                    Copy Prompt
+                  </>
+                )}
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => setShowPromptPreview(prev => !prev)} aria-expanded={showPromptPreview}>
+                {showPromptPreview ? <EyeOff aria-hidden="true" /> : <Eye aria-hidden="true" />}
+                {showPromptPreview ? 'Hide Prompt' : 'View Prompt'}
+              </Button>
+            </div>
+          </CardHeader>
+
+          <CardContent className="flex flex-1 flex-col gap-4">
+            {showPromptPreview && (
+              <pre className="theme-island max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-slate-900 p-4 font-mono text-xs leading-relaxed text-slate-200">
+                {conversionPrompt}
+              </pre>
+            )}
 
             {/* Quick Access AI Services */}
-            <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid var(--border-color, #e2e8f0)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px', flexWrap: 'wrap', gap: '6px' }}>
-                <span style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-muted, #64748b)', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <circle cx="12" cy="12" r="10" />
-                    <line x1="2" y1="12" x2="22" y2="12" />
-                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-                  </svg>
+            <div>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-1.5">
+                <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <Globe className="size-3.5" aria-hidden="true" />
                   Open External AI Assistant:
                 </span>
-                <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                <span className="text-xs text-slate-400">
                   Opens in new tab • sign in with your account
                 </span>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '8px' }}>
-                {/* ChatGPT */}
-                <a
-                  href="https://chatgpt.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title="Open ChatGPT in a new tab"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '8px 12px',
-                    borderRadius: '8px',
-                    background: '#ffffff',
-                    border: '1px solid #bbf7d0',
-                    color: '#065f46',
-                    textDecoration: 'none',
-                    fontSize: '0.85rem',
-                    fontWeight: 600,
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
-                    transition: 'all 0.15s ease'
-                  }}
-                  onMouseEnter={e => {
-                    e.currentTarget.style.backgroundColor = '#f0fdf4';
-                    e.currentTarget.style.borderColor = '#86efac';
-                    e.currentTarget.style.transform = 'translateY(-1px)';
-                  }}
-                  onMouseLeave={e => {
-                    e.currentTarget.style.backgroundColor = '#ffffff';
-                    e.currentTarget.style.borderColor = '#bbf7d0';
-                    e.currentTarget.style.transform = 'none';
-                  }}
-                >
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10a37f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M12 2a10 10 0 0 1 10 10c0 5.523-4.477 10-10 10a9.96 9.96 0 0 1-4.787-1.223L2 22l1.223-5.213A9.96 9.96 0 0 1 2 12C2 6.477 6.477 2 12 2z" />
-                      <circle cx="8" cy="12" r="1" fill="#10a37f" />
-                      <circle cx="12" cy="12" r="1" fill="#10a37f" />
-                      <circle cx="16" cy="12" r="1" fill="#10a37f" />
-                    </svg>
-                    ChatGPT
-                  </span>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#10a37f" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <line x1="7" y1="17" x2="17" y2="7" />
-                    <polyline points="7 7 17 7 17 17" />
-                  </svg>
-                </a>
-
-                {/* Gemini */}
-                <a
-                  href="https://gemini.google.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title="Open Google Gemini in a new tab"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '8px 12px',
-                    borderRadius: '8px',
-                    background: '#ffffff',
-                    border: '1px solid #bfdbfe',
-                    color: '#1e40af',
-                    textDecoration: 'none',
-                    fontSize: '0.85rem',
-                    fontWeight: 600,
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
-                    transition: 'all 0.15s ease'
-                  }}
-                  onMouseEnter={e => {
-                    e.currentTarget.style.backgroundColor = '#eff6ff';
-                    e.currentTarget.style.borderColor = '#93c5fd';
-                    e.currentTarget.style.transform = 'translateY(-1px)';
-                  }}
-                  onMouseLeave={e => {
-                    e.currentTarget.style.backgroundColor = '#ffffff';
-                    e.currentTarget.style.borderColor = '#bfdbfe';
-                    e.currentTarget.style.transform = 'none';
-                  }}
-                >
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="#2563eb" aria-hidden="true">
-                      <path d="M12 2L13.8 8.2L20 10L13.8 11.8L12 18L10.2 11.8L4 10L10.2 8.2L12 2Z" />
-                    </svg>
-                    Gemini
-                  </span>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <line x1="7" y1="17" x2="17" y2="7" />
-                    <polyline points="7 7 17 7 17 17" />
-                  </svg>
-                </a>
-
-                {/* Claude */}
-                <a
-                  href="https://claude.ai"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title="Open Anthropic Claude in a new tab"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '8px 12px',
-                    borderRadius: '8px',
-                    background: '#ffffff',
-                    border: '1px solid #fed7aa',
-                    color: '#9a3412',
-                    textDecoration: 'none',
-                    fontSize: '0.85rem',
-                    fontWeight: 600,
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
-                    transition: 'all 0.15s ease'
-                  }}
-                  onMouseEnter={e => {
-                    e.currentTarget.style.backgroundColor = '#fff7ed';
-                    e.currentTarget.style.borderColor = '#fdba74';
-                    e.currentTarget.style.transform = 'translateY(-1px)';
-                  }}
-                  onMouseLeave={e => {
-                    e.currentTarget.style.backgroundColor = '#ffffff';
-                    e.currentTarget.style.borderColor = '#fed7aa';
-                    e.currentTarget.style.transform = 'none';
-                  }}
-                >
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="#c2410c" aria-hidden="true">
-                      <path d="M12 2l2.4 6.9L21.3 7l-4.5 5.5 5.2 4.8-7-.9L12 23l-3-6.6-7 .9 5.2-4.8L2.7 7l6.9 1.9L12 2z" />
-                    </svg>
-                    Claude
-                  </span>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#c2410c" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <line x1="7" y1="17" x2="17" y2="7" />
-                    <polyline points="7 7 17 7 17 17" />
-                  </svg>
-                </a>
-
-                {/* DeepSeek */}
-                <a
-                  href="https://chat.deepseek.com"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title="Open DeepSeek in a new tab"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '8px 12px',
-                    borderRadius: '8px',
-                    background: '#ffffff',
-                    border: '1px solid #bae6fd',
-                    color: '#0369a1',
-                    textDecoration: 'none',
-                    fontSize: '0.85rem',
-                    fontWeight: 600,
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
-                    transition: 'all 0.15s ease'
-                  }}
-                  onMouseEnter={e => {
-                    e.currentTarget.style.backgroundColor = '#f0f9ff';
-                    e.currentTarget.style.borderColor = '#7dd3fc';
-                    e.currentTarget.style.transform = 'translateY(-1px)';
-                  }}
-                  onMouseLeave={e => {
-                    e.currentTarget.style.backgroundColor = '#ffffff';
-                    e.currentTarget.style.borderColor = '#bae6fd';
-                    e.currentTarget.style.transform = 'none';
-                  }}
-                >
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0284c7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                      <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-                      <line x1="12" y1="22.08" x2="12" y2="12" />
-                    </svg>
-                    DeepSeek
-                  </span>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#0284c7" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <line x1="7" y1="17" x2="17" y2="7" />
-                    <polyline points="7 7 17 7 17 17" />
-                  </svg>
-                </a>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4">
+                {EXTERNAL_ASSISTANTS.map(assistant => (
+                  <a
+                    key={assistant.name}
+                    href={assistant.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={assistant.title}
+                    className="group flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 no-underline shadow-sm transition-colors hover:border-brand-300 hover:bg-brand-50 hover:text-brand-800"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Bot className="size-4 text-slate-400 group-hover:text-brand-600" aria-hidden="true" />
+                      {assistant.name}
+                    </span>
+                    <ExternalLink className="size-3.5 text-slate-400 group-hover:text-brand-600" aria-hidden="true" />
+                  </a>
+                ))}
               </div>
             </div>
-
-            {showPromptPreview && (
-              <div style={{ marginTop: '12px' }}>
-                <pre style={{
-                  maxHeight: '260px',
-                  overflowY: 'auto',
-                  backgroundColor: '#0f172a',
-                  color: '#e2e8f0',
-                  padding: '14px',
-                  borderRadius: '6px',
-                  fontSize: '0.8rem',
-                  lineHeight: '1.45',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                  fontFamily: 'Consolas, Monaco, monospace'
-                }}>
-                  {AI_CONVERSION_PROMPT_TEMPLATE}
-                </pre>
-              </div>
-            )}
-          </div>
-        </div>
+          </CardContent>
+        </Card>
 
         {/* Drag and Drop Zone */}
-        <div 
-          role="button"
-          tabIndex={importing ? -1 : 0}
-          aria-disabled={importing}
-          aria-busy={readingFile}
-          aria-label="Select one JSON question file"
-          onDragEnter={handleDrag}
-          onDragOver={handleDrag}
-          onDragLeave={handleDrag}
-          onDrop={handleDrop}
-          style={{ 
-            border: `2px dashed ${dragActive ? 'var(--primary)' : 'var(--border-color)'}`, 
-            backgroundColor: dragActive ? 'rgba(37, 99, 235, 0.05)' : 'var(--panel-bg)',
-            borderRadius: '12px',
-            padding: '24px',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            textAlign: 'center',
-            cursor: 'pointer',
-            transition: 'all 0.2s',
-            minHeight: '260px'
-          }}
-          onClick={() => !importing && fileInputRef.current?.click()}
-          onKeyDown={(event) => {
-            if (!importing && (event.key === 'Enter' || event.key === ' ')) {
-              event.preventDefault();
-              fileInputRef.current?.click();
-            }
-          }}
-        >
-          <span style={{ fontSize: '3rem', marginBottom: '15px' }}>📁</span>
-          <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', color: '#1e293b' }}>
-            Drag and Drop your JSON File here
-          </h3>
-          <p style={{ margin: '0 0 15px 0', fontSize: '0.85rem', color: '#64748b' }}>
-            or click to browse (maximum 5 MB and {MAX_IMPORT_QUESTIONS} questions)
-          </p>
-          <input 
-            type="file" 
-            ref={fileInputRef}
-            onChange={handleFileChange}
-            accept=".json,application/json"
-            disabled={importing}
-            style={{ display: 'none' }}
-          />
-          {readingFile && <p role="status" style={{ color: 'var(--primary)', fontWeight: 600 }}>Reading and validating file…</p>}
-          {fileName && (
-            <div style={{ backgroundColor: 'rgba(37, 99, 235, 0.1)', color: 'var(--primary)', padding: '5px 12px', borderRadius: '15px', fontSize: '0.85rem', fontWeight: 'bold' }}>
-              Selected: {fileName}
+        <Card className="flex flex-col">
+          <CardHeader>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-brand-700">Step 2 · Upload &amp; validate</p>
+              <h3 className="mt-1 flex items-center gap-2 text-base font-semibold text-slate-900">
+                <FileUp className="size-5 text-slate-500" aria-hidden="true" />
+                Upload reviewed JSON
+              </h3>
             </div>
-          )}
-        </div>
+          </CardHeader>
+          <CardContent className="flex flex-1 flex-col">
+            <div
+              role="button"
+              tabIndex={importing ? -1 : 0}
+              aria-disabled={importing}
+              aria-busy={readingFile}
+              aria-label="Select one JSON question file"
+              onDragEnter={handleDrag}
+              onDragOver={handleDrag}
+              onDragLeave={handleDrag}
+              onDrop={handleDrop}
+              className={cn(
+                'flex min-h-64 flex-1 cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 py-8 text-center transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600',
+                dragActive ? 'border-brand-500 bg-brand-50' : 'border-slate-300 bg-slate-50/60 hover:border-brand-400 hover:bg-brand-50/40',
+                importing && 'cursor-not-allowed opacity-60'
+              )}
+              onClick={() => !importing && fileInputRef.current?.click()}
+              onKeyDown={(event) => {
+                if (!importing && (event.key === 'Enter' || event.key === ' ')) {
+                  event.preventDefault();
+                  fileInputRef.current?.click();
+                }
+              }}
+            >
+              <div className={cn('mb-4 grid size-14 place-items-center rounded-full bg-white shadow-card ring-1', dragActive ? 'text-brand-600 ring-brand-200' : 'text-slate-400 ring-slate-200')}>
+                <UploadCloud className="size-7" aria-hidden="true" />
+              </div>
+              <h3 className="mb-1 text-base font-semibold text-slate-900">
+                Drag and Drop your JSON File here
+              </h3>
+              <p className="mb-4 text-sm text-slate-500">
+                or <span className="font-semibold text-brand-700">click to browse</span> (maximum 5 MB and {MAX_IMPORT_QUESTIONS} questions)
+              </p>
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                accept=".json,application/json"
+                disabled={importing}
+                className="hidden"
+              />
+              {readingFile && (
+                <p role="status" className="flex items-center gap-2 text-sm font-semibold text-brand-700">
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  Reading and validating file…
+                </p>
+              )}
+              {fileName && (
+                <Badge variant="brand" className="max-w-full py-1 text-sm">
+                  <FileJson aria-hidden="true" />
+                  <span className="truncate">Selected: {fileName}</span>
+                </Badge>
+              )}
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Progress Overlay during Import */}
       {importing && (
         <AccessibleModal labelledBy="question-import-progress-title" maxWidth="450px">
-          <div aria-busy="true">
-            <h3 id="question-import-progress-title" style={{ marginTop: 0 }}>Importing Questions...</h3>
-            <p style={{ color: '#475569', fontSize: '0.9rem' }}>
+          <div aria-busy="true" className="text-left">
+            <div className="mb-4 grid size-12 place-items-center rounded-full bg-brand-50 text-brand-600 ring-1 ring-brand-100">
+              <Loader2 className="size-6 animate-spin" aria-hidden="true" />
+            </div>
+            <h3 id="question-import-progress-title" className="text-lg font-semibold text-slate-900">Importing Questions...</h3>
+            <p className="mt-1 text-sm leading-relaxed text-slate-600">
               Saving the complete import and audit record as one protected transaction. Please keep the window open.
             </p>
             <div
               role="progressbar"
               aria-label="Question import progress"
-              aria-valuemin="0"
-              aria-valuemax="100"
+              aria-valuemin={0}
+              aria-valuemax={100}
               aria-valuenow={importProgress}
-              style={{ height: '10px', backgroundColor: '#e2e8f0', borderRadius: '5px', overflow: 'hidden', margin: '20px 0' }}
+              className="my-5 h-2.5 overflow-hidden rounded-full bg-slate-200"
             >
-              <div style={{ height: '100%', backgroundColor: 'var(--primary)', width: `${importProgress}%`, transition: 'width 0.1s ease-out' }}></div>
+              <div className="h-full rounded-full bg-brand-600 transition-[width] duration-100 ease-out" style={{ width: `${importProgress}%` }}></div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', fontWeight: 'bold' }}>
+            <div className="flex justify-between text-sm font-semibold text-slate-700 tabular-nums">
               <span>Progress: {importProgress}%</span>
               <span>{importStats.success} / {importStats.total} Success</span>
             </div>
@@ -814,351 +794,359 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank }) => {
 
       {/* Verification / Preview Section */}
       {hasParsedData && (
-        <div style={{ backgroundColor: 'var(--panel-bg)', padding: '24px', borderRadius: '12px', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '15px', flexWrap: 'wrap', gap: '10px' }}>
+        <Card>
+          <CardHeader className="gap-4">
             <div>
-              <h2 style={{ margin: 0, fontSize: '1.2rem', color: '#1e293b' }}>
+              <p className="text-xs font-semibold uppercase tracking-wide text-brand-700">Step 3 · Review &amp; approve</p>
+              <h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-900">
                 Review Questions ({questions.length} total)
               </h2>
-              <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+              <div className="mt-2 flex flex-wrap gap-2">
                 <button
+                  type="button"
                   onClick={() => setFilterTab('ALL')}
                   aria-pressed={filterTab === 'ALL'}
-                  style={{
-                    padding: '3px 10px',
-                    borderRadius: '12px',
-                    border: '1px solid #cbd5e1',
-                    fontSize: '0.75rem',
-                    fontWeight: 'bold',
-                    cursor: 'pointer',
-                    backgroundColor: filterTab === 'ALL' ? '#1e293b' : '#f8fafc',
-                    color: filterTab === 'ALL' ? '#ffffff' : '#475569'
-                  }}
+                  className={filterPillClass(filterTab === 'ALL', 'neutral')}
                 >
                   All ({questions.length})
                 </button>
                 <button
+                  type="button"
                   onClick={() => setFilterTab('VALID')}
                   aria-pressed={filterTab === 'VALID'}
-                  style={{
-                    padding: '3px 10px',
-                    borderRadius: '12px',
-                    border: '1px solid #cbd5e1',
-                    fontSize: '0.75rem',
-                    fontWeight: 'bold',
-                    cursor: 'pointer',
-                    backgroundColor: filterTab === 'VALID' ? 'var(--success)' : '#f8fafc',
-                    color: filterTab === 'VALID' ? '#ffffff' : '#166534'
-                  }}
+                  className={filterPillClass(filterTab === 'VALID', 'success')}
                 >
                   Valid ({validCount})
                 </button>
                 <button
+                  type="button"
                   onClick={() => setFilterTab('FAILED')}
                   aria-pressed={filterTab === 'FAILED'}
-                  style={{
-                    padding: '3px 10px',
-                    borderRadius: '12px',
-                    border: '1px solid #cbd5e1',
-                    fontSize: '0.75rem',
-                    fontWeight: 'bold',
-                    cursor: 'pointer',
-                    backgroundColor: filterTab === 'FAILED' ? '#f59e0b' : '#f8fafc',
-                    color: filterTab === 'FAILED' ? '#ffffff' : '#b45309'
-                  }}
+                  className={filterPillClass(filterTab === 'FAILED', 'warning')}
                 >
                   Needs Review ({failedCount})
                 </button>
               </div>
             </div>
-            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-              <button 
-                onClick={handleRevalidateAll}
-                style={{ padding: '8px 14px', backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', color: '#334155', borderRadius: '6px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}
-              >
-                🔄 Re-validate
-              </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="secondary" size="sm" onClick={handleRevalidateAll}>
+                <RefreshCw aria-hidden="true" />
+                Re-validate
+              </Button>
               {failedCount > 0 && (
-                <button 
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={handleExportFailedRows}
-                  style={{ padding: '8px 14px', backgroundColor: '#fef3c7', border: '1px solid #f59e0b', color: '#b45309', borderRadius: '6px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}
+                  className="border-amber-200 text-amber-800 hover:border-amber-300 hover:bg-amber-50"
                 >
-                  📥 Export Failed Rows ({failedCount})
-                </button>
+                  <Download aria-hidden="true" />
+                  Export Failed Rows ({failedCount})
+                </Button>
               )}
-              <button 
-                onClick={approveAllValid}
-                style={{ padding: '8px 14px', backgroundColor: '#f1f5f9', border: '1px solid #cbd5e1', color: '#334155', borderRadius: '6px', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}
-              >
+              <Button variant="secondary" size="sm" onClick={approveAllValid}>
+                <ListChecks aria-hidden="true" />
                 Approve All Valid
-              </button>
-              <button 
+              </Button>
+              <Button
+                variant="success"
+                size="sm"
                 onClick={startImport}
                 disabled={importing || readingFile || approvedCount === 0}
-                style={{ padding: '8px 16px', backgroundColor: 'var(--success)', border: 'none', color: 'white', borderRadius: '6px', cursor: importing || readingFile || approvedCount === 0 ? 'not-allowed' : 'pointer', fontSize: '0.85rem', fontWeight: 'bold' }}
               >
-                📥 Import Approved ({approvedCount})
-              </button>
+                <DatabaseZap aria-hidden="true" />
+                Import Approved ({approvedCount})
+              </Button>
             </div>
-          </div>
+          </CardHeader>
 
           {/* Question List */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', maxHeight: '500px', overflowY: 'auto', paddingRight: '5px' }}>
-            {displayedQuestions.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '40px', color: '#64748b' }}>No questions match the current filter.</div>
-            ) : (
-              displayedQuestions.map((q, idx) => (
-                <div 
-                  key={q.id} 
-                  style={{ 
-                    padding: '18px', 
-                    borderRadius: '8px', 
-                    backgroundColor: q.approved ? 'rgba(34, 197, 94, 0.02)' : '#fff',
-                    display: 'flex', 
-                    flexDirection: 'column', 
-                    gap: '15px',
-                    transition: 'all 0.2s',
-                    ...getStatusStyle(q)
-                  }}
-                >
-                  
-                  {/* Top Line of question card */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <input 
-                        type="checkbox" 
-                        checked={q.approved} 
-                        onChange={() => toggleApproval(q.id)}
-                        disabled={q.warnings.length > 0}
-                        aria-label={q.warnings.length > 0 ? `Resolve validation warnings before approving row ${q.rowNumber}` : `Approve row ${q.rowNumber}`}
-                        style={{ width: '16px', height: '16px', cursor: q.warnings.length > 0 ? 'not-allowed' : 'pointer' }}
-                      />
-                      <span style={{ fontWeight: 'bold', fontSize: '0.95rem', color: '#1e293b' }}>
-                        Row #{q.rowNumber || q.question_number || (idx + 1)}
-                      </span>
-                      {q.warnings.length > 0 && (
-                        <span style={{ backgroundColor: '#fef3c7', color: '#b45309', padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem', fontWeight: 600 }}>
-                          Needs Review ({q.warnings.length})
-                        </span>
+          <CardContent>
+            <div className="flex max-h-[560px] flex-col gap-4 overflow-y-auto pr-1">
+              {displayedQuestions.length === 0 ? (
+                <EmptyState icon={Filter} title="No questions match the current filter." className="py-10" />
+              ) : (
+                displayedQuestions.map((q, idx) => {
+                  const hasWarnings = q.warnings.length > 0;
+                  return (
+                    <article
+                      key={q.id}
+                      className={cn(
+                        'flex flex-col gap-4 rounded-xl border p-4 transition-colors sm:p-5',
+                        hasWarnings
+                          ? 'border-amber-200 bg-amber-50/30'
+                          : q.approved
+                            ? 'border-emerald-200 bg-emerald-50/30'
+                            : 'border-slate-200 bg-white'
                       )}
-                      <select 
-                        value={q.subject}
-                        onChange={(e) => handleUpdateQuestionField(q.id, 'subject', e.target.value)}
-                        aria-label={`Subject for row ${q.rowNumber}`}
-                        style={{ padding: '3px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.8rem', outline: 'none' }}
-                      >
-                        <option value="Physics">Physics</option>
-                        <option value="Chemistry">Chemistry</option>
-                        <option value="Mathematics">Mathematics</option>
-                      </select>
-                      <select 
-                        value={q.type}
-                        onChange={(e) => handleUpdateQuestionField(q.id, 'type', e.target.value)}
-                        aria-label={`Question type for row ${q.rowNumber}`}
-                        style={{ padding: '3px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.8rem', outline: 'none' }}
-                      >
-                        <option value="MCQ">MCQ</option>
-                        <option value="NUMERICAL">NUMERICAL</option>
-                      </select>
-                    </div>
-
-                    <button 
-                      onClick={() => handleDeleteQuestion(q.id)}
-                      aria-label={`Remove row ${q.rowNumber}`}
-                      style={{ background: 'none', border: 'none', color: 'var(--danger)', cursor: 'pointer', fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '3px' }}
                     >
-                      🗑️ Remove
-                    </button>
-                  </div>
 
-                  {/* Warning Messages */}
-                  {q.warnings.length > 0 && (
-                    <div role="alert" style={{ display: 'flex', flexDirection: 'column', gap: '4px', backgroundColor: 'rgba(245, 158, 11, 0.1)', padding: '10px 15px', borderRadius: '6px', borderLeft: '4px solid #f59e0b' }}>
-                      {q.warnings.map((w, wIdx) => (
-                        <div key={wIdx} style={{ color: '#b45309', fontSize: '0.8rem', fontWeight: '500' }}>
-                          ⚠️ {w}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Question Fields Inputs / Previews */}
-                  <div className="responsive-two-column-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                    
-                    {/* Left Side: Editor Inputs */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                      <div>
-                        <label htmlFor={`import-question-text-${q.id}`} style={{ display: 'block', fontWeight: 'bold', fontSize: '0.8rem', color: '#475569', marginBottom: '4px' }}>Question Text</label>
-                        <textarea 
-                          id={`import-question-text-${q.id}`}
-                          value={q.text}
-                          onChange={(e) => handleUpdateQuestionField(q.id, 'text', e.target.value)}
-                          maxLength={10000}
-                          rows={3}
-                          style={{ width: '100%', padding: '8px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.85rem', outline: 'none', resize: 'vertical' }}
-                        />
-                      </div>
-
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '5px' }}>
-                        <input 
-                          type="checkbox" 
-                          id={`has-img-${q.id}`}
-                          checked={q.hasImageOrDiagram || false}
-                          onChange={(e) => handleUpdateQuestionField(q.id, 'hasImageOrDiagram', e.target.checked)}
-                          style={{ cursor: 'pointer', width: '15px', height: '15px' }}
-                        />
-                        <label htmlFor={`has-img-${q.id}`} style={{ fontWeight: 'bold', fontSize: '0.8rem', color: '#b45309', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          ⚠️ Contains Image or Chemistry Diagram
-                        </label>
-                      </div>
-                      {q.hasImageOrDiagram && (
-                        <p role="note" style={{ margin: '-4px 0 4px', color: '#92400e', fontSize: '0.76rem', lineHeight: 1.4 }}>
-                          After import, attach and verify the required private image in the Question Bank. The exam cannot be activated while required media is missing.
-                        </p>
-                      )}
-
-                      {q.type === 'MCQ' ? (
-                        <div>
-                          <label style={{ display: 'block', fontWeight: 'bold', fontSize: '0.8rem', color: '#475569', marginBottom: '4px' }}>Options</label>
-                          <div className="responsive-two-column-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
-                            {['A', 'B', 'C', 'D'].map((lbl, oIdx) => (
-                              <div key={lbl} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                <span style={{ fontWeight: 'bold', fontSize: '0.8rem', color: '#64748b' }}>{lbl}:</span>
-                                <input 
-                                  type="text" 
-                                  value={q.options[oIdx] || ''}
-                                  onChange={(e) => handleUpdateOption(q.id, oIdx, e.target.value)}
-                                  maxLength={5000}
-                                  aria-label={`Option ${lbl} for row ${q.rowNumber}`}
-                                  placeholder={`Option ${lbl}...`}
-                                  style={{ flex: 1, padding: '4px 6px', border: '1px solid #cbd5e1', borderRadius: '4px', fontSize: '0.8rem', outline: 'none' }}
-                                />
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ) : (
-                        <div style={{ padding: '8px 12px', backgroundColor: '#f8fafc', borderRadius: '6px', border: '1px solid #cbd5e1', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <span style={{ fontSize: '0.8rem', color: '#64748b', fontStyle: 'italic' }}>Numerical Question - No options required.</span>
-                        </div>
-                      )}
-
-                      <div>
-                        <label htmlFor={`import-correct-answer-${q.id}`} style={{ display: 'block', fontWeight: 'bold', fontSize: '0.8rem', color: '#475569', marginBottom: '4px' }}>Correct Answer</label>
-                        {q.type === 'MCQ' ? (
-                          <select 
-                            id={`import-correct-answer-${q.id}`}
-                            value={q.correctAnswer}
-                            onChange={(e) => handleUpdateQuestionField(q.id, 'correctAnswer', e.target.value)}
-                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '0.8rem', outline: 'none' }}
-                          >
-                            <option value="" disabled>Select the correct option</option>
-                            <option value="0">A</option>
-                            <option value="1">B</option>
-                            <option value="2">C</option>
-                            <option value="3">D</option>
-                          </select>
-                        ) : (
-                          <input 
-                            id={`import-correct-answer-${q.id}`}
-                            type="text" 
-                            value={q.correctAnswer}
-                            onChange={(e) => handleUpdateQuestionField(q.id, 'correctAnswer', e.target.value)}
-                            inputMode="decimal"
-                            maxLength={100}
-                            placeholder="Correct numerical value..."
-                            style={{ width: '100%', padding: '4px 8px', border: '1px solid #cbd5e1', borderRadius: '6px', fontSize: '0.8rem', outline: 'none' }}
+                      {/* Top Line of question card */}
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex flex-wrap items-center gap-2.5">
+                          <Checkbox
+                            checked={q.approved}
+                            onChange={() => toggleApproval(q.id)}
+                            disabled={hasWarnings}
+                            aria-label={q.warnings.length > 0 ? `Resolve validation warnings before approving row ${q.rowNumber}` : `Approve row ${q.rowNumber}`}
+                            className="disabled:cursor-not-allowed"
                           />
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Right Side: Math Rendered Preview */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px', border: '1px solid #e2e8f0', borderRadius: '6px', backgroundColor: '#f8fafc', overflow: 'hidden' }}>
-                      <span style={{ fontWeight: 'bold', fontSize: '0.75rem', color: '#94a3b8', textTransform: 'uppercase' }}>LaTeX Math Preview</span>
-                      
-                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto' }}>
-                        <div style={{ fontSize: '0.9rem', color: '#1e293b' }}>
-                          <strong>Text:</strong> <MathRenderer text={q.text || '(No text entered)'} />
+                          <span className="text-sm font-semibold text-slate-900">
+                            Row #{q.rowNumber || q.question_number || (idx + 1)}
+                          </span>
+                          {hasWarnings ? (
+                            <Badge variant="warning">
+                              <AlertTriangle aria-hidden="true" />
+                              Needs Review ({q.warnings.length})
+                            </Badge>
+                          ) : q.approved ? (
+                            <Badge variant="success">
+                              <CheckCircle2 aria-hidden="true" />
+                              Approved
+                            </Badge>
+                          ) : (
+                            <Badge variant="neutral">
+                              <Circle aria-hidden="true" />
+                              Valid
+                            </Badge>
+                          )}
+                          <div className="w-36">
+                            <Select
+                              value={q.subject}
+                              onChange={(e) => handleUpdateQuestionField(q.id, 'subject', e.target.value)}
+                              aria-label={`Subject for row ${q.rowNumber}`}
+                              className="h-8 text-xs"
+                            >
+                              {!subjectList.includes(q.subject) && <option value={q.subject}>{q.subject || 'Choose a subject…'} (not allowed)</option>}
+                              {subjectList.map(subject => <option key={subject} value={subject}>{subject}</option>)}
+                            </Select>
+                          </div>
+                          <div className="w-36">
+                            <Select
+                              value={q.type}
+                              onChange={(e) => handleUpdateQuestionField(q.id, 'type', e.target.value)}
+                              aria-label={`Question type for row ${q.rowNumber}`}
+                              className="h-8 text-xs"
+                            >
+                              <option value="MCQ">MCQ</option>
+                              <option value="NUMERICAL">NUMERICAL</option>
+                            </Select>
+                          </div>
                         </div>
 
-                        {q.type === 'MCQ' && (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.85rem', color: '#475569' }}>
-                            {['A', 'B', 'C', 'D'].map((lbl, oIdx) => (
-                              <div key={lbl} style={{ fontWeight: q.correctAnswer === String(oIdx) ? 'bold' : 'normal', color: q.correctAnswer === String(oIdx) ? 'var(--success)' : '#475569' }}>
-                                {lbl}) <MathRenderer text={q.options[oIdx] || '(empty)'} />
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDeleteQuestion(q.id)}
+                          aria-label={`Remove row ${q.rowNumber}`}
+                          className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                        >
+                          <Trash2 aria-hidden="true" />
+                          Remove
+                        </Button>
                       </div>
-                    </div>
 
-                  </div>
+                      {/* Warning Messages */}
+                      {hasWarnings && (
+                        <div role="alert" className="flex flex-col gap-1 rounded-lg border border-amber-200 border-l-4 border-l-amber-500 bg-amber-50 px-4 py-2.5">
+                          {q.warnings.map((w, wIdx) => (
+                            <div key={wIdx} className="flex items-start gap-2 text-xs font-medium text-amber-900">
+                              <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-600" aria-hidden="true" />
+                              <span>{w}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
 
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+                      {/* Question Fields Inputs / Previews */}
+                      <div className="grid gap-5 lg:grid-cols-2">
+
+                        {/* Left Side: Editor Inputs */}
+                        <div className="flex flex-col gap-3">
+                          <Field label="Question Text" htmlFor={`import-question-text-${q.id}`}>
+                            <Textarea
+                              id={`import-question-text-${q.id}`}
+                              value={q.text}
+                              onChange={(e) => handleUpdateQuestionField(q.id, 'text', e.target.value)}
+                              maxLength={10000}
+                              rows={3}
+                              className="min-h-20 resize-y"
+                            />
+                          </Field>
+
+                          <div className="flex items-center gap-2">
+                            <Checkbox
+                              id={`has-img-${q.id}`}
+                              checked={q.hasImageOrDiagram || false}
+                              onChange={(e) => handleUpdateQuestionField(q.id, 'hasImageOrDiagram', e.target.checked)}
+                            />
+                            <label htmlFor={`has-img-${q.id}`} className="flex cursor-pointer items-center gap-1.5 text-sm font-medium text-amber-800">
+                              <ImageIcon className="size-4 text-amber-600" aria-hidden="true" />
+                              Contains Image or Chemistry Diagram
+                            </label>
+                          </div>
+                          {q.hasImageOrDiagram && (
+                            <p role="note" className="-mt-1 rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+                              After import, attach and verify the required private image in the Question Bank. The exam cannot be activated while required media is missing.
+                            </p>
+                          )}
+
+                          {q.type === 'MCQ' ? (
+                            <div className="flex flex-col gap-1.5">
+                              <span className="text-sm font-medium text-slate-700">Options</span>
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                {['A', 'B', 'C', 'D'].map((lbl, oIdx) => (
+                                  <div key={lbl} className="flex items-center gap-2">
+                                    <span className="grid size-6 shrink-0 place-items-center rounded-full bg-slate-100 text-xs font-bold text-slate-600">{lbl}</span>
+                                    <Input
+                                      type="text"
+                                      value={q.options[oIdx] || ''}
+                                      onChange={(e) => handleUpdateOption(q.id, oIdx, e.target.value)}
+                                      maxLength={5000}
+                                      aria-label={`Option ${lbl} for row ${q.rowNumber}`}
+                                      placeholder={`Option ${lbl}...`}
+                                      className="h-8 text-xs"
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs italic text-slate-500">
+                              <Hash className="size-3.5" aria-hidden="true" />
+                              Numerical Question - No options required.
+                            </div>
+                          )}
+
+                          <Field label="Correct Answer" htmlFor={`import-correct-answer-${q.id}`}>
+                            {q.type === 'MCQ' ? (
+                              <Select
+                                id={`import-correct-answer-${q.id}`}
+                                value={q.correctAnswer}
+                                onChange={(e) => handleUpdateQuestionField(q.id, 'correctAnswer', e.target.value)}
+                                className="h-9 text-sm"
+                              >
+                                <option value="" disabled>Select the correct option</option>
+                                <option value="0">A</option>
+                                <option value="1">B</option>
+                                <option value="2">C</option>
+                                <option value="3">D</option>
+                              </Select>
+                            ) : (
+                              <Input
+                                id={`import-correct-answer-${q.id}`}
+                                type="text"
+                                value={q.correctAnswer}
+                                onChange={(e) => handleUpdateQuestionField(q.id, 'correctAnswer', e.target.value)}
+                                inputMode="decimal"
+                                maxLength={100}
+                                placeholder="Correct numerical value..."
+                                className="h-9 tabular-nums"
+                              />
+                            )}
+                          </Field>
+                        </div>
+
+                        {/* Right Side: Math Rendered Preview */}
+                        <div className="flex flex-col gap-2 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 p-4">
+                          <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                            <Eye className="size-3.5" aria-hidden="true" />
+                            LaTeX Math Preview
+                          </span>
+
+                          <div className="flex flex-1 flex-col gap-3 overflow-y-auto">
+                            <div className="text-sm text-slate-900">
+                              <strong>Text:</strong> <MathRenderer text={q.text || '(No text entered)'} />
+                            </div>
+
+                            {q.type === 'MCQ' && (
+                              <div className="flex flex-col gap-1.5 text-sm text-slate-600">
+                                {['A', 'B', 'C', 'D'].map((lbl, oIdx) => {
+                                  const isCorrect = q.correctAnswer === String(oIdx);
+                                  return (
+                                    <div
+                                      key={lbl}
+                                      className={cn(
+                                        'flex items-start gap-2 rounded-md px-2 py-1',
+                                        isCorrect && 'bg-emerald-50 font-semibold text-emerald-700 ring-1 ring-emerald-200'
+                                      )}
+                                    >
+                                      <span className="shrink-0">{lbl})</span>
+                                      <span className="min-w-0"><MathRenderer text={q.options[oIdx] || '(empty)'} /></span>
+                                      {isCorrect && <CheckCircle2 className="ml-auto mt-0.5 size-4 shrink-0 text-emerald-600" aria-label="Correct answer" />}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                      </div>
+
+                    </article>
+                  );
+                })
+              )}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* History Log Section */}
-      <div style={{ backgroundColor: 'var(--panel-bg)', padding: '24px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-        <h3 style={{ margin: '0 0 5px 0', fontSize: '1.1rem', color: '#1e293b' }}>Import History</h3>
-        <p style={{ margin: '0 0 15px', color: '#64748b', fontSize: '0.8rem' }}>Showing the latest 100 import batches.</p>
-        {historyError && <p role="alert" style={{ color: 'var(--danger)', fontWeight: 600 }}>{historyError}</p>}
-        
-        {loadingHistory ? (
-          <div style={{ padding: '20px', textAlign: 'center', color: '#64748b' }}>Loading history...</div>
-        ) : importHistory.length === 0 ? (
-          <div style={{ padding: '20px', textAlign: 'center', color: '#64748b', fontSize: '0.9rem', border: '1px dashed #cbd5e1', borderRadius: '8px' }}>
-            No questions have been imported yet.
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>
+              <History aria-hidden="true" />
+              Import History
+            </CardTitle>
+            <CardDescription>Showing the latest 100 import batches.</CardDescription>
           </div>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem', textAlign: 'left' }}>
-              <thead>
-                <tr style={{ borderBottom: '2px solid #e2e8f0', color: '#64748b' }}>
-                  <th style={{ padding: '10px 8px' }}>File Name</th>
-                  <th style={{ padding: '10px 8px' }}>Date / Time</th>
-                  <th style={{ padding: '10px 8px' }}>Total Detected</th>
-                  <th style={{ padding: '10px 8px' }}>Successfully Imported</th>
-                  <th style={{ padding: '10px 8px' }}>Rejected / Failed</th>
-                  <th style={{ padding: '10px 8px' }}>Status</th>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {historyError && <Alert variant="danger" role="alert">{historyError}</Alert>}
+
+          {loadingHistory ? (
+            <LoadingBlock label="Loading history..." className="py-8" />
+          ) : importHistory.length === 0 ? (
+            <EmptyState icon={Inbox} title="No questions have been imported yet." className="py-10" />
+          ) : (
+            <Table>
+              <THead>
+                <tr>
+                  <TH>File Name</TH>
+                  <TH>Date / Time</TH>
+                  <TH className="text-right">Total Detected</TH>
+                  <TH className="text-right">Successfully Imported</TH>
+                  <TH className="text-right">Rejected / Failed</TH>
+                  <TH>Status</TH>
                 </tr>
-              </thead>
-              <tbody>
+              </THead>
+              <TBody>
                 {importHistory.map(row => (
-                  <tr key={row.id} style={{ borderBottom: '1px solid #edf2f7', color: '#334155' }}>
-                    <td style={{ padding: '12px 8px', fontWeight: 'bold' }}>{row.file_name}</td>
-                    <td style={{ padding: '12px 8px' }}>
+                  <TR key={row.id}>
+                    <TD className="font-semibold text-slate-900">{row.file_name}</TD>
+                    <TD className="whitespace-nowrap text-slate-500 tabular-nums">
                       {new Date(row.imported_at).toLocaleString()}
-                    </td>
-                    <td style={{ padding: '12px 8px' }}>{row.total_questions}</td>
-                    <td style={{ padding: '12px 8px', color: 'var(--success)', fontWeight: 'bold' }}>{row.successful_imports}</td>
-                    <td style={{ padding: '12px 8px', color: row.rejected_questions > 0 ? 'var(--danger)' : '#334155' }}>
+                    </TD>
+                    <TD className="text-right tabular-nums">{row.total_questions}</TD>
+                    <TD className="text-right font-semibold text-emerald-700 tabular-nums">{row.successful_imports}</TD>
+                    <TD className={cn('text-right tabular-nums', row.rejected_questions > 0 ? 'font-semibold text-red-600' : 'text-slate-700')}>
                       {row.rejected_questions}
-                    </td>
-                    <td style={{ padding: '12px 8px' }}>
-                      <span 
-                        style={{ 
-                          fontSize: '0.75rem', fontWeight: 'bold', 
-                          padding: '3px 8px', borderRadius: '10px',
-                          color: row.status === 'Success' ? '#15803d' : row.status === 'Partial' ? '#b45309' : '#b91c1c',
-                          backgroundColor: row.status === 'Success' ? '#dcfce7' : row.status === 'Partial' ? '#fef3c7' : '#fee2e2'
-                        }}
-                      >
+                    </TD>
+                    <TD>
+                      <Badge variant={row.status === 'Success' ? 'success' : row.status === 'Partial' ? 'warning' : 'danger'}>
                         {row.status}
-                      </span>
-                    </td>
-                  </tr>
+                      </Badge>
+                    </TD>
+                  </TR>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+              </TBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
 
     </div>
   );

@@ -1,5 +1,11 @@
-import { ALLOWED_IMPORT_SUBJECTS } from './importLogic.js';
+import { resolveAllowedSubjects } from './importLogic.js';
 
+/** @import { LatexCheck, PreflightResult, UntrustedInput } from './types' */
+
+/**
+ * @param {unknown} text
+ * @returns {LatexCheck}
+ */
 export const checkLatexDelimiters = (text) => {
   if (!text || typeof text !== 'string') return { balanced: true };
   
@@ -22,12 +28,27 @@ export const checkLatexDelimiters = (text) => {
   return { balanced: true };
 };
 
-export const validateExamPreflight = (exam) => {
+/**
+ * Validates an exam (metadata + question paper) before publishing.
+ * @param {UntrustedInput} exam Exam row, optionally with `questions_data`.
+ * @param {{ knownSubjects?: unknown }} [options]
+ * @returns {PreflightResult}
+ */
+export const validateExamPreflight = (exam, options = {}) => {
+  // Existing exams may use subjects that were later deactivated; pass every
+  // configured subject (active or not) as `knownSubjects`.
+  const knownSubjects = resolveAllowedSubjects(options.knownSubjects).map(subject => subject.toLocaleLowerCase());
+  /** @type {string[]} */
   const errors = [];
+  /** @type {string[]} */
   const warnings = [];
+  /** @type {Set<string>} */
   const storageAssets = new Set();
+  /** @type {Set<string>} */
   const externalAssets = new Set();
+  /** @type {Set<string>} */
   const insecureAssets = new Set();
+  /** @type {Record<string, number>} */
   const subjectCounts = {};
 
   if (!exam || typeof exam !== 'object') {
@@ -71,16 +92,18 @@ export const validateExamPreflight = (exam) => {
     errors.push('Negative marks must be between -100 and 0.');
   }
 
+  /** @type {UntrustedInput[]} */
   const subjects = Array.isArray(qdata.subjects) ? qdata.subjects : [];
   if (subjects.length === 0) {
     errors.push('The exam must contain at least one subject.');
   }
+  /** @type {Set<string>} */
   const normalizedSubjects = new Set();
   subjects.forEach((subject) => {
     const normalized = String(subject || '').trim();
     const key = normalized.toLocaleLowerCase();
-    if (!ALLOWED_IMPORT_SUBJECTS.includes(normalized)) {
-      errors.push(`Unsupported JEE subject "${normalized || '(empty)'}".`);
+    if (!knownSubjects.includes(key)) {
+      errors.push(`Unknown subject "${normalized || '(empty)'}". Add it under Subjects & Patterns first.`);
     }
     if (normalizedSubjects.has(key)) {
       errors.push(`Duplicate subject "${normalized}".`);
@@ -100,6 +123,7 @@ export const validateExamPreflight = (exam) => {
         errors.push(`Questions contain undeclared subject "${subject}".`);
       }
     });
+    /** @type {Set<string>} */
     const seenQuestionIds = new Set();
     for (const sub of subjects) {
       const subQuestions = questionsObj[sub];
@@ -110,7 +134,7 @@ export const validateExamPreflight = (exam) => {
       }
       subjectCounts[sub] = subQuestions.length;
 
-      subQuestions.forEach((q, idx) => {
+      subQuestions.forEach((/** @type {UntrustedInput} */ q, /** @type {number} */ idx) => {
         totalQuestions += 1;
         const qNum = idx + 1;
         if (!q || typeof q !== 'object' || Array.isArray(q)) {
@@ -171,7 +195,7 @@ export const validateExamPreflight = (exam) => {
           if (q.optionImageUrls != null && optionImages.length !== 4) {
             errors.push(`[${sub} Q${qNum}] Option image references must contain exactly 4 positions.`);
           }
-          options.forEach((opt, optIdx) => {
+          options.forEach((/** @type {unknown} */ opt, /** @type {number} */ optIdx) => {
             const optLabel = String.fromCharCode(65 + optIdx);
             const optText = String(opt || '').trim();
             const optImg = String(optionImages[optIdx] || '').trim();

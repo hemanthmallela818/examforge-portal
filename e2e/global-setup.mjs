@@ -105,7 +105,7 @@ export default async function globalSetup() {
   };
 
   const ensureStudentFixture = async ({ project, studentId, purpose }) => ensureUser({
-    email: `${studentId.toLowerCase()}@student.com`,
+    email: `${studentId.toLowerCase()}@students.examforge.invalid`,
     password: STUDENT_PASSWORD,
     userMetadata: {
       student_id: studentId,
@@ -153,7 +153,7 @@ export default async function globalSetup() {
     const exportAdminEmail = `exports-${project}@e2e.local`;
     const reliabilityAdminEmail = `reliability-${project}@e2e.local`;
     const accessibilityAdminEmail = `accessibility-${project}@e2e.local`;
-    const studentEmail = `${studentId.toLowerCase()}@student.com`;
+    const studentEmail = `${studentId.toLowerCase()}@students.examforge.invalid`;
 
     const adminUser = await ensureUser({
       email: adminEmail,
@@ -219,7 +219,7 @@ export default async function globalSetup() {
     });
 
     const authStudentUser = await ensureUser({
-      email: `${authStudentId.toLowerCase()}@student.com`,
+      email: `${authStudentId.toLowerCase()}@students.examforge.invalid`,
       password: STUDENT_PASSWORD,
       userMetadata: {
         student_id: authStudentId,
@@ -232,7 +232,7 @@ export default async function globalSetup() {
     });
 
     const takeoverStudentUser = await ensureUser({
-      email: `${takeoverStudentId.toLowerCase()}@student.com`,
+      email: `${takeoverStudentId.toLowerCase()}@students.examforge.invalid`,
       password: STUDENT_PASSWORD,
       userMetadata: {
         student_id: takeoverStudentId,
@@ -291,37 +291,37 @@ export default async function globalSetup() {
       student: { studentId, email: studentEmail, password: STUDENT_PASSWORD, id: studentUser.id },
       authStudent: {
         studentId: authStudentId,
-        email: `${authStudentId.toLowerCase()}@student.com`,
+        email: `${authStudentId.toLowerCase()}@students.examforge.invalid`,
         password: STUDENT_PASSWORD,
         id: authStudentUser.id
       },
       takeoverStudent: {
         studentId: takeoverStudentId,
-        email: `${takeoverStudentId.toLowerCase()}@student.com`,
+        email: `${takeoverStudentId.toLowerCase()}@students.examforge.invalid`,
         password: STUDENT_PASSWORD,
         id: takeoverStudentUser.id
       },
       reliabilityStudent: {
         studentId: reliabilityStudentId,
-        email: `${reliabilityStudentId.toLowerCase()}@student.com`,
+        email: `${reliabilityStudentId.toLowerCase()}@students.examforge.invalid`,
         password: STUDENT_PASSWORD,
         id: reliabilityStudentUser.id
       },
       recoveryStudent: {
         studentId: recoveryStudentId,
-        email: `${recoveryStudentId.toLowerCase()}@student.com`,
+        email: `${recoveryStudentId.toLowerCase()}@students.examforge.invalid`,
         password: STUDENT_PASSWORD,
         id: recoveryStudentUser.id
       },
       storageStudent: {
         studentId: storageStudentId,
-        email: `${storageStudentId.toLowerCase()}@student.com`,
+        email: `${storageStudentId.toLowerCase()}@students.examforge.invalid`,
         password: STUDENT_PASSWORD,
         id: storageStudentUser.id
       },
       accessibilityStudent: {
         studentId: accessibilityStudentId,
-        email: `${accessibilityStudentId.toLowerCase()}@student.com`,
+        email: `${accessibilityStudentId.toLowerCase()}@students.examforge.invalid`,
         password: STUDENT_PASSWORD,
         id: accessibilityStudentUser.id
       }
