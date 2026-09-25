@@ -31,4 +31,9 @@ e2e/.state/
 *.sln
 *.sw?
 
-testsprite_tests\tmp\config.json
+# Generated or machine-specific artefacts (kept on disk, never committed)
+tmp/
+output/
+testsprite_tests/
+logs/
+supabase/.temp/
