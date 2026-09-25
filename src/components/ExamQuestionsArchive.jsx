@@ -1,7 +1,18 @@
 import { useState } from 'react';
 import MathRenderer from './MathRenderer';
 import StorageImage from './StorageImage';
+import { Check, CheckCircle2, Copy, FileText, Hash, Search, SearchX } from 'lucide-react';
+import { Badge, Button, Card, CardContent, CardDescription, CardHeader, EmptyState, Input, cn } from './ui';
 
+/**
+ * @typedef {import('../types').ExamQuestion & { correctAnswer?: string | number | null }} ArchiveQuestion
+ * @typedef {ArchiveQuestion & { subject: string, displayNumber: number }} ArchiveListQuestion
+ * @typedef {object} ArchiveExam
+ * @property {string} [title]
+ * @property {{ subjects?: string[], questions?: Record<string, ArchiveQuestion[] | undefined> } | null} [questionsData]
+ */
+
+/** @param {{ exam: ArchiveExam | null | undefined }} props */
 const ExamQuestionsArchive = ({ exam }) => {
   const [selectedSubject, setSelectedSubject] = useState('ALL');
   const [searchTerm, setSearchTerm] = useState('');
@@ -14,6 +25,7 @@ const ExamQuestionsArchive = ({ exam }) => {
   const { subjects, questions } = exam.questionsData;
 
   // Flatten all questions with their subject
+  /** @type {ArchiveListQuestion[]} */
   let allQuestions = [];
   if (subjects && Array.isArray(subjects)) {
     subjects.forEach(sub => {
@@ -72,240 +84,163 @@ const ExamQuestionsArchive = ({ exam }) => {
     });
   };
 
+  /** @param {boolean} active */
+  const subjectTabClass = (active) => cn(
+    'inline-flex h-8 items-center gap-1.5 rounded-full border px-3.5 text-xs font-semibold transition-colors',
+    active
+      ? 'border-brand-600 bg-brand-600 text-white shadow-sm hover:bg-brand-700'
+      : 'border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50'
+  );
+
   return (
-    <div className="animate-fade-in" style={{ backgroundColor: 'var(--panel-bg)', padding: '30px', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.02)', border: '1px solid var(--border-color)', marginTop: '24px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px', marginBottom: '20px', paddingBottom: '15px', borderBottom: '1px solid var(--border-color)' }}>
-        <div>
-          <h3 style={{ color: 'var(--text-main)', margin: 0, fontSize: '1.5rem', display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span>📄</span> Exam Question Paper Archive
-          </h3>
-          <p style={{ color: 'var(--text-muted)', margin: '5px 0 0', fontSize: '0.9rem' }}>
-            Reference of all {allQuestions.length} questions included in this exam session for auditing and verification.
-          </p>
+    <Card className="animate-fade-in mt-6">
+      <CardHeader className="items-center">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand-600 ring-1 ring-brand-100">
+            <FileText className="size-5" aria-hidden="true" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-lg font-semibold tracking-tight text-slate-900">Exam Question Paper Archive</h3>
+            <CardDescription className="mt-0.5">
+              Reference of all {allQuestions.length} questions included in this exam session for auditing and verification.
+            </CardDescription>
+          </div>
         </div>
 
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button 
-            onClick={handleCopyAsText} 
-            className="btn-outline"
-            style={{ padding: '8px 16px', borderRadius: '6px', fontSize: '0.9rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', borderColor: copied ? 'var(--success)' : 'var(--border-color)', color: copied ? 'var(--success)' : 'var(--text-main)', fontWeight: 'bold' }}
-          >
-            {copied ? '✅ Copied to Clipboard!' : '📋 Copy Question Paper'}
-          </button>
-        </div>
-      </div>
+        <Button
+          variant="secondary"
+          onClick={handleCopyAsText}
+          className={cn(copied && 'border-emerald-300 bg-emerald-50 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-50')}
+        >
+          {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+          {copied ? 'Copied to Clipboard!' : 'Copy Question Paper'}
+        </Button>
+      </CardHeader>
 
-      {/* Subject Tabs and Search */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '15px', marginBottom: '25px' }}>
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          <button
-            onClick={() => setSelectedSubject('ALL')}
-            style={{
-              padding: '6px 14px',
-              borderRadius: '20px',
-              border: 'none',
-              backgroundColor: selectedSubject === 'ALL' ? 'var(--primary)' : 'rgba(0,0,0,0.05)',
-              color: selectedSubject === 'ALL' ? 'white' : 'var(--text-main)',
-              fontWeight: 'bold',
-              cursor: 'pointer',
-              fontSize: '0.85rem',
-              transition: 'all 0.2s'
-            }}
-          >
-            All Subjects ({allQuestions.length})
-          </button>
-          {subjects && subjects.map(sub => {
-            const count = (questions[sub] || []).length;
-            return (
-              <button
-                key={sub}
-                onClick={() => setSelectedSubject(sub)}
-                style={{
-                  padding: '6px 14px',
-                  borderRadius: '20px',
-                  border: 'none',
-                  backgroundColor: selectedSubject === sub ? 'var(--primary)' : 'rgba(0,0,0,0.05)',
-                  color: selectedSubject === sub ? 'white' : 'var(--text-main)',
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  fontSize: '0.85rem',
-                  transition: 'all 0.2s'
-                }}
+      <CardContent>
+        {/* Subject Tabs and Search */}
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => setSelectedSubject('ALL')} className={subjectTabClass(selectedSubject === 'ALL')} aria-pressed={selectedSubject === 'ALL'}>
+              All Subjects <span className="tabular-nums opacity-80">({allQuestions.length})</span>
+            </button>
+            {subjects && subjects.map(sub => {
+              const count = (questions[sub] || []).length;
+              return (
+                <button key={sub} type="button" onClick={() => setSelectedSubject(sub)} className={subjectTabClass(selectedSubject === sub)} aria-pressed={selectedSubject === sub}>
+                  {sub} <span className="tabular-nums opacity-80">({count})</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="relative w-full sm:w-72">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+            <Input
+              type="text"
+              aria-label="Search question prompt or option"
+              placeholder="Search question prompt or option..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+        </div>
+
+        {/* Questions List */}
+        {filteredQuestions.length === 0 ? (
+          <EmptyState icon={SearchX} title="No questions found matching your filter criteria." />
+        ) : (
+          <div className="flex max-h-[700px] flex-col gap-4 overflow-y-auto pr-1">
+            {filteredQuestions.map((q, idx) => (
+              <article
+                key={`${q.subject}-${idx}-${q.id || 'noid'}`}
+                className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50/60 p-5"
               >
-                {sub} ({count})
-              </button>
-            );
-          })}
-        </div>
-
-        <input
-          type="text"
-          placeholder="🔍 Search question prompt or option..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          style={{
-            padding: '8px 14px',
-            borderRadius: '20px',
-            border: '1px solid var(--border-color)',
-            backgroundColor: 'var(--bg-color)',
-            color: 'var(--text-main)',
-            fontSize: '0.9rem',
-            width: '260px',
-            outline: 'none'
-          }}
-        />
-      </div>
-
-      {/* Questions List */}
-      {filteredQuestions.length === 0 ? (
-        <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)', backgroundColor: 'var(--bg-color)', borderRadius: '8px', border: '1px dashed var(--border-color)' }}>
-          <p style={{ margin: 0 }}>No questions found matching your filter criteria.</p>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxHeight: '700px', overflowY: 'auto', paddingRight: '5px' }}>
-          {filteredQuestions.map((q, idx) => (
-            <div 
-              key={`${q.subject}-${idx}-${q.id || 'noid'}`}
-              style={{
-                backgroundColor: 'var(--bg-color)',
-                padding: '20px',
-                borderRadius: '8px',
-                border: '1px solid var(--border-color)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '12px'
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                  <span style={{ 
-                    backgroundColor: 'rgba(37, 99, 235, 0.1)', 
-                    color: 'var(--primary)', 
-                    padding: '4px 10px', 
-                    borderRadius: '4px', 
-                    fontWeight: 'bold', 
-                    fontSize: '0.8rem',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.5px'
-                  }}>
-                    {q.subject}
-                  </span>
-                  <span style={{ 
-                    backgroundColor: q.type === 'NUMERICAL' ? '#fef3c7' : 'rgba(34, 197, 94, 0.1)', 
-                    color: q.type === 'NUMERICAL' ? '#d97706' : 'var(--success)', 
-                    padding: '4px 10px', 
-                    borderRadius: '4px', 
-                    fontWeight: 'bold', 
-                    fontSize: '0.75rem',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.5px'
-                  }}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-semibold text-slate-900">Question #{q.displayNumber}</span>
+                  <Badge variant="brand" className="uppercase tracking-wide">{q.subject}</Badge>
+                  <Badge variant={q.type === 'NUMERICAL' ? 'warning' : 'success'} className="uppercase tracking-wide">
                     {q.type === 'NUMERICAL' ? 'NUMERICAL VALUE TYPE' : 'MCQ'}
-                  </span>
-                  <span style={{ fontWeight: 'bold', color: 'var(--text-main)', fontSize: '1.05rem' }}>
-                    Question #{q.displayNumber}
-                  </span>
+                  </Badge>
                 </div>
-              </div>
 
-              <div style={{ fontSize: '1.05rem', color: 'var(--text-main)', lineHeight: '1.5', fontWeight: '500' }}>
-                <MathRenderer text={q.text} />
-              </div>
-
-              {q.questionImageUrl && (
-                <div style={{ marginTop: '5px' }}>
-                  <StorageImage 
-                    src={q.questionImageUrl} 
-                    alt="Question Diagram" 
-                    style={{ maxHeight: '200px', maxWidth: '100%', borderRadius: '6px', border: '1px solid var(--border-color)' }} 
-                  />
+                <div className="text-base font-medium leading-relaxed text-slate-900">
+                  <MathRenderer text={q.text} />
                 </div>
-              )}
 
-              {/* Options / Numerical Answer */}
-              {q.type === 'NUMERICAL' || !q.options || q.options.length === 0 ? (
-                <div style={{
-                  padding: '14px 18px',
-                  borderRadius: '6px',
-                  border: '2px solid #f59e0b',
-                  backgroundColor: '#fffbeb',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                  marginTop: '10px',
-                  fontWeight: 'bold',
-                  color: '#b45309',
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.03)'
-                }}>
-                  <span style={{ fontSize: '1.2rem' }}>🔢</span>
-                  <span>Correct Numerical Answer:</span>
-                  <span style={{ fontSize: '1.3rem', color: '#92400e', backgroundColor: '#fde68a', padding: '2px 10px', borderRadius: '4px' }}>{q.correctAnswer}</span>
-                </div>
-              ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '10px', marginTop: '8px' }}>
-                  {q.options && q.options.map((opt, optIdx) => {
-                  const isCorrect = Number(q.correctAnswer) === optIdx;
-                  const optImg = q.optionImageUrls && q.optionImageUrls[optIdx];
-                  const letter = String.fromCharCode(65 + optIdx);
+                {q.questionImageUrl && (
+                  <div className="mt-1">
+                    <StorageImage
+                      src={q.questionImageUrl}
+                      alt="Question Diagram"
+                      className="max-h-[200px] max-w-full rounded-lg border border-slate-200 bg-white"
+                    />
+                  </div>
+                )}
 
-                  return (
-                    <div 
-                      key={optIdx} 
-                      style={{
-                        padding: '12px 15px',
-                        borderRadius: '6px',
-                        border: isCorrect ? '2px solid var(--success)' : '1px solid var(--border-color)',
-                        backgroundColor: isCorrect ? 'rgba(16, 185, 129, 0.08)' : 'var(--panel-bg)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: '10px'
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', overflow: 'hidden' }}>
-                        <span style={{ 
-                          fontWeight: 'bold', 
-                          color: isCorrect ? 'var(--success)' : 'var(--text-muted)',
-                          minWidth: '22px'
-                        }}>
-                          {letter})
-                        </span>
-                        <span style={{ color: 'var(--text-main)' }}>
-                          <MathRenderer text={opt || '(Image Option)'} />
-                        </span>
-                      </div>
+                {/* Options / Numerical Answer */}
+                {q.type === 'NUMERICAL' || !q.options || q.options.length === 0 ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+                    <Hash className="size-4 shrink-0 text-amber-600" aria-hidden="true" />
+                    <span>Correct Numerical Answer:</span>
+                    <span className="rounded-md bg-amber-100 px-2.5 py-0.5 font-mono text-base text-amber-900 ring-1 ring-amber-200 tabular-nums">{q.correctAnswer}</span>
+                  </div>
+                ) : (
+                  <div className="mt-1 grid gap-2.5 md:grid-cols-2">
+                    {q.options && q.options.map((opt, optIdx) => {
+                      const isCorrect = Number(q.correctAnswer) === optIdx;
+                      const optImg = q.optionImageUrls && q.optionImageUrls[optIdx];
+                      const letter = String.fromCharCode(65 + optIdx);
 
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        {optImg && (
-                          <StorageImage 
-                            src={optImg} 
-                            alt={`Option ${letter}`} 
-                            style={{ height: '40px', borderRadius: '4px', border: '1px solid var(--border-color)' }} 
-                          />
-                        )}
-                        {isCorrect && (
-                          <span style={{ 
-                            fontSize: '0.75rem', 
-                            fontWeight: 'bold', 
-                            color: 'white', 
-                            backgroundColor: 'var(--success)', 
-                            padding: '2px 8px', 
-                            borderRadius: '10px' 
-                          }}>
-                            CORRECT
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+                      return (
+                        <div
+                          key={optIdx}
+                          className={cn(
+                            'flex items-center justify-between gap-3 rounded-lg border px-3.5 py-3 text-sm',
+                            isCorrect ? 'border-emerald-300 bg-emerald-50 ring-1 ring-emerald-200' : 'border-slate-200 bg-white'
+                          )}
+                        >
+                          <div className="flex min-w-0 items-center gap-3">
+                            <span
+                              className={cn(
+                                'grid size-7 shrink-0 place-items-center rounded-full text-xs font-bold',
+                                isCorrect ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'
+                              )}
+                            >
+                              {letter}
+                            </span>
+                            <span className="min-w-0 text-slate-800">
+                              <MathRenderer text={opt || '(Image Option)'} />
+                            </span>
+                          </div>
+
+                          <div className="flex shrink-0 items-center gap-2">
+                            {optImg && (
+                              <StorageImage
+                                src={optImg}
+                                alt={`Option ${letter}`}
+                                className="h-10 rounded border border-slate-200 bg-white"
+                              />
+                            )}
+                            {isCorrect && (
+                              <Badge variant="success" className="border-emerald-600 bg-emerald-600 text-white">
+                                <CheckCircle2 aria-hidden="true" />
+                                CORRECT
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 };
 

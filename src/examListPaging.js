@@ -1,3 +1,9 @@
+/** @import { ExamListItem, UntrustedInput } from './types' */
+
+/**
+ * @param {UntrustedInput} row Raw exam summary row from the server.
+ * @returns {ExamListItem}
+ */
 export const normalizeExamListRow = row => {
   if (!row || typeof row !== 'object' || Array.isArray(row) || typeof row.id !== 'string' || typeof row.title !== 'string') {
     throw new TypeError('The server returned an invalid examination summary.');
@@ -7,7 +13,7 @@ export const normalizeExamListRow = row => {
   if (!Number.isFinite(duration) || duration <= 0 || !Number.isInteger(totalQuestions) || totalQuestions < 0) {
     throw new Error('The server returned invalid examination counts.');
   }
-  if (!Array.isArray(row.subjects) || row.subjects.some(subject => typeof subject !== 'string')) {
+  if (!Array.isArray(row.subjects) || row.subjects.some((/** @type {unknown} */ subject) => typeof subject !== 'string')) {
     throw new Error('The server returned invalid examination subjects.');
   }
   return {

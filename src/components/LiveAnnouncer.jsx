@@ -11,10 +11,11 @@ export { announcePolite, announceAssertive };
 const LiveAnnouncer = () => {
   const [politeMessage, setPoliteMessage] = useState('');
   const [assertiveMessage, setAssertiveMessage] = useState('');
-  const politeTimerRef = useRef(null);
-  const assertiveTimerRef = useRef(null);
+  const politeTimerRef = useRef(/** @type {ReturnType<typeof setTimeout> | undefined} */ (undefined));
+  const assertiveTimerRef = useRef(/** @type {ReturnType<typeof setTimeout> | undefined} */ (undefined));
 
   useEffect(() => {
+    /** @param {string} msg */
     const polite = (msg) => {
       clearTimeout(politeTimerRef.current);
       setPoliteMessage('');
@@ -22,6 +23,7 @@ const LiveAnnouncer = () => {
       politeTimerRef.current = setTimeout(() => setPoliteMessage(msg), 50);
     };
 
+    /** @param {string} msg */
     const assertive = (msg) => {
       clearTimeout(assertiveTimerRef.current);
       setAssertiveMessage('');

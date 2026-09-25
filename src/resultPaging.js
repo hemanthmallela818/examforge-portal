@@ -1,5 +1,16 @@
 import { parsePagedCollectionResponse } from './paginatedQuery.js';
 
+/**
+ * @import {
+ *   ExportResultRow, PageExpectation, RankedResultRow, ResultExportPage, ResultPage, UntrustedInput
+ * } from './types'
+ */
+
+/**
+ * @param {unknown} value
+ * @param {string} label
+ * @returns {number}
+ */
 const finiteNumber = (value, label) => {
   // Strict coercion: null/undefined/''/boolean must NOT silently become 0/1.
   // Mirrors resultExportLogic.js so a malformed server payload fails loudly
@@ -12,15 +23,25 @@ const finiteNumber = (value, label) => {
   return number;
 };
 
+/**
+ * @param {unknown} subjects
+ * @returns {string[]}
+ */
 const validateSubjects = subjects => {
   if (!Array.isArray(subjects)
-      || subjects.some(subject => typeof subject !== 'string' || !subject.trim())
+      || subjects.some((/** @type {unknown} */ subject) => typeof subject !== 'string' || !subject.trim())
       || new Set(subjects).size !== subjects.length) {
     throw new Error('The server returned invalid result subjects.');
   }
   return subjects;
 };
 
+/**
+ * @param {UntrustedInput} scores
+ * @param {string[]} subjects
+ * @param {string} studentId
+ * @returns {Record<string, unknown>} The same object, after every subject score was checked.
+ */
 const validateSubjectScores = (scores, subjects, studentId) => {
   if (!scores || typeof scores !== 'object' || Array.isArray(scores)) {
     throw new Error('The server returned invalid subject results.');
@@ -29,6 +50,11 @@ const validateSubjectScores = (scores, subjects, studentId) => {
   return scores;
 };
 
+/**
+ * @param {UntrustedInput} row Ranked result row from the paged results RPC.
+ * @param {string[]} [subjects]
+ * @returns {RankedResultRow}
+ */
 export const normalizeRankedResultRow = (row, subjects = []) => {
   if (!row || typeof row !== 'object' || Array.isArray(row)) throw new TypeError('The server returned an invalid result row.');
   const studentId = String(row.student_id ?? '').trim();
@@ -56,6 +82,12 @@ export const normalizeRankedResultRow = (row, subjects = []) => {
   };
 };
 
+/**
+ * Validates one page of ranked results plus the cohort analytics.
+ * @param {UntrustedInput} data
+ * @param {PageExpectation} options
+ * @returns {ResultPage}
+ */
 export const parseResultPageResponse = (data, options) => {
   const page = parsePagedCollectionResponse(data, options);
   const resultCount = Number(data.result_count);
@@ -78,13 +110,13 @@ export const parseResultPageResponse = (data, options) => {
   if (analytics) {
     const distributionNames = ['0-20%', '21-40%', '41-60%', '61-80%', '81-100%'];
     const validDistribution = analytics.distribution.length === distributionNames.length
-      && analytics.distribution.every((item, index) => item && typeof item === 'object' && !Array.isArray(item)
+      && analytics.distribution.every((/** @type {UntrustedInput} */ item, /** @type {number} */ index) => item && typeof item === 'object' && !Array.isArray(item)
         && item.name === distributionNames[index] && Number.isInteger(Number(item.count)) && Number(item.count) >= 0);
     const distributedCount = validDistribution
-      ? analytics.distribution.reduce((sum, item) => sum + Number(item.count), 0)
+      ? analytics.distribution.reduce((/** @type {number} */ sum, /** @type {UntrustedInput} */ item) => sum + Number(item.count), 0)
       : -1;
     const validSubjectAverages = analytics.subjectAverages.length === subjects.length
-      && analytics.subjectAverages.every((item, index) => item && typeof item === 'object' && !Array.isArray(item)
+      && analytics.subjectAverages.every((/** @type {UntrustedInput} */ item, /** @type {number} */ index) => item && typeof item === 'object' && !Array.isArray(item)
         && item.name === subjects[index] && Number.isFinite(finiteNumber(item.score, `${subjects[index]} average score`)));
     if (!validDistribution || distributedCount + analytics.excludedFromDistribution !== resultCount
         || !validSubjectAverages || analytics.highestScore < analytics.lowestScore
@@ -99,6 +131,11 @@ export const parseResultPageResponse = (data, options) => {
   return { ...page, resultCount, subjects, analytics, rows };
 };
 
+/**
+ * @param {UntrustedInput} row
+ * @param {string[]} subjects
+ * @returns {ExportResultRow}
+ */
 const normalizeExportResultRow = (row, subjects) => {
   if (!row || typeof row !== 'object' || Array.isArray(row)) throw new TypeError('The server returned an invalid export row.');
   const studentId = String(row.student_id ?? '').trim();
@@ -118,6 +155,12 @@ const normalizeExportResultRow = (row, subjects) => {
   };
 };
 
+/**
+ * Validates one keyset-paginated export page.
+ * @param {UntrustedInput} data
+ * @param {{ expectedCount: number, pageSize: number, afterCursor?: string | null }} expected
+ * @returns {ResultExportPage}
+ */
 export const parseResultExportPageResponse = (data, { expectedCount, pageSize, afterCursor }) => {
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw new TypeError('The server returned an invalid export page.');
   if (Number(data.result_count) !== expectedCount || !Array.isArray(data.rows) || data.rows.length > pageSize) {
@@ -127,7 +170,8 @@ export const parseResultExportPageResponse = (data, { expectedCount, pageSize, a
     throw new Error('The server returned invalid export metadata.');
   }
   const subjects = validateSubjects(data.subjects);
-  const rows = data.rows.map(row => normalizeExportResultRow(row, subjects));
+  /** @type {ExportResultRow[]} */
+  const rows = data.rows.map((/** @type {UntrustedInput} */ row) => normalizeExportResultRow(row, subjects));
   if (rows.length > 0 && afterCursor !== null && afterCursor !== undefined && rows[0].studentId === afterCursor) {
     throw new Error('The export cursor did not advance. Retry the export.');
   }
@@ -139,6 +183,11 @@ export const parseResultExportPageResponse = (data, { expectedCount, pageSize, a
   return { resultCount: expectedCount, subjects, rows, hasMore: data.has_more, nextCursor: expectedCursor };
 };
 
+/**
+ * @param {ExportResultRow[][]} pages
+ * @param {number} expectedCount
+ * @returns {ExportResultRow[]} All rows, in page order.
+ */
 export const validateCompleteResultExport = (pages, expectedCount) => {
   if (!Array.isArray(pages)) throw new TypeError('Export pages are invalid.');
   const rows = pages.flat();

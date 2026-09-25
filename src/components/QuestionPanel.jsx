@@ -1,12 +1,31 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import MathRenderer from './MathRenderer';
 import StorageImage from './StorageImage';
+import { AlertTriangle, BookmarkCheck, ChevronLeft, ChevronRight, Delete, Eraser, Flag, Hash, Info, Keyboard, ListChecks, Save, Send } from 'lucide-react';
+import { Badge, Button, Input, cn } from './ui';
 import {
   CANDIDATE_NUMERICAL_MAX_LENGTH,
   NUMERICAL_ABSOLUTE_TOLERANCE,
   validateNumericalAnswer
 } from '../numericalAnswerPolicy';
 
+/**
+ * @param {{
+ *   question: import('../types').ExamQuestion | null | undefined,
+ *   questionIndex: number,
+ *   selectedOption: import('../types').SelectedOption,
+ *   setSelectedOption: (value: import('../types').SelectedOption) => void,
+ *   handleAction: (action: import('../features/exam/useExamNavigation').ExamActionType) => void,
+ *   goNext: () => void,
+ *   goPrev: () => void,
+ *   submitExam: () => void,
+ *   submitButtonRef?: import('react').Ref<HTMLButtonElement>,
+ *   isFirstQuestionOfExam: boolean,
+ *   isLastQuestionOfExam: boolean | undefined,
+ *   disabled?: boolean,
+ *   totalQuestions?: number
+ * }} props `totalQuestions` is passed by ActiveExamView but not currently used.
+ */
 const QuestionPanel = ({ 
   question, 
   questionIndex, 
@@ -43,6 +62,7 @@ const QuestionPanel = ({
     }
   }, [question?.id, selectedOption, numericalDraft]);
 
+  /** @param {unknown} value */
   const applyNumericalDraft = (value) => {
     if (disabled) return;
     const next = String(value);
@@ -73,7 +93,7 @@ const QuestionPanel = ({
     return true;
   }, [isNumericalQuestion, numericalDraft]);
 
-  const performAction = useCallback((action) => {
+  const performAction = useCallback((/** @type {import('../features/exam/useExamNavigation').ExamActionType} */ action) => {
     if (numericalDraftIsReady()) handleAction(action);
   }, [handleAction, numericalDraftIsReady]);
 
@@ -84,6 +104,7 @@ const QuestionPanel = ({
   useEffect(() => {
     if (disabled) return;
 
+    /** @param {KeyboardEvent} e */
     const handleGlobalKeyDown = (e) => {
       const activeTag = document.activeElement?.tagName?.toLowerCase();
       const isTyping = activeTag === 'input' || activeTag === 'textarea';
@@ -131,8 +152,14 @@ const QuestionPanel = ({
 
   if (!question) return null;
 
+  const isNumericalView = question.type === 'NUMERICAL' || !question.options || question.options.length === 0;
+  // Question text, options, numerical input and keypad scale with the
+  // candidate's text-size choice via --exam-text-scale (set by ActiveExamView).
+  const keypadKey = 'h-12 rounded-lg border border-slate-200 bg-white p-0 text-[length:calc(var(--exam-text-scale,1)*1.125rem)] font-semibold text-slate-800 shadow-sm tabular-nums transition-colors hover:border-brand-300 hover:bg-brand-50 active:bg-brand-100 disabled:hover:bg-white';
+  const shortcutHint = 'hidden text-xs font-medium lg:inline';
+
   return (
-    <div className="exam-question-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', flex: 1, backgroundColor: 'white', borderRight: '1px solid var(--border-color)', position: 'relative' }}>
+    <div className="exam-question-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%', flex: 1, backgroundColor: 'var(--panel-bg)', borderRight: '1px solid var(--border-color)', position: 'relative' }}>
       {/* Hidden Skip Links for Keyboard & Screen Reader Users */}
       <div className="sr-skip-nav">
         <a href="#question-prompt-text" className="sr-skip-link">Skip to question prompt</a>
@@ -140,45 +167,38 @@ const QuestionPanel = ({
       </div>
 
       {/* Question Header */}
-      <div style={{ padding: '15px 20px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <h3 style={{ fontSize: '1.1rem', fontWeight: 'bold', margin: 0 }}>Question {questionIndex + 1}</h3>
-          <span style={{ 
-            fontSize: '0.75rem', 
-            fontWeight: 'bold', 
-            color: question.type === 'NUMERICAL' || !question.options || question.options.length === 0 ? 'var(--warning)' : 'var(--primary)', 
-            backgroundColor: question.type === 'NUMERICAL' || !question.options || question.options.length === 0 ? 'rgba(245, 158, 11, 0.15)' : 'rgba(37, 99, 235, 0.1)', 
-            padding: '3px 10px', 
-            borderRadius: '12px',
-            border: `1px solid ${question.type === 'NUMERICAL' || !question.options || question.options.length === 0 ? 'rgba(245, 158, 11, 0.3)' : 'rgba(37, 99, 235, 0.2)'}`
-          }}>
-            {question.type === 'NUMERICAL' || !question.options || question.options.length === 0 ? 'NUMERICAL VALUE TYPE' : 'MULTIPLE CHOICE'}
-          </span>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-3">
+        <div className="flex items-center gap-3">
+          <h3 className="text-base font-semibold text-slate-900">Question {questionIndex + 1}</h3>
+          <Badge variant={isNumericalView ? 'warning' : 'brand'} className="uppercase tracking-wide">
+            {isNumericalView ? <Hash aria-hidden="true" /> : <ListChecks aria-hidden="true" />}
+            {isNumericalView ? 'NUMERICAL VALUE TYPE' : 'MULTIPLE CHOICE'}
+          </Badge>
         </div>
-        <span aria-hidden="true" style={{ color: 'var(--text-muted)' }}>▼</span>
       </div>
 
       {/* Question Content */}
-      <div className="exam-question-content" style={{ padding: '20px', flex: 1, overflowY: 'auto' }}>
-        <p id="question-prompt-text" tabIndex={-1} style={{ fontSize: '1.1rem', marginBottom: '15px', lineHeight: '1.6', whiteSpace: 'pre-wrap' }}><MathRenderer text={question.text} /></p>
-        
+      <div className="exam-question-content flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+        <p id="question-prompt-text" tabIndex={-1} className="mb-5 whitespace-pre-wrap break-words text-[length:calc(var(--exam-text-scale,1)*1rem)] leading-relaxed text-slate-900 sm:text-[length:calc(var(--exam-text-scale,1)*1.05rem)]"><MathRenderer text={question.text} /></p>
+
         {question.questionImageUrl && (
-          <div style={{ marginBottom: '25px' }}>
-            <StorageImage src={question.questionImageUrl} alt="Question context" style={{ maxWidth: '100%', maxHeight: '400px', borderRadius: '8px', border: '1px solid var(--border-color)', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }} />
+          <div className="mb-6">
+            <StorageImage src={question.questionImageUrl} alt="Question context" className="max-h-[400px] max-w-full rounded-lg border border-slate-200 shadow-sm" />
           </div>
         )}
-        
-        {question.type === 'NUMERICAL' || !question.options || question.options.length === 0 ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', maxWidth: '500px', marginTop: '10px' }}>
-            <div style={{ padding: '15px', backgroundColor: 'rgba(59, 130, 246, 0.05)', borderRadius: '8px', borderLeft: '4px solid var(--primary)' }}>
-              <p style={{ margin: 0, fontSize: '0.95rem', color: 'var(--text-main)' }}>
-                <strong>Instructions:</strong> Enter an integer or decimal value (for example 5, -3.14, or 0.5). Scientific notation and spaces are not accepted. Values within {NUMERICAL_ABSOLUTE_TOLERANCE} of the answer are graded as correct.
+
+        {isNumericalView ? (
+          <div className="mt-2 flex max-w-lg flex-col gap-5">
+            <div className="flex gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-[length:calc(var(--exam-text-scale,1)*0.875rem)] leading-relaxed text-brand-900">
+              <Info className="mt-0.5 size-4 shrink-0 text-brand-600" aria-hidden="true" />
+              <p>
+                <strong className="font-semibold">Instructions:</strong> Enter an integer or decimal value (for example 5, -3.14, or 0.5). Scientific notation and spaces are not accepted. Values within {NUMERICAL_ABSOLUTE_TOLERANCE} of the answer are graded as correct.
               </p>
             </div>
-            
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <label htmlFor="numerical-answer" style={{ fontWeight: 'bold', color: 'var(--text-main)', fontSize: '1.05rem' }}>Your Numerical Answer:</label>
-              <input
+
+            <div className="flex flex-col gap-2">
+              <label htmlFor="numerical-answer" className="text-[length:calc(var(--exam-text-scale,1)*0.875rem)] font-semibold text-slate-800">Your Numerical Answer:</label>
+              <Input
                 id="numerical-answer"
                 type="text"
                 inputMode="decimal"
@@ -191,33 +211,26 @@ const QuestionPanel = ({
                 onChange={(e) => {
                   applyNumericalDraft(e.target.value);
                 }}
-                style={{
-                  padding: '14px 18px',
-                  fontSize: '1.2rem',
-                  fontWeight: 'bold',
-                  border: '2px solid var(--primary)',
-                  borderRadius: '8px',
-                  outline: 'none',
-                  boxShadow: '0 2px 8px rgba(37, 99, 235, 0.1)',
-                  width: '100%',
-                  backgroundColor: disabled ? '#f1f5f9' : 'white',
-                  cursor: disabled ? 'not-allowed' : 'text',
-                  color: 'var(--text-main)'
-                }}
+                className="h-auto min-h-14 border-2 border-brand-500 px-4 py-2 text-[length:calc(var(--exam-text-scale,1)*1.25rem)] font-semibold tabular-nums"
               />
-              <span id="numerical-answer-help" style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+              <span id="numerical-answer-help" className="text-xs text-slate-500">
                 Maximum {CANDIDATE_NUMERICAL_MAX_LENGTH} characters; decimal notation only. An unfinished edit does not replace your last valid saved answer.
               </span>
-              {numericalError && <span id="numerical-answer-error" role="alert" style={{ color: 'var(--danger)', fontWeight: 700 }}>{numericalError}</span>}
+              {numericalError && (
+                <span id="numerical-answer-error" role="alert" className="flex items-center gap-1.5 text-sm font-semibold text-red-700">
+                  <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
+                  {numericalError}
+                </span>
+              )}
             </div>
 
             {/* Virtual Keypad for JEE/GATE feel */}
-            <div style={{ backgroundColor: '#f8fafc', padding: '15px', borderRadius: '8px', border: '1px solid var(--border-color)', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)', opacity: disabled ? 0.6 : 1, pointerEvents: disabled ? 'none' : 'auto' }}>
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '10px', fontWeight: 'bold', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>⌨️ Virtual Keypad</span>
-                <span style={{ fontSize: '0.75rem', fontStyle: 'italic' }}>Click or type directly</span>
+            <div className={cn('rounded-xl border border-slate-200 bg-slate-50 p-4 shadow-sm', disabled && 'pointer-events-none opacity-60')}>
+              <div className="mb-3 flex items-center justify-between text-xs font-semibold text-slate-600">
+                <span className="inline-flex items-center gap-1.5"><Keyboard className="size-4 text-slate-500" aria-hidden="true" /> Virtual Keypad</span>
+                <span className="font-normal italic text-slate-500">Click or type directly</span>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+              <div className="grid grid-cols-3 gap-2">
                 {[1, 2, 3, 4, 5, 6, 7, 8, 9, '.', 0, '-'].map((key) => (
                   <button
                     key={key}
@@ -236,25 +249,13 @@ const QuestionPanel = ({
                         applyNumericalDraft(currentStr + key);
                       }
                     }}
-                    style={{
-                      padding: '12px',
-                      fontSize: '1.1rem',
-                      fontWeight: 'bold',
-                      backgroundColor: 'white',
-                      border: '1px solid var(--border-color)',
-                      borderRadius: '6px',
-                      cursor: disabled ? 'not-allowed' : 'pointer',
-                      boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                      transition: 'all 0.1s'
-                    }}
-                    onMouseOver={(e) => !disabled && (e.currentTarget.style.backgroundColor = '#f1f5f9')}
-                    onMouseOut={(e) => !disabled && (e.currentTarget.style.backgroundColor = 'white')}
+                    className={keypadKey}
                   >
                     {key}
                   </button>
                 ))}
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '8px' }}>
+              <div className="mt-2 grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   disabled={disabled}
@@ -264,21 +265,17 @@ const QuestionPanel = ({
                     const newStr = currentStr.slice(0, -1);
                     applyNumericalDraft(newStr);
                   }}
-                  style={{ padding: '10px', backgroundColor: '#fee2e2', color: '#dc2626', fontWeight: 'bold', border: '1px solid #fca5a5', borderRadius: '6px', cursor: disabled ? 'not-allowed' : 'pointer', transition: 'all 0.1s' }}
-                  onMouseOver={(e) => !disabled && (e.currentTarget.style.backgroundColor = '#fecaca')}
-                  onMouseOut={(e) => !disabled && (e.currentTarget.style.backgroundColor = '#fee2e2')}
+                  className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 text-sm font-semibold text-red-700 transition-colors hover:bg-red-100"
                 >
-                  ⌫ Backspace
+                  <Delete className="size-4" aria-hidden="true" /> Backspace
                 </button>
                 <button
                   type="button"
                   disabled={disabled}
                   onClick={clearResponse}
-                  style={{ padding: '10px', backgroundColor: '#f1f5f9', color: '#475569', fontWeight: 'bold', border: '1px solid #cbd5e1', borderRadius: '6px', cursor: disabled ? 'not-allowed' : 'pointer', transition: 'all 0.1s' }}
-                  onMouseOver={(e) => !disabled && (e.currentTarget.style.backgroundColor = '#e2e8f0')}
-                  onMouseOut={(e) => !disabled && (e.currentTarget.style.backgroundColor = '#f1f5f9')}
+                  className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-100"
                 >
-                  Clear All
+                  <Eraser className="size-4" aria-hidden="true" /> Clear All
                 </button>
               </div>
             </div>
@@ -287,72 +284,92 @@ const QuestionPanel = ({
           <div
             role="radiogroup"
             aria-labelledby="question-prompt-text"
-            style={{ display: 'flex', flexDirection: 'column', gap: '15px', opacity: disabled ? 0.6 : 1 }}
+            className={cn('flex flex-col gap-3', disabled && 'opacity-60')}
           >
-            {question.options.map((opt, idx) => (
-              <label 
-                key={idx} 
-                style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  padding: '12px', 
-                  minHeight: '48px',
-                  border: '1px solid var(--border-color)', 
-                  borderRadius: '8px', 
-                  cursor: disabled ? 'not-allowed' : 'pointer',
-                  backgroundColor: selectedOption === idx ? 'rgba(37, 99, 235, 0.05)' : 'white',
-                  borderColor: selectedOption === idx ? 'var(--primary)' : 'var(--border-color)',
-                  transition: 'all 0.2s'
-                }}
-              >
-                <input 
-                  type="radio" 
-                  name={`q-${question.id}`} 
-                  checked={selectedOption === idx} 
-                  disabled={disabled}
-                  onChange={() => !disabled && setSelectedOption(idx)}
-                  onKeyDown={(e) => {
-                    if (disabled) return;
-                    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
-                      e.preventDefault();
-                      const next = (idx + 1) % question.options.length;
-                      setSelectedOption(next);
-                    } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
-                      e.preventDefault();
-                      const prev = (idx - 1 + question.options.length) % question.options.length;
-                      setSelectedOption(prev);
-                    }
-                  }}
-                  style={{ marginRight: '15px', width: '20px', height: '20px', flexShrink: 0, cursor: disabled ? 'not-allowed' : 'pointer' }}
-                />
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  <span style={{ fontSize: '1.05rem', whiteSpace: 'pre-wrap' }}>
-                    <strong>{String.fromCharCode(65 + idx)}.</strong> <MathRenderer text={opt} />
-                  </span>
-                  {question.optionImageUrls && question.optionImageUrls[idx] && (
-                    <StorageImage src={question.optionImageUrls[idx]} alt={`Option ${String.fromCharCode(65 + idx)}`} style={{ maxWidth: '100%', maxHeight: '200px', borderRadius: '4px', border: '1px solid var(--border-color)', alignSelf: 'flex-start', marginTop: '5px' }} />
+            {/** @type {string[]} */ (question.options).map((opt, idx) => {
+              const isSelected = selectedOption === idx;
+              return (
+                <label
+                  key={idx}
+                  className={cn(
+                    'question-option-card group flex min-h-12 items-center gap-4 rounded-xl border-2 px-4 py-3 transition-colors',
+                    disabled ? 'cursor-not-allowed' : 'cursor-pointer',
+                    isSelected
+                      ? 'border-brand-500 bg-brand-50/70 shadow-sm'
+                      : 'border-slate-200 bg-white hover:border-brand-300 hover:bg-slate-50'
                   )}
-                </div>
-              </label>
-            ))}
+                >
+                  <input
+                    type="radio"
+                    name={`q-${question.id}`}
+                    checked={isSelected}
+                    disabled={disabled}
+                    onChange={() => !disabled && setSelectedOption(idx)}
+                    onKeyDown={(e) => {
+                      if (disabled) return;
+                      if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+                        e.preventDefault();
+                        const next = (idx + 1) % /** @type {string[]} */ (question.options).length;
+                        setSelectedOption(next);
+                      } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+                        e.preventDefault();
+                        const prev = (idx - 1 + /** @type {string[]} */ (question.options).length) % /** @type {string[]} */ (question.options).length;
+                        setSelectedOption(prev);
+                      }
+                    }}
+                    className={cn('size-5 shrink-0 accent-brand-600', disabled ? 'cursor-not-allowed' : 'cursor-pointer')}
+                  />
+                  <div className="flex min-w-0 flex-col gap-2">
+                    <span className="flex items-start gap-3 whitespace-pre-wrap break-words text-[length:calc(var(--exam-text-scale,1)*1rem)] text-slate-800">
+                      <strong
+                        className={cn(
+                          'inline-flex h-7 min-w-8 shrink-0 items-center justify-center rounded-full px-2 text-sm font-semibold',
+                          isSelected ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-700 group-hover:bg-brand-100 group-hover:text-brand-700'
+                        )}
+                      >
+                        {String.fromCharCode(65 + idx)}.
+                      </strong>{' '}
+                      <span className="min-w-0 pt-0.5"><MathRenderer text={opt} /></span>
+                    </span>
+                    {question.optionImageUrls && question.optionImageUrls[idx] && (
+                      <StorageImage src={question.optionImageUrls[idx]} alt={`Option ${String.fromCharCode(65 + idx)}`} className="mt-1 max-h-[200px] max-w-full self-start rounded-md border border-slate-200" />
+                    )}
+                  </div>
+                </label>
+              );
+            })}
           </div>
         )}
       </div>
 
       {/* Sticky Bottom Action Bar */}
-      <div id="question-action-bar" className="exam-action-bar" style={{ padding: '15px 20px', borderTop: '1px solid var(--border-color)', backgroundColor: 'var(--bg-color)' }}>
-        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '15px' }}>
-          <button className="btn-success" disabled={disabled} onClick={() => performAction('SAVE_NEXT')} title="Save response and advance (Alt+S or Ctrl+Enter)">Save & Next <span aria-hidden="true" style={{ fontSize: '0.75rem', opacity: 0.8 }}>(Alt+S)</span></button>
-          <button className="btn-warning" disabled={disabled} onClick={() => performAction('SAVE_MARK')} title="Save response and mark for review (Alt+M)">Save & Mark for Review <span aria-hidden="true" style={{ fontSize: '0.75rem', opacity: 0.8 }}>(Alt+M)</span></button>
-          <button className="btn-outline" disabled={disabled} onClick={clearResponse} title="Clear response for this question (Alt+C)">Clear Response <span aria-hidden="true" style={{ fontSize: '0.75rem', opacity: 0.8 }}>(Alt+C)</span></button>
-          <button className="btn-info" disabled={disabled} onClick={() => performAction('MARK_NEXT')} title="Mark for review without saving response">Mark for Review & Next</button>
+      <div id="question-action-bar" className="exam-action-bar max-[900px]:[&_button]:min-h-11 border-t border-slate-200 bg-slate-50 px-5 py-3 [&>.exam-navigation-actions]:flex [&>.exam-navigation-actions]:items-center [&>.exam-navigation-actions]:justify-between [&>.exam-navigation-actions]:gap-2 [&>.exam-navigation-actions]:border-t [&>.exam-navigation-actions]:border-slate-200 [&>.exam-navigation-actions]:pt-3">
+        <div className="exam-answer-actions mb-3 flex flex-wrap gap-2 max-[600px]:grid max-[600px]:grid-cols-2 max-[600px]:[&_button]:h-auto max-[600px]:[&_button]:whitespace-normal max-[600px]:[&_button]:py-2 max-[600px]:[&_button]:text-center max-[600px]:[&_button]:leading-tight">
+          <Button variant="success" disabled={disabled} onClick={() => performAction('SAVE_NEXT')} title="Save response and advance (Alt+S or Ctrl+Enter)">
+            <Save aria-hidden="true" />Save & Next <span aria-hidden="true" className={shortcutHint}>(Alt+S)</span>
+          </Button>
+          <Button variant="warning" disabled={disabled} onClick={() => performAction('SAVE_MARK')} title="Save response and mark for review (Alt+M)">
+            <BookmarkCheck aria-hidden="true" />Save & Mark for Review <span aria-hidden="true" className={shortcutHint}>(Alt+M)</span>
+          </Button>
+          <Button variant="secondary" disabled={disabled} onClick={clearResponse} title="Clear response for this question (Alt+C)">
+            <Eraser aria-hidden="true" />Clear Response <span aria-hidden="true" className={shortcutHint}>(Alt+C)</span>
+          </Button>
+          <Button variant="violet" disabled={disabled} onClick={() => performAction('MARK_NEXT')} title="Mark for review without saving response">
+            <Flag aria-hidden="true" />Mark for Review & Next
+          </Button>
         </div>
 
-        <div className="exam-navigation-actions" style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #cbd5e1', paddingTop: '15px' }}>
-          <button className="btn-outline" onClick={goPrev} disabled={isFirstQuestionOfExam} title="Previous question (Alt+P or ArrowLeft)">&lt;&lt; Back</button>
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <button className="btn-outline" onClick={goNext} disabled={isLastQuestionOfExam} title="Next question (Alt+N or ArrowRight)">Next &gt;&gt;</button>
-            <button ref={submitButtonRef} className="btn-success" onClick={performSubmit} style={{ fontWeight: 'bold' }}>Submit Exam</button>
+        <div className="exam-navigation-actions">
+          <Button variant="secondary" onClick={goPrev} disabled={isFirstQuestionOfExam} title="Previous question (Alt+P or ArrowLeft)">
+            <ChevronLeft aria-hidden="true" />Back
+          </Button>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={goNext} disabled={isLastQuestionOfExam} title="Next question (Alt+N or ArrowRight)">
+              Next<ChevronRight aria-hidden="true" />
+            </Button>
+            <Button ref={submitButtonRef} variant="primary" onClick={performSubmit}>
+              <Send aria-hidden="true" />Submit Exam
+            </Button>
           </div>
         </div>
       </div>
@@ -360,4 +377,6 @@ const QuestionPanel = ({
   );
 };
 
-export default QuestionPanel;
+// Memoized: the exam session passes stable callbacks, so autosave-status and
+// other unrelated session updates no longer re-render the question.
+export default memo(QuestionPanel);

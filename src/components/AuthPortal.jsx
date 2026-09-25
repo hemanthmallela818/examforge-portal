@@ -1,19 +1,46 @@
 import { useRef, useState } from 'react';
+import { isTransientRpcError, retryDelayMs } from '../examLogic';
+import { APP_ERROR, classifyAppError } from '../appErrors';
+
+// Reserved, non-routable domain for student sign-in identities (matches the
+// manage-student Edge Function and the 20260925090000 migration).
+const STUDENT_EMAIL_DOMAIN = 'students.examforge.invalid';
 import { supabase } from '../supabase';
 import { safeStorageSet } from '../browserStorage';
 import { customAlert } from '../utils';
+import { Eye, EyeOff, IdCard, Lock, Mail, ShieldCheck } from 'lucide-react';
+import { Alert, Button, Card, Field, Input, cn } from './ui';
+import BrandLogo from '../branding/BrandLogo';
+import { useBranding } from '../branding/brandingStore';
+import ThemeToggle from '../theme/ThemeToggle';
 
+/**
+ * @typedef {'STUDENT' | 'ADMIN'} LoginRole
+ * @typedef {{ email?: string, name: string, role: 'ADMIN' }} AdminLoginInfo
+ */
+
+/**
+ * @param {{
+ *   onStudentLogin: (student: import('../features/exam/examSessionHelpers').CurrentStudent) => void,
+ *   onAdminLogin: (admin: AdminLoginInfo) => void
+ * }} props
+ */
 const AuthPortal = ({ onStudentLogin, onAdminLogin }) => {
-  const [role, setRole] = useState('STUDENT'); // 'STUDENT' or 'ADMIN'
+  const { displayName } = useBranding();
+  const [role, setRole] = useState(/** @type {LoginRole} */ ('STUDENT')); // 'STUDENT' or 'ADMIN'
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const studentTabRef = useRef(null);
-  const adminTabRef = useRef(null);
-  const loginButtonRef = useRef(null);
+  const studentTabRef = useRef(/** @type {HTMLButtonElement | null} */ (null));
+  const adminTabRef = useRef(/** @type {HTMLButtonElement | null} */ (null));
+  const loginButtonRef = useRef(/** @type {HTMLButtonElement | null} */ (null));
 
+  /**
+   * @param {LoginRole} nextRole
+   * @param {boolean} [moveFocus]
+   */
   const selectRole = (nextRole, moveFocus = false) => {
     setRole(nextRole);
     setError('');
@@ -27,7 +54,9 @@ const AuthPortal = ({ onStudentLogin, onAdminLogin }) => {
     }
   };
 
+  /** @param {import('react').KeyboardEvent<HTMLButtonElement>} event */
   const handleRoleTabKeyDown = (event) => {
+    /** @type {LoginRole | null} */
     let nextRole = null;
     if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
       nextRole = role === 'STUDENT' ? 'ADMIN' : 'STUDENT';
@@ -41,6 +70,7 @@ const AuthPortal = ({ onStudentLogin, onAdminLogin }) => {
     selectRole(nextRole, true);
   };
 
+  /** @param {import('react').FormEvent<HTMLFormElement>} e */
   const handleLogin = async (e) => {
     e.preventDefault();
     if (isSubmitting) return;
@@ -56,14 +86,30 @@ const AuthPortal = ({ onStudentLogin, onAdminLogin }) => {
 
           const email = cleanUsername.includes('@')
             ? cleanUsername.toLowerCase()
-            : `${cleanUsername.toLowerCase()}@student.com`;
-          const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-            email,
-            password: cleanPassword
-          });
-          if (authError || !authData.user) {
-            if (authError?.status === 429 || /rate limit|too many requests/i.test(authError?.message)) {
+            : `${cleanUsername.toLowerCase()}@${STUDENT_EMAIL_DOMAIN}`;
+          // When a whole hall signs in at once the auth server may briefly rate
+          // limit the shared school IP. Retry a few times with jittered backoff
+          // before asking the candidate to wait.
+          // Temporary auth-server overload (5xx) is retried the same way.
+          /** @param {{ status?: unknown, message?: string } | null | undefined} err */
+          const isRateLimited = err => err?.status === 429 || /rate limit|too many requests/i.test(err?.message || '');
+          /** @param {{ status?: unknown, message?: string } | null | undefined} err */
+          const isServerBusy = err => Number(err?.status) >= 500 || /failed to fetch|network/i.test(err?.message || '');
+          let authData = null;
+          let authError = null;
+          for (let attempt = 1; attempt <= 4; attempt += 1) {
+            ({ data: authData, error: authError } = await supabase.auth.signInWithPassword({
+              email,
+              password: cleanPassword
+            }));
+            if ((!isRateLimited(authError) && !isServerBusy(authError)) || attempt === 4) break;
+            await new Promise(resolve => setTimeout(resolve, retryDelayMs(attempt, { baseMs: 1500 })));
+          }
+          if (authError || !authData?.user) {
+            if (isRateLimited(authError)) {
               setError('Too many sign-in attempts. Please wait a few minutes before trying again.');
+            } else if (isServerBusy(authError)) {
+              setError('The exam server is busy right now. Please wait a moment and press Login again.');
             } else {
               setError('Invalid Student ID or Password.');
             }
@@ -72,10 +118,18 @@ const AuthPortal = ({ onStudentLogin, onAdminLogin }) => {
 
           // Bind sensitive exam operations to the signed Supabase JWT session_id.
           // This also rejects inactive roster entries before any student data is shown.
-          const { data: sessionClaim, error: claimError } = await supabase.rpc('claim_student_session');
+          let sessionClaim = null;
+          let claimError = null;
+          for (let attempt = 1; attempt <= 4; attempt += 1) {
+            const claim = await supabase.rpc('claim_student_session');
+            sessionClaim = claim.data;
+            claimError = claim.error ? Object.assign(claim.error, { httpStatus: claim.status }) : null;
+            if (!claimError || !isTransientRpcError(claimError, { online: navigator.onLine }) || attempt === 4) break;
+            await new Promise(resolve => setTimeout(resolve, retryDelayMs(attempt)));
+          }
           if (claimError || !sessionClaim?.session_id) {
             await supabase.auth.signOut({ scope: 'local' });
-            setError(/account is inactive/i.test(claimError?.message || '')
+            setError(classifyAppError(claimError) === APP_ERROR.ACCOUNT_INACTIVE
               ? 'This student account is inactive. Contact your administrator.'
               : 'This account is not configured as an active student.');
             return;
@@ -125,7 +179,7 @@ const AuthPortal = ({ onStudentLogin, onAdminLogin }) => {
             password: cleanPass
           });
           if (authError || !authData.user) {
-            if (authError?.status === 429 || /rate limit|too many requests/i.test(authError?.message)) {
+            if (authError?.status === 429 || /rate limit|too many requests/i.test(/** @type {string} */ (authError?.message))) {
               setError('Too many sign-in attempts. Please wait a few minutes before trying again.');
             } else {
               setError('Invalid Admin Email or Password.');
@@ -144,6 +198,7 @@ const AuthPortal = ({ onStudentLogin, onAdminLogin }) => {
             return;
           }
 
+          /** @type {AdminLoginInfo} */
           const adminInfo = {
             email: authData.user.email,
             name: adminProfile.name || 'Administrator',
@@ -169,149 +224,138 @@ const AuthPortal = ({ onStudentLogin, onAdminLogin }) => {
     }
   };
 
+  /** @param {boolean} active */
+  const tabClass = (active) => cn(
+    'flex-1 rounded-md px-3 py-2 text-sm font-semibold transition-colors',
+    active
+      ? 'bg-white text-brand-700 shadow-sm ring-1 ring-slate-200'
+      : 'bg-transparent text-slate-600 hover:text-slate-900'
+  );
+
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: 'var(--bg-color)' }}>
-
-      <div className="animate-fade-in" style={{ backgroundColor: 'var(--panel-bg)', padding: '40px', borderRadius: '12px', boxShadow: '0 10px 25px rgba(0,0,0,0.1)', maxWidth: '400px', width: '100%' }}>
-        <h1 style={{ marginBottom: '10px', color: 'var(--primary)', textAlign: 'center' }}>Exam Portal</h1>
-        <p style={{ color: 'var(--text-muted)', textAlign: 'center', marginBottom: '30px' }}>Authentication Required</p>
-
-        {/* Role Tabs */}
-        <div role="tablist" aria-label="Choose account type" style={{ display: 'flex', marginBottom: '20px', borderBottom: '2px solid var(--border-color)' }}>
-          <button
-            type="button"
-            role="tab"
-            id="student-login-tab"
-            ref={studentTabRef}
-            aria-selected={role === 'STUDENT'}
-            aria-controls="login-panel"
-            tabIndex={role === 'STUDENT' ? 0 : -1}
-            style={{
-              flex: 1,
-              padding: '10px',
-              background: 'none',
-              border: 'none',
-              borderBottom: role === 'STUDENT' ? '2px solid var(--primary)' : '2px solid transparent',
-              color: role === 'STUDENT' ? 'var(--primary)' : 'var(--text-muted)',
-              fontWeight: role === 'STUDENT' ? 'bold' : 'normal',
-              marginBottom: '-2px'
-            }}
-            onClick={() => selectRole('STUDENT')}
-            onKeyDown={handleRoleTabKeyDown}
-          >
-            Student Login
-          </button>
-          <button
-            type="button"
-            role="tab"
-            id="admin-login-tab"
-            ref={adminTabRef}
-            aria-selected={role === 'ADMIN'}
-            aria-controls="login-panel"
-            tabIndex={role === 'ADMIN' ? 0 : -1}
-            style={{
-              flex: 1,
-              padding: '10px',
-              background: 'none',
-              border: 'none',
-              borderBottom: role === 'ADMIN' ? '2px solid var(--primary)' : '2px solid transparent',
-              color: role === 'ADMIN' ? 'var(--primary)' : 'var(--text-muted)',
-              fontWeight: role === 'ADMIN' ? 'bold' : 'normal',
-              marginBottom: '-2px'
-            }}
-            onClick={() => selectRole('ADMIN')}
-            onKeyDown={handleRoleTabKeyDown}
-          >
-            Admin Login
-          </button>
+    <div className="relative flex min-h-dvh items-center justify-center bg-gradient-to-br from-brand-50 via-slate-50 to-white px-4 py-10">
+      <ThemeToggle className="absolute right-4 top-4" />
+      <div className="animate-fade-in w-full max-w-md">
+        <div className="mb-6 flex flex-col items-center text-center">
+          <BrandLogo
+            className="mb-4"
+            imageClassName="h-16 w-auto max-w-[240px]"
+            tileClassName="size-12 rounded-2xl bg-brand-600 text-white shadow-card ring-4 ring-brand-100"
+            iconClassName="size-6"
+          />
+          <p className="max-w-full break-words text-xs font-semibold uppercase tracking-[0.18em] text-brand-700">{displayName}</p>
+          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">Exam Portal</h1>
+          <p className="mt-1 text-sm text-slate-500">Authentication Required</p>
         </div>
 
-        <div
-          id="login-panel"
-          role="tabpanel"
-          aria-labelledby={role === 'STUDENT' ? 'student-login-tab' : 'admin-login-tab'}
-        >
-          {error && (
-            <div id="login-error" role="alert" aria-live="assertive" aria-atomic="true" style={{ padding: '12px', backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid var(--danger)', color: 'var(--danger)', borderRadius: '6px', marginBottom: '20px', fontSize: '0.9rem' }}>
-              {error}
-            </div>
-          )}
-
-          <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div>
-              <label htmlFor="login-username" style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
-                {role === 'STUDENT' ? 'Student ID' : 'Admin Email'}
-              </label>
-              <input
-                id="login-username"
-                name="username"
-                type={role === 'STUDENT' ? 'text' : 'email'}
-                autoComplete="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                aria-invalid={Boolean(error)}
-                aria-describedby={error ? 'login-error' : undefined}
-                placeholder={role === 'STUDENT' ? "e.g. N24H01A0317" : "admin@yourinstitution.edu"}
-                required
-                style={{ width: '100%', padding: '12px', borderRadius: '6px', border: '1px solid var(--border-color)', fontSize: '1rem', outline: 'none' }}
-              />
-            </div>
-            <div>
-              <label htmlFor="login-password" style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>Password</label>
-              <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                <input
-                  id="login-password"
-                  name="password"
-                  type={showPassword ? 'text' : 'password'}
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  aria-invalid={Boolean(error)}
-                  aria-describedby={error ? 'login-error' : undefined}
-                  placeholder="••••••••"
-                  required
-                  style={{ width: '100%', padding: '12px', paddingRight: '42px', borderRadius: '6px', border: '1px solid var(--border-color)', fontSize: '1rem', outline: 'none' }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(prev => !prev)}
-                  aria-label={showPassword ? "Conceal entered secret" : "Reveal entered secret"}
-                  aria-controls="login-password"
-                  aria-pressed={showPassword}
-                  title={showPassword ? "Hide password" : "Show password"}
-                  style={{
-                    position: 'absolute',
-                    right: '10px',
-                    background: 'transparent',
-                    border: 'none',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: '4px',
-                    color: 'var(--text-muted)'
-                  }}
-                >
-                  {showPassword ? (
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-                      <line x1="1" y1="1" x2="23" y2="23" />
-                    </svg>
-                  ) : (
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                  )}
-                </button>
-              </div>
-            </div>
-
-            <button ref={loginButtonRef} type="submit" className="btn-primary" disabled={isSubmitting} style={{ padding: '14px', fontSize: '1.1rem', marginTop: '10px' }}>
-              {isSubmitting ? 'Signing in…' : 'Login'}
+        <Card className="p-6 sm:p-8">
+          {/* Role Tabs */}
+          <div role="tablist" aria-label="Choose account type" className="mb-6 flex gap-1 rounded-lg bg-slate-100 p-1">
+            <button
+              type="button"
+              role="tab"
+              id="student-login-tab"
+              ref={studentTabRef}
+              aria-selected={role === 'STUDENT'}
+              aria-controls="login-panel"
+              tabIndex={role === 'STUDENT' ? 0 : -1}
+              className={tabClass(role === 'STUDENT')}
+              onClick={() => selectRole('STUDENT')}
+              onKeyDown={handleRoleTabKeyDown}
+            >
+              Student Login
             </button>
-          </form>
-        </div>
+            <button
+              type="button"
+              role="tab"
+              id="admin-login-tab"
+              ref={adminTabRef}
+              aria-selected={role === 'ADMIN'}
+              aria-controls="login-panel"
+              tabIndex={role === 'ADMIN' ? 0 : -1}
+              className={tabClass(role === 'ADMIN')}
+              onClick={() => selectRole('ADMIN')}
+              onKeyDown={handleRoleTabKeyDown}
+            >
+              Admin Login
+            </button>
+          </div>
+
+          <div
+            id="login-panel"
+            role="tabpanel"
+            aria-labelledby={role === 'STUDENT' ? 'student-login-tab' : 'admin-login-tab'}
+          >
+            {error && (
+              <Alert variant="danger" id="login-error" role="alert" aria-live="assertive" aria-atomic="true" className="mb-5">
+                {error}
+              </Alert>
+            )}
+
+            <form onSubmit={handleLogin} className="flex flex-col gap-5">
+              <Field label={role === 'STUDENT' ? 'Student ID' : 'Admin Email'} htmlFor="login-username">
+                <div className="relative">
+                  {role === 'STUDENT'
+                    ? <IdCard className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+                    : <Mail className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />}
+                  <Input
+                    id="login-username"
+                    name="username"
+                    type={role === 'STUDENT' ? 'text' : 'email'}
+                    autoComplete="username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    aria-invalid={Boolean(error)}
+                    aria-describedby={error ? 'login-error' : undefined}
+                    placeholder={role === 'STUDENT' ? "e.g. N24H01A0317" : "admin@yourinstitution.edu"}
+                    required
+                    className="h-11 pl-9"
+                  />
+                </div>
+              </Field>
+              <Field label="Password" htmlFor="login-password">
+                <div className="relative">
+                  <Lock className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+                  <Input
+                    id="login-password"
+                    name="password"
+                    type={showPassword ? 'text' : 'password'}
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    aria-invalid={Boolean(error)}
+                    aria-describedby={error ? 'login-error' : undefined}
+                    placeholder="••••••••"
+                    required
+                    className="h-11 pl-9 pr-11"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(prev => !prev)}
+                    aria-label={showPassword ? "Conceal entered secret" : "Reveal entered secret"}
+                    aria-controls="login-password"
+                    aria-pressed={showPassword}
+                    title={showPassword ? "Hide password" : "Show password"}
+                    className="absolute right-1.5 top-1/2 grid size-8 -translate-y-1/2 place-items-center rounded-md p-0 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                  >
+                    {showPassword
+                      ? <EyeOff className="size-4" aria-hidden="true" />
+                      : <Eye className="size-4" aria-hidden="true" />}
+                  </button>
+                </div>
+              </Field>
+
+              <Button ref={loginButtonRef} type="submit" size="lg" className="mt-1 w-full" disabled={isSubmitting}>
+                {isSubmitting ? 'Signing in…' : 'Login'}
+              </Button>
+            </form>
+          </div>
+        </Card>
+
+        <p className="mt-6 flex items-center justify-center gap-1.5 text-xs text-slate-500">
+          <ShieldCheck className="size-3.5" aria-hidden="true" />
+          Secure computer-based examination
+        </p>
       </div>
     </div>
   );

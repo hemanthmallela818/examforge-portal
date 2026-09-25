@@ -3,6 +3,9 @@
  * Separated into vanilla JS to be directly unit-testable in Node.js test runner.
  */
 
+/** @import { ResponseStatus } from './types' */
+
+/** @type {Readonly<Record<ResponseStatus, string>>} */
 export const STATUS_GLYPHS = Object.freeze({
   NOT_VISITED: '·',
   NOT_ANSWERED: '—',
@@ -11,6 +14,7 @@ export const STATUS_GLYPHS = Object.freeze({
   ANSWERED_MARKED: '✓⚑'
 });
 
+/** @type {Readonly<Record<ResponseStatus, string>>} */
 export const STATUS_LABELS = Object.freeze({
   NOT_VISITED: 'not visited',
   NOT_ANSWERED: 'not answered',
@@ -19,10 +23,21 @@ export const STATUS_LABELS = Object.freeze({
   ANSWERED_MARKED: 'answered and marked for review'
 });
 
-export const getStatusGlyph = (status) => STATUS_GLYPHS[status] || '·';
+/**
+ * @param {ResponseStatus | string | null | undefined} status
+ * @returns {string}
+ */
+export const getStatusGlyph = (status) => STATUS_GLYPHS[/** @type {ResponseStatus} */ (status)] || '·';
 
-export const getStatusLabel = (status) => STATUS_LABELS[status] || 'not visited';
+/**
+ * @param {ResponseStatus | string | null | undefined} status
+ * @returns {string}
+ */
+export const getStatusLabel = (status) => STATUS_LABELS[/** @type {ResponseStatus} */ (status)] || 'not visited';
 
+/** @typedef {{ seconds: number, label: string }} TimerMilestone */
+
+/** @type {ReadonlyArray<TimerMilestone>} */
 export const TIMER_MILESTONES = Object.freeze([
   { seconds: 3600, label: '60 minutes remaining in examination.' },
   { seconds: 1800, label: '30 minutes remaining in examination.' },
@@ -32,7 +47,16 @@ export const TIMER_MILESTONES = Object.freeze([
   { seconds: 0, label: 'Time expired. Examination is being submitted.' }
 ]);
 
+/**
+ * Marks every threshold crossed since `previousSeconds` and returns only the
+ * most urgent one (or none).
+ * @param {number} remainingSeconds
+ * @param {Set<number>} announcedSet Mutated: crossed thresholds are added.
+ * @param {number} [previousSeconds]
+ * @returns {TimerMilestone[]}
+ */
 export const checkTimerMilestones = (remainingSeconds, announcedSet, previousSeconds = Number.POSITIVE_INFINITY) => {
+  /** @type {TimerMilestone[]} */
   const newlyTriggered = [];
   TIMER_MILESTONES.forEach(({ seconds, label }) => {
     if (previousSeconds > seconds && remainingSeconds <= seconds && !announcedSet.has(seconds)) {
@@ -46,9 +70,16 @@ export const checkTimerMilestones = (remainingSeconds, announcedSet, previousSec
 };
 
 // Announcement bridge helpers
+/** @typedef {(message: string) => void} Announcer */
+/** @type {Announcer | null} */
 let politeHandler = null;
+/** @type {Announcer | null} */
 let assertiveHandler = null;
 
+/**
+ * @param {Announcer | null} polite
+ * @param {Announcer | null} assertive
+ */
 export const registerAnnouncers = (polite, assertive) => {
   politeHandler = polite;
   assertiveHandler = assertive;
@@ -59,12 +90,14 @@ export const unregisterAnnouncers = () => {
   assertiveHandler = null;
 };
 
+/** @param {string | null | undefined} message */
 export const announcePolite = (message) => {
   if (politeHandler && message) {
     politeHandler(message);
   }
 };
 
+/** @param {string | null | undefined} message */
 export const announceAssertive = (message) => {
   if (assertiveHandler && message) {
     assertiveHandler(message);

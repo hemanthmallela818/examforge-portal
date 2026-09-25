@@ -1,4 +1,19 @@
+import { AlertTriangle, Archive, CheckCircle2, HardDrive, Info, Lightbulb, Lock, ShieldAlert, Trash2 } from 'lucide-react';
+import { Alert, Badge, Button, Card, CardContent, CardDescription, CardHeader, cn } from './ui';
 
+/**
+ * @typedef {object} MaintainedTable
+ * @property {keyof import('../types').TableCounts} key
+ * @property {string} name
+ * @property {string} desc
+ * @property {string} warning
+ * @property {boolean} [rootOnly]
+ * @property {string} [rootActionLabel]
+ * @property {string} [actionLabel]
+ * @property {boolean} [protected]
+ */
+
+/** @type {MaintainedTable[]} */
 const TABLE_METADATA = [
   {
     key: 'student_results',
@@ -6,14 +21,14 @@ const TABLE_METADATA = [
     desc: 'Permanent academic records for submitted examinations.',
     warning: 'Root developer only: download/export results first, then clear them independently. Student accounts are preserved.',
     rootOnly: true,
-    rootActionLabel: '🗑️ Clear Exam Results'
+    rootActionLabel: 'Clear Exam Results'
   },
   {
     key: 'active_sessions',
     name: 'Active Student Sessions',
     desc: 'Contains backing store backups for student exam progress, allowing students to restore their tests in case of accidental browser closures or power cuts.',
     warning: 'Expired attempts are graded from their last server-confirmed answers. Unexpired attempts are never removed.',
-    actionLabel: '✅ Finalize Expired Attempts'
+    actionLabel: 'Finalize Expired Attempts'
   },
   {
     key: 'cbt_exams',
@@ -21,7 +36,7 @@ const TABLE_METADATA = [
     desc: 'Contains all scheduled exams, test papers, and their targeting classes/sections.',
     warning: 'Root developer only: clear results and active sessions first. Student accounts and classes remain.',
     rootOnly: true,
-    rootActionLabel: '🗑️ Clear Exams & Schedules'
+    rootActionLabel: 'Clear Exams & Schedules'
   },
   {
     key: 'question_bank',
@@ -29,7 +44,7 @@ const TABLE_METADATA = [
     desc: 'The central directory holding all imported JEE questions and MCQ choices.',
     warning: 'Root developer only: clearing removes reusable questions; exam snapshots and image assets remain intact.',
     rootOnly: true,
-    rootActionLabel: '🗑️ Clear Question Bank'
+    rootActionLabel: 'Clear Question Bank'
   },
   {
     key: 'students',
@@ -54,6 +69,18 @@ const TABLE_METADATA = [
   }
 ];
 
+/**
+ * @typedef {object} AdminDatabaseCleanerViewProps
+ * @property {number | null} dbSize Total database size in bytes (null until known).
+ * @property {(bytes: number) => string} formatBytes
+ * @property {import('../types').TableCounts} tableCounts
+ * @property {(tableName: string, tableDisplayName: string) => unknown} onMaintainTable
+ * @property {boolean} isRootDeveloper
+ * @property {() => unknown} onResetApplication
+ * @property {boolean} isResetting
+ */
+
+/** @param {AdminDatabaseCleanerViewProps} props */
 const AdminDatabaseCleanerView = ({
   dbSize,
   formatBytes,
@@ -63,105 +90,110 @@ const AdminDatabaseCleanerView = ({
   onResetApplication,
   isResetting
 }) => (
-  <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+  <div className="animate-fade-in flex flex-col gap-6">
     {isRootDeveloper && (
-      <section aria-labelledby="root-reset-title" style={{ backgroundColor: '#fff7f7', padding: '24px', borderRadius: '12px', border: '2px solid #dc2626' }}>
-        <h3 id="root-reset-title" style={{ margin: '0 0 8px', color: '#991b1b' }}>Root Developer Reset (Full Installation — Optional)</h3>
-        <p style={{ margin: '0 0 10px', color: '#7f1d1d', lineHeight: 1.5 }}>
-          This removes all student accounts and application data in one operation. For normal reuse, use the separate root-only buttons below instead.
-          Your root account and administrator accounts are preserved.
-        </p>
-        <p style={{ margin: '0 0 18px', color: '#7f1d1d', fontSize: '0.85rem' }}>
-          This includes results, exams, sessions, students, classes, questions, imports, and previous audit events. Private Storage files are not removed.
-        </p>
-        <button
-          type="button"
-          onClick={onResetApplication}
-          disabled={isResetting}
-          style={{
-            width: '100%', padding: '12px', borderRadius: '6px', border: 0,
-            backgroundColor: '#b91c1c', color: 'white', fontWeight: 'bold',
-            cursor: isResetting ? 'wait' : 'pointer', opacity: isResetting ? 0.65 : 1
-          }}
-        >
-          {isResetting ? 'Resetting Application Data…' : '⚠ Reset Application Data'}
-        </button>
-      </section>
+      <Card as="section" aria-labelledby="root-reset-title" className="overflow-hidden border-red-200 ring-1 ring-red-100">
+        <div className="flex flex-wrap items-start gap-4 border-b border-red-100 bg-red-50/70 px-6 py-4">
+          <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-red-100 text-red-700 ring-1 ring-red-200">
+            <ShieldAlert className="size-5" aria-hidden="true" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Danger zone</p>
+            <h3 id="root-reset-title" className="text-base font-semibold text-red-900">Root Developer Reset (Full Installation — Optional)</h3>
+          </div>
+        </div>
+        <CardContent className="space-y-3">
+          <p className="text-sm leading-relaxed text-slate-700">
+            This removes all student accounts and application data in one operation. For normal reuse, use the separate root-only buttons below instead.
+            Your root account and administrator accounts are preserved.
+          </p>
+          <p className="text-sm text-slate-500">
+            This includes results, exams, sessions, students, classes, questions, imports, and previous audit events. Private Storage files are not removed.
+          </p>
+          <Button
+            variant="danger"
+            size="lg"
+            className={cn('mt-2 w-full', isResetting && 'cursor-wait')}
+            onClick={onResetApplication}
+            disabled={isResetting}
+          >
+            <AlertTriangle aria-hidden="true" />
+            {isResetting ? 'Resetting Application Data…' : 'Reset Application Data'}
+          </Button>
+        </CardContent>
+      </Card>
     )}
-    <div style={{ backgroundColor: 'var(--panel-bg)', padding: '30px', borderRadius: '12px', border: '1px solid var(--border-color)', boxShadow: '0 4px 6px rgba(0,0,0,0.02)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-        <div>
-          <h3 style={{ margin: 0, fontSize: '1.25rem', color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span aria-hidden="true">💾</span> Supabase Database Storage
-          </h3>
-          <p style={{ margin: '5px 0 0 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-            Current PostgreSQL database size reported by the server.
+
+    <Card>
+      <CardHeader className="items-center">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand-600 ring-1 ring-brand-100">
+            <HardDrive className="size-5" aria-hidden="true" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold text-slate-900">Supabase Database Storage</h3>
+            <CardDescription className="mt-0.5">Current PostgreSQL database size reported by the server.</CardDescription>
+          </div>
+        </div>
+        <div className="text-right">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Database size</p>
+          <p className="text-2xl font-semibold tracking-tight text-brand-700 tabular-nums">
+            {Number.isFinite(dbSize) ? formatBytes(/** @type {number} */ (dbSize)) : 'Not loaded'}
           </p>
         </div>
-        <div style={{ textAlign: 'right' }}>
-          <span style={{ fontSize: '1.4rem', fontWeight: 'bold', color: 'var(--primary)' }}>
-            {Number.isFinite(dbSize) ? formatBytes(dbSize) : 'Not loaded'}
-          </span>
-        </div>
-      </div>
+      </CardHeader>
+      <CardContent className="space-y-2 text-sm leading-relaxed text-slate-500">
+        <p>
+          Storage capacity and remaining quota depend on the configured Supabase plan. Verify quota and alerts in the provider dashboard before an examination window.
+        </p>
+        <p>
+          After a cleanup, the size shown here may stay similar for a while. PostgreSQL keeps the freed space and reuses it for new data, so row counts below are the reliable proof that data was removed.
+        </p>
+      </CardContent>
+    </Card>
 
-      <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-        Storage capacity and remaining quota depend on the configured Supabase plan. Verify quota and alerts in the provider dashboard before an examination window.
-      </p>
-    </div>
+    <Alert variant="warning" icon={Lightbulb} title="Maintain Storage Efficiency">
+      The root developer can clear results, exams, and reusable questions separately. Student accounts and administrator accounts are never removed by these buttons.
+    </Alert>
 
-    <div style={{ backgroundColor: '#f8fafc', border: '1px solid var(--border-color)', padding: '20px', borderRadius: '12px', display: 'flex', gap: '15px', alignItems: 'flex-start' }}>
-      <span aria-hidden="true" style={{ fontSize: '1.5rem' }}>💡</span>
-      <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', lineHeight: '1.5' }}>
-        <strong style={{ display: 'block', fontSize: '0.95rem', color: 'var(--text-main)', marginBottom: '4px' }}>Maintain Storage Efficiency</strong>
-        The root developer can clear results, exams, and reusable questions separately. Student accounts and administrator accounts are never removed by these buttons.
-      </div>
-    </div>
-
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
-      {TABLE_METADATA.map(table => (
-        <div key={table.key} style={{ backgroundColor: 'var(--panel-bg)', padding: '24px', borderRadius: '12px', border: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', boxShadow: '0 4px 6px rgba(0,0,0,0.02)' }}>
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h4 style={{ margin: 0, fontSize: '1.1rem', color: 'var(--text-main)', fontWeight: 'bold' }}>{table.name}</h4>
-              <span style={{ padding: '4px 10px', borderRadius: '20px', fontSize: '0.8rem', fontWeight: 'bold', backgroundColor: 'var(--bg-color)', color: 'var(--primary)', border: '1px solid var(--border-color)' }}>
-                {tableCounts[table.key] === null ? 'Not loaded' : `${tableCounts[table.key]} rows`}
-              </span>
-            </div>
-            <p style={{ margin: '0 0 15px 0', fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: '1.4' }}>{table.desc}</p>
-            <div style={{ backgroundColor: 'var(--bg-color)', border: '1px solid var(--border-color)', padding: '10px 12px', borderRadius: '6px', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '20px', fontWeight: '500' }}>
-              ℹ️ Info: {table.warning}
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => onMaintainTable(table.key, table.name)}
-            disabled={table.protected || (table.rootOnly && !isRootDeveloper)}
-            style={{
-              width: '100%', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-color)',
-              backgroundColor: 'transparent', color: 'var(--text-main)', fontWeight: 'bold',
-              cursor: table.protected || (table.rootOnly && !isRootDeveloper) ? 'not-allowed' : 'pointer', fontSize: '0.85rem', transition: 'all 0.2s',
-              opacity: table.protected || (table.rootOnly && !isRootDeveloper) ? 0.55 : 1
-            }}
-            onMouseOver={(event) => {
-              event.currentTarget.style.borderColor = 'var(--primary)';
-              event.currentTarget.style.backgroundColor = 'var(--primary)';
-              event.currentTarget.style.color = 'white';
-            }}
-            onMouseOut={(event) => {
-              event.currentTarget.style.borderColor = 'var(--border-color)';
-              event.currentTarget.style.backgroundColor = 'transparent';
-              event.currentTarget.style.color = 'var(--text-main)';
-            }}
-          >
-            {table.protected
-              ? '🔒 Protected Record'
-              : (table.rootOnly && !isRootDeveloper
-                ? '🔒 Root Developer Only'
-                : (isRootDeveloper && table.rootActionLabel ? table.rootActionLabel : (table.actionLabel || `🧹 Maintain ${table.name}`)))}
-          </button>
-        </div>
-      ))}
+    <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+      {TABLE_METADATA.map(table => {
+        const isLocked = table.protected || (table.rootOnly && !isRootDeveloper);
+        const isRootClear = !isLocked && isRootDeveloper && table.rootActionLabel;
+        return (
+          <Card key={table.key} className="flex flex-col">
+            <CardContent className="flex flex-1 flex-col">
+              <div className="mb-2 flex items-start justify-between gap-3">
+                <h4 className="text-base font-semibold text-slate-900">{table.name}</h4>
+                <Badge variant={tableCounts[table.key] === null ? 'neutral' : 'brand'} className="tabular-nums">
+                  {tableCounts[table.key] === null ? 'Not loaded' : `${tableCounts[table.key]} rows`}
+                </Badge>
+              </div>
+              <p className="mb-4 text-sm leading-relaxed text-slate-500">{table.desc}</p>
+              <div className="mb-5 mt-auto flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs font-medium leading-relaxed text-slate-600">
+                <Info className="mt-0.5 size-3.5 shrink-0 text-slate-400" aria-hidden="true" />
+                <span>{table.warning}</span>
+              </div>
+              <Button
+                variant={isRootClear ? 'danger-outline' : 'secondary'}
+                className="w-full"
+                onClick={() => onMaintainTable(table.key, table.name)}
+                disabled={table.protected || (table.rootOnly && !isRootDeveloper)}
+              >
+                {table.protected
+                  ? <><Lock aria-hidden="true" /> Protected Record</>
+                  : (table.rootOnly && !isRootDeveloper
+                    ? <><Lock aria-hidden="true" /> Root Developer Only</>
+                    : (isRootDeveloper && table.rootActionLabel
+                      ? <><Trash2 aria-hidden="true" /> {table.rootActionLabel}</>
+                      : table.actionLabel
+                        ? <><CheckCircle2 aria-hidden="true" /> {table.actionLabel}</>
+                        : <><Archive aria-hidden="true" /> {`Maintain ${table.name}`}</>))}
+              </Button>
+            </CardContent>
+          </Card>
+        );
+      })}
     </div>
   </div>
 );

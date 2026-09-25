@@ -5,6 +5,13 @@ export const NUMERICAL_ABSOLUTE_TOLERANCE = 0.00001;
 const COMPLETE_DECIMAL = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
 const POTENTIAL_DECIMAL = /^[+-]?(?:\d*(?:\.\d*)?)?$/;
 
+/** @import { NumericalValidation } from './types' */
+
+/**
+ * @param {unknown} value
+ * @param {number} [maxLength]
+ * @returns {NumericalValidation}
+ */
 export function validateNumericalAnswer(value, maxLength = CANDIDATE_NUMERICAL_MAX_LENGTH) {
   const text = value === null || value === undefined ? '' : String(value);
   if (text === '') return { valid: false, empty: true, transient: true, text, error: '' };
@@ -26,10 +33,21 @@ export function validateNumericalAnswer(value, maxLength = CANDIDATE_NUMERICAL_M
   };
 }
 
+/**
+ * @param {unknown} value
+ * @param {number} [maxLength]
+ * @returns {boolean}
+ */
 export function isValidNumericalAnswer(value, maxLength = CANDIDATE_NUMERICAL_MAX_LENGTH) {
   return validateNumericalAnswer(value, maxLength).valid;
 }
 
+/**
+ * True for complete values and valid prefixes still being typed.
+ * @param {unknown} value
+ * @param {number} [maxLength]
+ * @returns {boolean}
+ */
 export function isPotentialNumericalAnswer(value, maxLength = CANDIDATE_NUMERICAL_MAX_LENGTH) {
   const result = validateNumericalAnswer(value, maxLength);
   return result.valid || result.transient;

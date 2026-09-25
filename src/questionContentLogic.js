@@ -1,12 +1,29 @@
-import { ALLOWED_IMPORT_SUBJECTS, canonicalQuestionText } from './importLogic.js';
+import { canonicalQuestionText, resolveAllowedSubjects, subjectRequirementMessage } from './importLogic.js';
 import { AUTHOR_NUMERICAL_MAX_LENGTH, isValidNumericalAnswer } from './numericalAnswerPolicy.js';
 
+/** @import { PreparedQuestion, QuestionTextLike, UntrustedInput } from './types' */
+
+/**
+ * Exactly `length` entries from `value` (missing/nullish entries become `fallback`).
+ * @param {unknown} value
+ * @param {number} length
+ * @param {unknown} [fallback]
+ * @returns {unknown[]}
+ */
 const fixedArray = (value, length, fallback = null) => Array.from(
   { length },
   (_, index) => Array.isArray(value) ? (value[index] ?? fallback) : fallback
 );
 
-export const prepareQuestionDraft = (draft, existingQuestions = []) => {
+/**
+ * Normalises a Question Editor draft and lists every problem that blocks saving.
+ * @param {UntrustedInput} draft Editor state (camelCase or snake_case fields).
+ * @param {QuestionTextLike[]} [existingQuestions]
+ * @param {{ allowedSubjects?: unknown }} [settings]
+ * @returns {{ question: PreparedQuestion, errors: string[] }}
+ */
+export const prepareQuestionDraft = (draft, existingQuestions = [], settings = {}) => {
+  const allowedSubjects = resolveAllowedSubjects(settings.allowedSubjects);
   const type = String(draft?.type || '').toUpperCase() === 'NAT' ? 'NUMERICAL' : String(draft?.type || '').toUpperCase();
   const text = String(draft?.text ?? draft?.question_text ?? '').trim();
   const subject = String(draft?.subject || '').trim();
@@ -18,9 +35,10 @@ export const prepareQuestionDraft = (draft, existingQuestions = []) => {
     : fixedArray(draft?.options, 4, '').map(option => String(option || '').trim());
   const correctAnswer = String(draft?.correctAnswer ?? draft?.correct_answer ?? '').trim();
   const hasImageOrDiagram = Boolean(draft?.hasImageOrDiagram ?? draft?.has_image_or_diagram) || Boolean(questionImageUrl);
+  /** @type {string[]} */
   const errors = [];
 
-  if (!ALLOWED_IMPORT_SUBJECTS.includes(subject)) errors.push('Subject must be Physics, Chemistry, or Mathematics.');
+  if (!allowedSubjects.includes(subject)) errors.push(subjectRequirementMessage(allowedSubjects));
   if (!['MCQ', 'NUMERICAL'].includes(type)) errors.push('Question type must be MCQ or NUMERICAL.');
   if (!text && !questionImageUrl) errors.push('Enter a question prompt or upload a question image.');
   if (text.length > 10000) errors.push('Question text must not exceed 10,000 characters.');

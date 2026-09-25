@@ -1,3 +1,17 @@
+/**
+ * @import {
+ *   ActiveExamSessionMirror, ExamPaper, ExamResponses, LooseExamResponses,
+ *   OfflineRecoveryRecord, PendingSubmissionRecord, PendingTerminationRecord,
+ *   QuestionResponse, ReconcileInput, ReconcileResult, ResponseStatus, RpcErrorLike,
+ *   SaveOfflineRecoveryInput, StorageLike, StorageWriteResult, StudentExamScope,
+ *   StudentIdentity, SubmissionResponse, UntrustedInput
+ * } from './types'
+ */
+
+/**
+ * Accepts any value in `.has()` so untrusted statuses can be validated.
+ * @type {ReadonlySet<unknown>}
+ */
 export const VALID_RESPONSE_STATUSES = new Set([
   'NOT_VISITED', 'NOT_ANSWERED', 'ANSWERED', 'MARKED', 'ANSWERED_MARKED'
 ]);
@@ -5,17 +19,33 @@ export const VALID_RESPONSE_STATUSES = new Set([
 export const SERVER_GRACE_PERIOD_SECONDS = 180;
 export const RECOVERY_SCHEMA_VERSION = 1;
 
+/** @type {Set<string>} */
 const pendingSubmissionSyncs = new Set();
 
+/**
+ * @param {StorageLike | null | undefined} storage
+ * @returns {StorageLike | null}
+ */
 function localStore(storage) {
   if (storage) return storage;
   try { return globalThis.localStorage || null; } catch { return null; }
 }
 
+/**
+ * @param {StorageLike | null | undefined} storage
+ * @param {string} key
+ * @returns {string | null}
+ */
 function storageGet(storage, key) {
   try { return localStore(storage)?.getItem(key) ?? null; } catch { return null; }
 }
 
+/**
+ * @param {StorageLike | null | undefined} storage
+ * @param {string} key
+ * @param {string} value
+ * @returns {boolean}
+ */
 function storageSet(storage, key, value) {
   try {
     const target = localStore(storage);
@@ -25,31 +55,64 @@ function storageSet(storage, key, value) {
   } catch { return false; }
 }
 
+/**
+ * @param {StorageLike | null | undefined} storage
+ * @param {string} key
+ */
 function storageRemove(storage, key) {
   try { localStore(storage)?.removeItem(key); } catch {}
 }
 
+/**
+ * @param {StudentIdentity | null | undefined} student
+ * @param {string | null | undefined} userUuid
+ * @returns {string} '' when no identity is available.
+ */
 function studentStorageKey(student, userUuid) {
   const value = userUuid || student?.docId || student?.id;
   return value ? String(value) : '';
 }
 
+/**
+ * @param {unknown} studentKey
+ * @param {unknown} examId
+ * @returns {string}
+ */
 export function formatRecoveryStorageKey(studentKey, examId) {
   return `cbt_recovery_v${RECOVERY_SCHEMA_VERSION}_${studentKey}_${examId}`;
 }
 
+/**
+ * @param {unknown} studentKey
+ * @param {unknown} examId
+ * @returns {string}
+ */
 export function formatPendingSubmissionStorageKey(studentKey, examId) {
   return `cbt_pending_submission_v${RECOVERY_SCHEMA_VERSION}_${studentKey}_${examId}`;
 }
 
+/**
+ * @param {unknown} studentKey
+ * @returns {string}
+ */
 export function formatPendingSubmissionPointerKey(studentKey) {
   return `cbt_pending_submission_id_v${RECOVERY_SCHEMA_VERSION}_${studentKey}`;
 }
 
+/**
+ * @param {unknown} studentKey
+ * @returns {string}
+ */
 export function formatPendingTerminationStorageKey(studentKey) {
   return `cbt_pending_termination_v${RECOVERY_SCHEMA_VERSION}_${studentKey}`;
 }
 
+/**
+ * @param {UntrustedInput} record
+ * @param {StudentIdentity | null | undefined} student
+ * @param {unknown} examId
+ * @returns {record is PendingSubmissionRecord}
+ */
 function isValidPendingSubmission(record, student, examId) {
   return Boolean(record
     && record.schemaVersion === RECOVERY_SCHEMA_VERSION
@@ -58,6 +121,10 @@ function isValidPendingSubmission(record, student, examId) {
     && sessionBelongsToStudent(record, student));
 }
 
+/**
+ * @param {StudentExamScope & { responses: SubmissionResponse[] }} input
+ * @returns {StorageWriteResult<{ record: PendingSubmissionRecord }>}
+ */
 export function savePendingSubmissionRecord({ student, examId, userUuid, responses, storage }) {
   const studentKey = studentStorageKey(student, userUuid);
   if (!studentKey || !examId || !Array.isArray(responses)) {
@@ -86,6 +153,12 @@ export function savePendingSubmissionRecord({ student, examId, userUuid, respons
   return { success: true, error: null, record };
 }
 
+/**
+ * Reads the pending submission for this student (and exam, when given),
+ * migrating the legacy exam-only key after proving ownership.
+ * @param {StudentExamScope} scope
+ * @returns {PendingSubmissionRecord | null}
+ */
 export function readPendingSubmissionRecord({ student, examId, userUuid, storage }) {
   const studentKey = studentStorageKey(student, userUuid);
   if (!studentKey) return null;
@@ -127,6 +200,7 @@ export function readPendingSubmissionRecord({ student, examId, userUuid, storage
   } catch { return null; }
 }
 
+/** @param {StudentExamScope} scope */
 export function clearPendingSubmissionRecord({ student, examId, userUuid, storage }) {
   const studentKey = studentStorageKey(student, userUuid);
   if (!studentKey || !examId) return;
@@ -147,6 +221,11 @@ export function clearPendingSubmissionRecord({ student, examId, userUuid, storag
   } catch {}
 }
 
+/**
+ * In-memory guard so only one sync per student/exam runs at a time.
+ * @param {Omit<StudentExamScope, 'storage'>} scope
+ * @returns {boolean} false when a sync is already running (or scope is incomplete).
+ */
 export function beginPendingSubmissionSync({ student, examId, userUuid }) {
   const studentKey = studentStorageKey(student, userUuid);
   if (!studentKey || !examId) return false;
@@ -156,11 +235,16 @@ export function beginPendingSubmissionSync({ student, examId, userUuid }) {
   return true;
 }
 
+/** @param {Omit<StudentExamScope, 'storage'>} scope */
 export function finishPendingSubmissionSync({ student, examId, userUuid }) {
   const studentKey = studentStorageKey(student, userUuid);
   if (studentKey && examId) pendingSubmissionSyncs.delete(`${studentKey}:${examId}`);
 }
 
+/**
+ * @param {StudentExamScope} scope
+ * @returns {boolean}
+ */
 export function savePendingTerminationRecord({ student, examId, userUuid, storage }) {
   const studentKey = studentStorageKey(student, userUuid);
   if (!studentKey || !examId) return false;
@@ -173,6 +257,10 @@ export function savePendingTerminationRecord({ student, examId, userUuid, storag
   }));
 }
 
+/**
+ * @param {Omit<StudentExamScope, 'examId'>} scope
+ * @returns {PendingTerminationRecord | null}
+ */
 export function readPendingTerminationRecord({ student, userUuid, storage }) {
   const studentKey = studentStorageKey(student, userUuid);
   if (!studentKey) return null;
@@ -199,6 +287,7 @@ export function readPendingTerminationRecord({ student, userUuid, storage }) {
   } catch { return null; }
 }
 
+/** @param {Omit<StudentExamScope, 'examId'>} scope */
 export function clearPendingTerminationRecord({ student, userUuid, storage }) {
   const studentKey = studentStorageKey(student, userUuid);
   if (!studentKey) return;
@@ -211,7 +300,12 @@ export function clearPendingTerminationRecord({ student, userUuid, storage }) {
   } catch {}
 }
 
+/**
+ * @param {ExamPaper | null | undefined} examData
+ * @returns {ExamResponses}
+ */
 export function createInitialResponses(examData) {
+  /** @type {ExamResponses} */
   const initial = {};
   const subjects = Array.isArray(examData?.subjects) ? examData.subjects : [];
   subjects.forEach((subject) => {
@@ -225,25 +319,38 @@ export function createInitialResponses(examData) {
   return initial;
 }
 
+/**
+ * Flattens responses into submit-RPC rows; questions without a stable ID are skipped.
+ * @param {ExamPaper | null | undefined} examData
+ * @param {ExamResponses | LooseExamResponses | null | undefined} userResponses
+ * @returns {SubmissionResponse[]}
+ */
 export function buildSubmissionResponses(examData, userResponses) {
   const subjects = Array.isArray(examData?.subjects) ? examData.subjects : [];
-  return subjects.flatMap((subject) => {
+  return /** @type {SubmissionResponse[]} */ (subjects.flatMap((subject) => {
     const questions = Array.isArray(examData?.questions?.[subject]) ? examData.questions[subject] : [];
     return questions
       .map((question, index) => {
         if (typeof question?.id !== 'string' || question.id.length === 0) return null;
+        /** @type {{ selectedOption?: QuestionResponse['selectedOption'], status?: string }} */
         const response = userResponses?.[subject]?.[index] || {};
         const option = response.selectedOption !== undefined ? response.selectedOption : null;
         return {
           question_id: question.id,
           selected_option: option,
-          status: VALID_RESPONSE_STATUSES.has(response.status) ? response.status : 'NOT_VISITED'
+          status: /** @type {ResponseStatus} */ (VALID_RESPONSE_STATUSES.has(response.status) ? response.status : 'NOT_VISITED')
         };
       })
       .filter(Boolean);
-  });
+  }));
 }
 
+/**
+ * True when a stored session/record is stamped with one of the student's IDs.
+ * @param {UntrustedInput} session
+ * @param {StudentIdentity | null | undefined} student
+ * @returns {boolean}
+ */
 export function sessionBelongsToStudent(session, student) {
   if (!session || !student) return false;
   const studentKeys = [student.docId, student.id].filter(Boolean).map(String);
@@ -251,6 +358,11 @@ export function sessionBelongsToStudent(session, student) {
   return studentKeys.includes(sessionStudentId);
 }
 
+/**
+ * @param {unknown} endTime Epoch milliseconds.
+ * @param {number} [now]
+ * @returns {number} Whole seconds remaining, never negative.
+ */
 export function remainingSecondsUntil(endTime, now = Date.now()) {
   const numericEndTime = Number(endTime);
   if (!Number.isFinite(numericEndTime)) return 0;
@@ -259,6 +371,9 @@ export function remainingSecondsUntil(endTime, now = Date.now()) {
 
 /**
  * Persists an offline recovery snapshot with strict schema versioning and ownership.
+ * Writes to `storage` when given, otherwise to the browser's `localStorage`.
+ * @param {SaveOfflineRecoveryInput} input
+ * @returns {StorageWriteResult}
  */
 export function saveOfflineRecoveryRecord({
   student,
@@ -270,7 +385,8 @@ export function saveOfflineRecoveryRecord({
   activeSubject,
   currentIndices,
   version,
-  endTime
+  endTime,
+  storage
 }) {
   if (!student || !examId) {
     return { success: false, error: new Error('Student and exam are required for recovery storage.') };
@@ -279,6 +395,7 @@ export function saveOfflineRecoveryRecord({
   const key = formatRecoveryStorageKey(studentKey, examId);
 
   try {
+    /** @type {OfflineRecoveryRecord} */
     const record = {
       schemaVersion: RECOVERY_SCHEMA_VERSION,
       userUuid: String(userUuid || student.docId || ''),
@@ -293,9 +410,11 @@ export function saveOfflineRecoveryRecord({
       userResponses: userResponses && typeof userResponses === 'object' ? userResponses : {}
     };
 
-    localStorage.setItem(key, JSON.stringify(record));
+    const target = localStore(storage);
+    if (!target) throw new Error('Browser storage is unavailable.');
+    target.setItem(key, JSON.stringify(record));
     // Also maintain backwards-compatible mirror key for existing tests/checks
-    localStorage.setItem('cbt_active_exam_session', JSON.stringify({
+    target.setItem('cbt_active_exam_session', JSON.stringify({
       schemaVersion: RECOVERY_SCHEMA_VERSION,
       examId,
       userUuid: String(userUuid || student.docId || ''),
@@ -324,23 +443,30 @@ export function saveOfflineRecoveryRecord({
 /**
  * Reads and validates an offline recovery snapshot.
  * Rejects corrupt, unsupported, or foreign-account records.
+ * May return the legacy `cbt_active_exam_session` mirror when no scoped record exists.
+ * @param {StudentExamScope} scope
+ * @returns {OfflineRecoveryRecord | ActiveExamSessionMirror | null}
  */
 export function readOfflineRecoveryRecord({ student, examId, userUuid, storage }) {
   if (!student || !examId) return null;
   const studentKey = userUuid || student.docId || student.id;
   const key = formatRecoveryStorageKey(studentKey, examId);
 
+  // Remember where the record came from so a rejected record is removed from
+  // that exact key. On a shared machine the fallback mirror may hold another
+  // student's attempt; it must be deleted, not left behind.
+  let sourceKey = key;
   let raw = storageGet(storage, key);
   if (!raw) {
-    // Check fallback mirror key
-    raw = storageGet(storage, 'cbt_active_exam_session');
+    sourceKey = 'cbt_active_exam_session';
+    raw = storageGet(storage, sourceKey);
   }
   if (!raw) return null;
 
   try {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') {
-      storageRemove(storage, key);
+      storageRemove(storage, sourceKey);
       return null;
     }
 
@@ -349,7 +475,7 @@ export function readOfflineRecoveryRecord({ student, examId, userUuid, storage }
     const recordStudentKey = String(parsed.studentId || parsed.userUuid || '');
     if (!studentKeys.includes(recordStudentKey)) {
       console.warn('Discarding recovery record belonging to another student.');
-      storageRemove(storage, key);
+      storageRemove(storage, sourceKey);
       return null;
     }
 
@@ -362,20 +488,21 @@ export function readOfflineRecoveryRecord({ student, examId, userUuid, storage }
     // Recovery formats are strict: ambiguous legacy shapes are not restored.
     if (parsed.schemaVersion !== RECOVERY_SCHEMA_VERSION) {
       console.warn('Discarding unsupported recovery schema version:', parsed.schemaVersion);
-      storageRemove(storage, key);
+      storageRemove(storage, sourceKey);
       return null;
     }
 
     return parsed;
   } catch (err) {
     console.warn('Discarding corrupt recovery record:', err);
-    storageRemove(storage, key);
+    storageRemove(storage, sourceKey);
     return null;
   }
 }
 
 /**
  * Clears recovery records for an exam attempt upon confirmed completion or cancellation.
+ * @param {StudentExamScope} scope
  */
 export function clearOfflineRecoveryRecord({ student, examId, userUuid, storage }) {
   if (student && examId) {
@@ -396,17 +523,23 @@ export function clearOfflineRecoveryRecord({ student, examId, userUuid, storage 
 /**
  * Merges responses into the server-owned question paper.
  * Preserves numeric zero and valid statuses; discards unknown question IDs.
+ * @param {ExamPaper | null | undefined} serverExamData
+ * @param {ExamResponses | LooseExamResponses | null | undefined} serverResponses
+ * @param {ExamResponses | LooseExamResponses | null | undefined} localResponses
+ * @returns {ExamResponses | LooseExamResponses} `serverResponses` unchanged when there is no paper.
  */
 export function mergeOfflineResponses(serverExamData, serverResponses, localResponses) {
   if (!serverExamData || !serverExamData.questions) {
     return serverResponses || {};
   }
 
+  /** @type {ExamResponses} */
   const merged = {};
   const subjects = Array.isArray(serverExamData.subjects) ? serverExamData.subjects : Object.keys(serverExamData.questions);
 
   subjects.forEach((subject) => {
-    const questions = Array.isArray(serverExamData.questions[subject]) ? serverExamData.questions[subject] : [];
+    const paperQuestions = serverExamData.questions?.[subject];
+    const questions = Array.isArray(paperQuestions) ? paperQuestions : [];
     const serverSubj = serverResponses?.[subject] || [];
     const localSubj = localResponses?.[subject] || [];
 
@@ -418,7 +551,7 @@ export function mergeOfflineResponses(serverExamData, serverResponses, localResp
       if (localResp && typeof localResp === 'object') {
         const option = localResp.selectedOption;
         const hasLocalOption = option !== null && option !== undefined && option !== '';
-        const validStatus = VALID_RESPONSE_STATUSES.has(localResp.status) ? localResp.status : 'NOT_VISITED';
+        const validStatus = /** @type {ResponseStatus} */ (VALID_RESPONSE_STATUSES.has(localResp.status) ? localResp.status : 'NOT_VISITED');
 
         if (hasLocalOption || validStatus !== 'NOT_VISITED') {
           return {
@@ -431,7 +564,7 @@ export function mergeOfflineResponses(serverExamData, serverResponses, localResp
       return serverResp && typeof serverResp === 'object'
         ? {
             selectedOption: serverResp.selectedOption ?? null,
-            status: VALID_RESPONSE_STATUSES.has(serverResp.status) ? serverResp.status : 'NOT_VISITED'
+            status: /** @type {ResponseStatus} */ (VALID_RESPONSE_STATUSES.has(serverResp.status) ? serverResp.status : 'NOT_VISITED')
           }
         : { selectedOption: null, status: idx === 0 && subject === subjects[0] ? 'NOT_ANSWERED' : 'NOT_VISITED' };
     });
@@ -445,6 +578,8 @@ export function mergeOfflineResponses(serverExamData, serverResponses, localResp
  * Local responses may overlay the server only when both share the exact same
  * base version. A stale/future record never silently overwrites newer confirmed
  * progress.
+ * @param {ReconcileInput} input
+ * @returns {ReconcileResult}
  */
 export function reconcileOfflineRecovery({
   examData,
@@ -478,4 +613,69 @@ export function reconcileOfflineRecovery({
     localVersion,
     serverVersion: authoritativeVersion
   };
+}
+
+/**
+ * Deterministic JSON for comparing response sets. PostgreSQL jsonb reorders
+ * object keys, so a plain JSON.stringify comparison would report false changes.
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function stableStringify(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value ?? null);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const record = /** @type {Record<string, unknown>} */ (value);
+  const keys = Object.keys(record).filter(key => record[key] !== undefined).sort();
+  return `{${keys.map(key => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`;
+}
+
+/**
+ * @param {unknown} a
+ * @param {unknown} b
+ * @returns {boolean}
+ */
+export function sameResponses(a, b) {
+  return stableStringify(a) === stableStringify(b);
+}
+
+// HTTP statuses and PostgreSQL / PostgREST error codes that are safe to retry
+// because every exam RPC is idempotent or version-checked.
+const TRANSIENT_HTTP_STATUSES = new Set([0, 408, 425, 429, 500, 502, 503, 504]);
+const TRANSIENT_ERROR_CODES = new Set([
+  'PGRST000', 'PGRST001', 'PGRST002', 'PGRST003', // PostgREST connection / pool / schema cache
+  '57014', // statement timeout
+  '55P03', // lock_not_available (lock_timeout)
+  '40001', // serialization failure
+  '40P01', // deadlock detected
+  '53300', // too many connections
+  '08000', '08003', '08006' // connection exceptions
+]);
+
+/**
+ * True when a failed RPC can be retried with backoff without risk of applying
+ * a change twice. Business errors (wrong session, exam closed, validation) are
+ * never transient.
+ * @param {RpcErrorLike | null | undefined} error
+ * @param {{ online?: boolean }} [options]
+ * @returns {boolean}
+ */
+export function isTransientRpcError(error, { online = true } = {}) {
+  if (!online) return true;
+  if (!error) return false;
+  const status = Number(error.httpStatus ?? error.status);
+  if (Number.isFinite(status) && TRANSIENT_HTTP_STATUSES.has(status)) return true;
+  if (typeof error.code === 'string' && TRANSIENT_ERROR_CODES.has(error.code)) return true;
+  return /network|fetch|timeout|timed out|connection|too many requests|rate limit|temporarily unavailable/i
+    .test(String(error.message || ''));
+}
+
+/**
+ * Full-jitter exponential backoff (ms), capped.
+ * @param {number} attempt 1-based attempt number.
+ * @param {{ baseMs?: number, capMs?: number, random?: () => number }} [options]
+ * @returns {number}
+ */
+export function retryDelayMs(attempt, { baseMs = 1000, capMs = 8000, random = Math.random } = {}) {
+  const ceiling = Math.min(capMs, baseMs * 2 ** Math.max(0, attempt - 1));
+  return Math.round(ceiling / 2 + random() * (ceiling / 2));
 }

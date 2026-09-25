@@ -1,13 +1,28 @@
 import { useState, useEffect, useRef } from 'react';
 import { useDialogFocusTrap } from '../dialogFocus';
+import { AlertTriangle, CheckCircle2, CircleHelp, Info, PenLine, X, XCircle } from 'lucide-react';
+import { Button, Input, cn } from './ui';
+
+/**
+ * @typedef {import('../types').ToastEventDetail & { id: string }} ToastItem
+ * @typedef {object} DialogState
+ * @property {string} id
+ * @property {import('../types').DialogType} type
+ * @property {string} message
+ * @property {string} defaultValue
+ * @property {string} value
+ * @property {(value: import('../types').UntrustedInput) => void} onResolve
+ */
 
 const CustomPopupContainer = () => {
-  const [toasts, setToasts] = useState([]);
-  const [dialog, setDialog] = useState(null); // { id, type, message, defaultValue, value, onResolve }
-  const promptInputRef = useRef(null);
+  const [toasts, setToasts] = useState(/** @type {ToastItem[]} */ ([]));
+  const [dialog, setDialog] = useState(/** @type {DialogState | null} */ (null)); // { id, type, message, defaultValue, value, onResolve }
+  const promptInputRef = useRef(/** @type {HTMLInputElement | null} */ (null));
 
   useEffect(() => {
-    const handleToast = (e) => {
+    /** @param {Event} event */
+    const handleToast = (event) => {
+      const e = /** @type {CustomEvent<import('../types').ToastEventDetail>} */ (event);
       const { message, type } = e.detail;
       const id = Math.random().toString(36).substring(2);
       setToasts((prev) => [...prev, { id, message, type }]);
@@ -17,7 +32,9 @@ const CustomPopupContainer = () => {
       }, 4000);
     };
 
-    const handleDialog = (e) => {
+    /** @param {Event} event */
+    const handleDialog = (event) => {
+      const e = /** @type {CustomEvent<import('../types').DialogEventDetail>} */ (event);
       // Acknowledge receipt so the dispatcher (utils.js requestDialog) knows a
       // host is mounted and will resolve the promise. If no host calls
       // preventDefault, the dispatcher resolves a safe default instead of
@@ -54,13 +71,16 @@ const CustomPopupContainer = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dialog?.id]);
 
+  /** @param {string} id */
   const removeToast = (id) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
+  /** @param {boolean} confirmAction */
   const handleDialogAction = (confirmAction) => {
     if (!dialog) return;
 
+    /** @type {boolean | string | null} */
     let result = false;
     if (dialog.type === 'alert') {
       result = true;
@@ -81,6 +101,7 @@ const CustomPopupContainer = () => {
     initialFocusRef: dialog?.type === 'prompt' ? promptInputRef : undefined
   });
 
+  /** @param {import('react').KeyboardEvent<HTMLElement>} e */
   const handleKeyDown = (e) => {
     handleDialogKeyDown(e);
     if (e.defaultPrevented) return;
@@ -90,85 +111,54 @@ const CustomPopupContainer = () => {
     }
   };
 
+  /** @type {Record<import('../types').ToastType, { icon: import('react').ElementType, className: string, iconClassName: string }>} */
+  const toastStyles = {
+    success: { icon: CheckCircle2, className: 'border-emerald-200 bg-emerald-50 text-emerald-900', iconClassName: 'text-emerald-600' },
+    error: { icon: XCircle, className: 'border-red-200 bg-red-50 text-red-900', iconClassName: 'text-red-600' },
+    warning: { icon: AlertTriangle, className: 'border-amber-200 bg-amber-50 text-amber-900', iconClassName: 'text-amber-600' },
+    info: { icon: Info, className: 'border-slate-200 bg-white text-slate-800', iconClassName: 'text-brand-600' }
+  };
+
+  /** @type {Record<import('../types').DialogType | 'error', { icon: import('react').ElementType, className: string }>} */
+  const dialogIcon = {
+    alert: { icon: Info, className: 'bg-brand-50 text-brand-600 ring-brand-100' },
+    confirm: { icon: CircleHelp, className: 'bg-amber-50 text-amber-600 ring-amber-100' },
+    prompt: { icon: PenLine, className: 'bg-brand-50 text-brand-600 ring-brand-100' },
+    error: { icon: XCircle, className: 'bg-red-50 text-red-600 ring-red-100' }
+  };
+  // Only rendered inside `{dialog && ...}`, where the icon is always resolved.
+  const DialogIcon = /** @type {{ icon: import('react').ElementType, className: string }} */ (dialog ? (dialogIcon[dialog.type] || dialogIcon.alert) : null);
+  const isDestructiveConfirm = dialog?.type === 'confirm' && dialog.message.includes('WIPE');
+
   return (
     <>
       {/* Toast Notifications Stack */}
-      <div aria-live="polite" aria-atomic="false" style={{
-        position: 'fixed',
-        top: '20px',
-        right: '20px',
-        zIndex: 10000,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '10px',
-        maxWidth: '350px',
-        width: '100%',
-        pointerEvents: 'none'
-      }}>
+      <div aria-live="polite" aria-atomic="false" className="pointer-events-none fixed right-4 top-4 z-[10000] flex w-[calc(100%-2rem)] max-w-sm flex-col gap-2.5">
         {toasts.map((toast) => {
-          let bgColor = 'var(--panel-bg)';
-          let borderColor = 'var(--border-color)';
-          let icon = 'ℹ️';
-          let textColor = 'var(--text-main)';
-
-          if (toast.type === 'success') {
-            bgColor = '#f0fdf4';
-            borderColor = '#bbf7d0';
-            icon = '✅';
-            textColor = '#166534';
-          } else if (toast.type === 'error') {
-            bgColor = '#fef2f2';
-            borderColor = '#fca5a5';
-            icon = '❌';
-            textColor = '#991b1b';
-          } else if (toast.type === 'warning') {
-            bgColor = '#fffbeb';
-            borderColor = '#fde68a';
-            icon = '⚠️';
-            textColor = '#92400e';
-          }
+          const tone = toastStyles[toast.type] || toastStyles.info;
+          const ToastIcon = tone.icon;
 
           return (
             <div
               key={toast.id}
               onClick={() => removeToast(toast.id)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-                padding: '12px 16px',
-                borderRadius: '8px',
-                backgroundColor: bgColor,
-                border: `1px solid ${borderColor}`,
-                boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)',
-                color: textColor,
-                fontSize: '0.9rem',
-                fontWeight: '500',
-                cursor: 'pointer',
-                pointerEvents: 'auto',
-                animation: 'slideIn 0.3s ease-out forwards',
-                userSelect: 'none'
-              }}
+              className={cn(
+                'pointer-events-auto flex cursor-pointer select-none items-start gap-3 rounded-xl border px-4 py-3 text-sm font-medium shadow-lg animate-[slideIn_0.3s_ease-out_forwards]',
+                tone.className
+              )}
             >
-              <span style={{ fontSize: '1.1rem' }}>{icon}</span>
-              <span style={{ flex: 1 }}>{toast.message}</span>
+              <ToastIcon className={cn('mt-0.5 size-5 shrink-0', tone.iconClassName)} aria-hidden="true" />
+              <span className="min-w-0 flex-1 leading-relaxed">{toast.message}</span>
               <button
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'inherit',
-                  padding: 0,
-                  fontSize: '1rem',
-                  opacity: 0.5,
-                  cursor: 'pointer',
-                  marginLeft: '8px'
-                }}
+                type="button"
+                aria-label="Dismiss notification"
+                className="-mr-1 grid size-6 shrink-0 place-items-center rounded-md bg-transparent p-0 text-current opacity-60 hover:bg-black/5 hover:opacity-100"
                 onClick={(e) => {
                   e.stopPropagation();
                   removeToast(toast.id);
                 }}
               >
-                ✕
+                <X className="size-4" aria-hidden="true" />
               </button>
             </div>
           );
@@ -177,114 +167,59 @@ const CustomPopupContainer = () => {
 
       {/* Custom Dialog Modal */}
       {dialog && (
-        <div role="presentation" style={{
-          position: 'fixed',
-          inset: 0,
-          backgroundColor: 'rgba(15, 23, 42, 0.4)',
-          backdropFilter: 'blur(4px)',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          zIndex: 10001,
-          animation: 'fadeIn 0.2s ease-out forwards'
-        }}>
+        <div role="presentation" className="fixed inset-0 z-[10001] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out_forwards]">
           <div 
-            ref={dialogRef}
+            ref={/** @type {import('react').RefObject<HTMLDivElement>} */ (dialogRef)}
             role="dialog"
             aria-modal="true"
             aria-labelledby="app-dialog-title"
             tabIndex={-1}
-            className="animate-fade-in"
-            style={{
-              backgroundColor: 'var(--panel-bg)',
-              borderRadius: '12px',
-              border: '1px solid var(--border-color)',
-              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
-              width: '90%',
-              maxWidth: '450px',
-              padding: '24px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '16px'
-            }}
+            className="animate-fade-in flex w-full max-w-md flex-col gap-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl"
             onKeyDown={handleKeyDown}
           >
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px' }}>
-              <div style={{
-                fontSize: '1.8rem',
-                lineHeight: 1,
-                padding: '8px',
-                borderRadius: '8px',
-                backgroundColor: dialog.type === 'error' ? 'rgba(239, 68, 68, 0.1)' : dialog.type === 'confirm' ? 'rgba(245, 158, 11, 0.1)' : 'rgba(37, 99, 235, 0.1)'
-              }}>
-                {dialog.type === 'alert' && 'ℹ️'}
-                {dialog.type === 'confirm' && '❓'}
-                {dialog.type === 'prompt' && '📝'}
+            <div className="flex items-start gap-4">
+              <div className={cn('grid size-11 shrink-0 place-items-center rounded-full ring-4', isDestructiveConfirm ? 'bg-red-50 text-red-600 ring-red-100' : DialogIcon.className)}>
+                {isDestructiveConfirm
+                  ? <AlertTriangle className="size-5" aria-hidden="true" />
+                  : <DialogIcon.icon className="size-5" aria-hidden="true" />}
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <h3 id="app-dialog-title" style={{
-                  fontSize: '1.1rem',
-                  fontWeight: '600',
-                  color: 'var(--text-main)',
-                  marginBottom: '8px'
-                }}>
+              <div className="min-w-0 flex-1 pt-1">
+                <h3 id="app-dialog-title" className="mb-1.5 text-base font-semibold text-slate-900">
                   {dialog.type === 'alert' && 'Notification'}
                   {dialog.type === 'confirm' && 'Confirmation Required'}
                   {dialog.type === 'prompt' && 'Input Required'}
                 </h3>
-                <p style={{
-                  fontSize: '0.95rem',
-                  color: 'var(--text-muted)',
-                  lineHeight: '1.5',
-                  wordBreak: 'break-word',
-                  whiteSpace: 'pre-wrap'
-                }}>
+                <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-slate-600">
                   {dialog.message}
                 </p>
               </div>
             </div>
 
             {dialog.type === 'prompt' && (
-              <input
+              <Input
                 ref={promptInputRef}
                 type="text"
                 value={dialog.value}
-                onChange={(e) => setDialog((prev) => ({ ...prev, value: e.target.value }))}
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  borderRadius: '6px',
-                  border: '1px solid var(--border-color)',
-                  fontSize: '0.95rem',
-                  outline: 'none',
-                  backgroundColor: 'var(--bg-color)',
-                  color: 'var(--text-main)'
-                }}
+                onChange={(e) => setDialog((prev) => /** @type {DialogState} */ ({ ...prev, value: e.target.value }))}
               />
             )}
 
-            <div style={{
-              display: 'flex',
-              justifyContent: 'flex-end',
-              gap: '10px',
-              marginTop: '8px'
-            }}>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               {(dialog.type === 'confirm' || dialog.type === 'prompt') && (
-                <button
-                  className="btn-outline"
+                <Button
+                  variant="secondary"
                   onClick={() => handleDialogAction(false)}
-                  style={{ padding: '8px 16px' }}
                 >
                   Cancel
-                </button>
+                </Button>
               )}
-              <button
-                className={dialog.type === 'confirm' && dialog.message.includes('WIPE') ? 'btn-danger' : 'btn-primary'}
+              <Button
+                variant={isDestructiveConfirm ? 'danger' : 'primary'}
+                className="sm:min-w-24"
                 onClick={() => handleDialogAction(true)}
-                style={{ padding: '8px 20px' }}
               >
                 {dialog.type === 'confirm' ? 'Confirm' : 'OK'}
-              </button>
+              </Button>
             </div>
           </div>
         </div>

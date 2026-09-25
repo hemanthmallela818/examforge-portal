@@ -1,6 +1,13 @@
 export const DEFAULT_PAGE_SIZE = 500;
 export const DEFAULT_COLLECTION_LIMIT = 20000;
 
+/** @import { PageExpectation, PagedCollection, RangeQueryResult, UntrustedInput } from './types' */
+
+/**
+ * @param {UntrustedInput} data Paged RPC payload `{ page, page_size, total, rows }`.
+ * @param {PageExpectation} expected
+ * @returns {PagedCollection}
+ */
 export const parsePagedCollectionResponse = (data, { expectedPage, expectedPageSize }) => {
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw new TypeError('The server returned an invalid page response.');
   const page = Number(data.page);
@@ -15,6 +22,7 @@ export const parsePagedCollectionResponse = (data, { expectedPage, expectedPageS
 };
 
 export class CollectionLimitError extends Error {
+  /** @param {number} limit */
   constructor(limit) {
     super(`This collection contains more than ${limit.toLocaleString()} records. Narrow the query before loading it.`);
     this.name = 'CollectionLimitError';
@@ -22,6 +30,10 @@ export class CollectionLimitError extends Error {
   }
 }
 
+/**
+ * @param {number} value
+ * @param {string} label
+ */
 const assertPositiveInteger = (value, label) => {
   if (!Number.isInteger(value) || value <= 0) {
     throw new TypeError(`${label} must be a positive integer.`);
@@ -32,6 +44,12 @@ const assertPositiveInteger = (value, label) => {
 // Fetch fixed ranges so callers never mistake a truncated first page for a
 // complete collection. A one-row probe distinguishes an exact-limit result
 // from an oversized collection and fails visibly instead of dropping data.
+/**
+ * @template Row
+ * @param {(from: number, to: number) => PromiseLike<RangeQueryResult<Row>>} fetchPage Inclusive range fetcher.
+ * @param {{ pageSize?: number, maxRows?: number }} [options]
+ * @returns {Promise<Row[]>}
+ */
 export const fetchAllRows = async (
   fetchPage,
   { pageSize = DEFAULT_PAGE_SIZE, maxRows = DEFAULT_COLLECTION_LIMIT } = {}
@@ -41,6 +59,7 @@ export const fetchAllRows = async (
   assertPositiveInteger(maxRows, 'maxRows');
   if (pageSize > 1000) throw new RangeError('pageSize cannot exceed the configured API row limit of 1,000.');
 
+  /** @type {Row[]} */
   const rows = [];
   while (rows.length < maxRows) {
     const requested = Math.min(pageSize, maxRows - rows.length);
