@@ -1,0 +1,71 @@
+name: Production Health Monitor
+
+# C18: scheduled health check of the production Supabase project.
+# Fails (and notifies watchers through GitHub) when the database reports
+# ATTENTION: expired attempts not finalized, the pg_cron finalizer failing,
+# questions missing required media, or a spike of client errors.
+#
+# Required repository secrets (the job is skipped until they exist):
+#   PROD_SUPABASE_URL                e.g. https://<project>.supabase.co
+#   PROD_SUPABASE_SERVICE_ROLE_KEY   service-role key (never exposed to the browser)
+# Optional:
+#   ALERT_WEBHOOK_URL                Slack/Teams-compatible incoming webhook
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-health
+  cancel-in-progress: false
+
+jobs:
+  health:
+    name: Check production health
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SUPABASE_URL: ${{ secrets.PROD_SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.PROD_SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - name: Skip when production secrets are not configured
+        id: configured
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "Production secrets are not configured; skipping."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.configured.outputs.ready == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.configured.outputs.ready == 'true'
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install dependencies
+        if: steps.configured.outputs.ready == 'true'
+        run: npm ci --ignore-scripts
+
+      - name: Run health check
+        if: steps.configured.outputs.ready == 'true'
+        id: check
+        run: node scripts/operational-health-check.mjs --json | tee health.json
+
+      - name: Post alert to webhook
+        if: failure() && steps.configured.outputs.ready == 'true'
+        env:
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+        run: |
+          if [ -z "$ALERT_WEBHOOK_URL" ]; then exit 0; fi
+          summary=$(node -e 'try{const r=JSON.parse(require("fs").readFileSync("health.json","utf8"));console.log(`${r.status}: ${(r.issues||[]).join(" | ")||"see workflow log"}`)}catch{console.log("Health check failed; see workflow log")}')
+          payload=$(node -e 'console.log(JSON.stringify({text:`ExamForge production health alert — ${process.argv[1]} (${process.argv[2]})`}))' "$summary" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID")
+          curl -fsS -X POST -H 'Content-Type: application/json' -d "$payload" "$ALERT_WEBHOOK_URL"
