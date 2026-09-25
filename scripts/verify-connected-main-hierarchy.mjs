@@ -81,7 +81,7 @@ try {
 
   const student = createClient(main.url, main.publicKey, clientOptions);
   const studentLogin = await student.auth.signInWithPassword({
-    email: `${studentId.toLowerCase()}@student.com`, password: studentPassword,
+    email: `${studentId.toLowerCase()}@students.examforge.invalid`, password: studentPassword,
   });
   if (studentLogin.error) throw new Error(`Student sign-in failed: ${studentLogin.error.message}`);
   const studentRole = await student.rpc('get_my_role');

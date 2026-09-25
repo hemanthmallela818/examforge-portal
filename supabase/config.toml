@@ -178,7 +178,7 @@ enable_anonymous_sign_ins = false
 # Allow/disallow testing manual linking of accounts
 enable_manual_linking = false
 # Passwords shorter than this value will be rejected as weak. Minimum 6, recommended 8 or more.
-minimum_password_length = 10
+minimum_password_length = 12
 # Configure passkey sign-ins.
 # [auth.passkey]
 # enabled = false
@@ -197,9 +197,13 @@ sms_sent = 30
 # Number of anonymous sign-ins that can be made per hour per IP address. Requires enable_anonymous_sign_ins = true.
 anonymous_users = 30
 # Number of sessions that can be refreshed in a 5 minute interval per IP address.
-token_refresh = 150
+# A whole exam hall usually shares one public IP (school NAT), and every candidate
+# refreshes its token about once per hour, so size this for the largest sitting.
+# Hosted projects: set the same values under Authentication > Rate Limits.
+token_refresh = 1800
 # Number of sign up and sign-in requests that can be made in a 5 minute interval per IP address (excludes anonymous users).
-sign_in_sign_ups = 30
+# Sized for ~300 candidates signing in from one school network at the start of a sitting.
+sign_in_sign_ups = 600
 # Number of OTP / Magic link verifications that can be made in a 5 minute interval per IP address.
 token_verifications = 30
 # Number of Web3 logins that can be made in a 5 minute interval per IP address.

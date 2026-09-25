@@ -32,11 +32,25 @@ if (finalizeError) throw finalizeError;
 // A clean database has no application owner yet. Register the disposable
 // harness account through the server-owned authority table so the current
 // administrator hierarchy recognizes it during Edge Function provisioning.
-const { error: ownerError } = await service.from('application_owner').upsert({
-  singleton: true,
-  user_id: created.user.id
-}, { onConflict: 'singleton' });
-if (ownerError) throw ownerError;
+// On a shared local stack that already has an owner, never replace it (that
+// would lock the developer's own root account out); register the harness as a
+// managed administrator of the existing owner instead.
+const { data: existingOwner, error: existingOwnerError } = await service
+  .from('application_owner').select('user_id').eq('singleton', true).maybeSingle();
+if (existingOwnerError) throw existingOwnerError;
+if (existingOwner?.user_id) {
+  const { error: registerError } = await service.rpc('register_managed_administrator', {
+    account_id_param: created.user.id,
+    creator_id_param: existingOwner.user_id
+  });
+  if (registerError) throw registerError;
+} else {
+  const { error: ownerError } = await service.from('application_owner').upsert({
+    singleton: true,
+    user_id: created.user.id
+  }, { onConflict: 'singleton' });
+  if (ownerError) throw ownerError;
+}
 
 const { error: signInError } = await browser.auth.signInWithPassword({ email, password });
 if (signInError) throw signInError;
@@ -61,7 +75,8 @@ if (assuranceError || assurance?.currentLevel !== 'aal2') {
 const result = spawnSync(process.execPath, [resolve('scripts/rehearse-staging.mjs')], {
   cwd: process.cwd(),
   stdio: 'inherit',
-  timeout: 20 * 60 * 1000,
+  // Leave room for the configured soak on top of setup, rushes, and checks.
+  timeout: 20 * 60 * 1000 + (Number.parseInt(process.env.REHEARSAL_SOAK_SECONDS || '60', 10) || 0) * 1000,
   env: {
     ...process.env,
     REHEARSAL_SUPABASE_URL: local.url,
