@@ -4,6 +4,11 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import QuestionPanel from '../../src/components/QuestionPanel';
 
+// StorageImage imports the Supabase client; CI has no .env, so stub it.
+vi.mock('../../src/supabase', () => ({
+  supabase: { storage: { from: vi.fn(() => ({ createSignedUrl: vi.fn(() => Promise.resolve({ data: null, error: null })) })) } }
+}));
+
 // delay: null keeps typing synchronous-fast while still dispatching full event sequences.
 let user;
 beforeEach(() => { user = userEvent.setup({ delay: null }); });

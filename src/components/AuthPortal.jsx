@@ -5,6 +5,8 @@ import { APP_ERROR, classifyAppError } from '../appErrors';
 // Reserved, non-routable domain for student sign-in identities (matches the
 // manage-student Edge Function and the 20260925090000 migration).
 const STUDENT_EMAIL_DOMAIN = 'students.examforge.invalid';
+// Accounts created before the 20260925090000 migration (or by a backend that has not run it yet).
+const LEGACY_STUDENT_EMAIL_DOMAIN = 'student.com';
 import { supabase } from '../supabase';
 import { safeStorageSet } from '../browserStorage';
 import { customAlert } from '../utils';
@@ -84,9 +86,11 @@ const AuthPortal = ({ onStudentLogin, onAdminLogin }) => {
           // Passwords must NOT be trimmed; spaces may be intentional characters
           const cleanPassword = password;
 
-          const email = cleanUsername.includes('@')
-            ? cleanUsername.toLowerCase()
-            : `${cleanUsername.toLowerCase()}@${STUDENT_EMAIL_DOMAIN}`;
+          // Try the current login domain first, then the legacy one, so sign-in keeps
+          // working while a backend has not yet migrated its student accounts.
+          const emails = cleanUsername.includes('@')
+            ? [cleanUsername.toLowerCase()]
+            : [STUDENT_EMAIL_DOMAIN, LEGACY_STUDENT_EMAIL_DOMAIN].map(domain => `${cleanUsername.toLowerCase()}@${domain}`);
           // When a whole hall signs in at once the auth server may briefly rate
           // limit the shared school IP. Retry a few times with jittered backoff
           // before asking the candidate to wait.
@@ -97,13 +101,17 @@ const AuthPortal = ({ onStudentLogin, onAdminLogin }) => {
           const isServerBusy = err => Number(err?.status) >= 500 || /failed to fetch|network/i.test(err?.message || '');
           let authData = null;
           let authError = null;
-          for (let attempt = 1; attempt <= 4; attempt += 1) {
-            ({ data: authData, error: authError } = await supabase.auth.signInWithPassword({
-              email,
-              password: cleanPassword
-            }));
-            if ((!isRateLimited(authError) && !isServerBusy(authError)) || attempt === 4) break;
-            await new Promise(resolve => setTimeout(resolve, retryDelayMs(attempt, { baseMs: 1500 })));
+          for (const email of emails) {
+            for (let attempt = 1; attempt <= 4; attempt += 1) {
+              ({ data: authData, error: authError } = await supabase.auth.signInWithPassword({
+                email,
+                password: cleanPassword
+              }));
+              if ((!isRateLimited(authError) && !isServerBusy(authError)) || attempt === 4) break;
+              await new Promise(resolve => setTimeout(resolve, retryDelayMs(attempt, { baseMs: 1500 })));
+            }
+            // Only a plain credential rejection moves on to the next domain.
+            if (!authError || isRateLimited(authError) || isServerBusy(authError)) break;
           }
           if (authError || !authData?.user) {
             if (isRateLimited(authError)) {
