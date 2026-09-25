@@ -10,6 +10,7 @@ import {
   validateImportFile
 } from '../src/importLogic.js';
 import { validateImageUpload } from '../src/imageValidation.js';
+import { adminSource } from './support/adminSource.mjs';
 
 const validMcq = (index = 1, overrides = {}) => ({
   id: `physics-${index}`,
@@ -161,7 +162,7 @@ test('Stage 23 image validation rejects MIME/content disagreement before upload'
 test('Stage 23 UI is reviewed-JSON-only, human-approved, latest-file-wins, and commit-recoverable', async () => {
   const [importer, dashboard, preflight, storageImage, editor] = await Promise.all([
     readFile(new URL('../src/components/AIQuestionImporter.jsx', import.meta.url), 'utf8'),
-    readFile(new URL('../src/components/AdminDashboard.jsx', import.meta.url), 'utf8'),
+    adminSource(),
     readFile(new URL('../src/examPreflightLogic.js', import.meta.url), 'utf8'),
     readFile(new URL('../src/components/StorageImage.jsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/components/QuestionEditor.jsx', import.meta.url), 'utf8')

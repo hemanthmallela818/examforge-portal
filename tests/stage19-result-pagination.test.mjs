@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { parseResultExportPageResponse, parseResultPageResponse, validateCompleteResultExport } from '../src/resultPaging.js';
+import { adminSource } from './support/adminSource.mjs';
 
 test('ranked result pages and assembled exports fail closed on malformed or changing data', () => {
   const row = (id, studentId, rank = 1) => ({ id, exam_id: 'exam', student_id: studentId, student_name: `Name ${studentId}`, total_score: '4', max_score: '8', subject_scores: { Physics: 4 }, subject_ranks: { Physics: rank }, total_rank: rank });
@@ -111,7 +112,7 @@ test('result-page RPC preserves global ranks and analytics while paging and filt
 
 test('administrator leaderboard pages results and keyset-streams audited exports', async () => {
   const [source, migration] = await Promise.all([
-    readFile(new URL('../src/components/AdminDashboard.jsx', import.meta.url), 'utf8'),
+    adminSource(),
     readFile(new URL('../supabase/migrations/20260910320000_stage19_paginated_exam_results.sql', import.meta.url), 'utf8')
   ]);
   assert.match(source, /get_admin_exam_results_page/);

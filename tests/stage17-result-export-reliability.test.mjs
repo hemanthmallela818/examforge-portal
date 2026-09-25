@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { adminSource } from './support/adminSource.mjs';
 import {
   MAX_PDF_RESULT_ROWS,
   buildLeaderboard,
@@ -166,7 +167,7 @@ test('result export authorization is AAL2-only, count-verified, and auditable', 
 });
 
 test('administrator export controls fail closed and suppress duplicate downloads', async () => {
-  const source = await readFile(new URL('../src/components/AdminDashboard.jsx', import.meta.url), 'utf8');
+  const source = await adminSource();
   assert.match(source, /record_result_export/);
   assert.match(source, /expected_result_count_param:\s*resultCount/);
   assert.match(source, /disabled=\{exportUnavailable\}/);

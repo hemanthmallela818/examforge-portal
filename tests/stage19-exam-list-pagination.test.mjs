@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { normalizeExamListRow } from '../src/examListPaging.js';
+import { adminSource } from './support/adminSource.mjs';
 
 test('exam summaries reject malformed metadata instead of showing misleading cards', () => {
   const valid = { id: 'exam-1', title: 'JEE Mock', status: 'PENDING', class: '12', section: 'A', created_at: '2026-01-01', duration: '180', total_questions: '75', subjects: ['Physics'] };
@@ -75,7 +76,7 @@ test('exam-list RPC is AAL2-only, bounded, answer-free, searchable, and correctl
 });
 
 test('administrator dashboard uses a paged exam list and independent full detail state', async () => {
-  const source = await readFile(new URL('../src/components/AdminDashboard.jsx', import.meta.url), 'utf8');
+  const source = await adminSource();
   assert.match(source, /get_admin_exam_list_page/);
   assert.match(source, /page_size_param:\s*EXAM_LIST_PAGE_SIZE/);
   assert.match(source, /Examination list pages/);

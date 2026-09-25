@@ -1,16 +1,18 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { adminSource } from './support/adminSource.mjs';
+import { edgeSource } from './support/edgeSource.mjs';
+import { readExamSource } from './support/examSource.mjs';
 
 const source = async (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
 test('exam Realtime listeners use the metadata-only published table', async () => {
-  for (const path of [
-    'src/components/StudentDashboard.jsx',
-    'src/components/PreExam.jsx',
-    'src/components/AdminDashboard.jsx'
-  ]) {
-    const content = await source(path);
+  for (const content of await Promise.all([
+    source('src/components/StudentDashboard.jsx'),
+    source('src/components/PreExam.jsx'),
+    adminSource()
+  ])) {
     assert.match(content, /table:\s*['"]exam_status_events['"]/);
     assert.doesNotMatch(content, /table:\s*['"]cbt_exams_raw['"]/);
   }
@@ -18,7 +20,7 @@ test('exam Realtime listeners use the metadata-only published table', async () =
 
 test('creating an exam preserves question IDs for server-side grading', async () => {
   const [dashboard, paging, logic] = await Promise.all([
-    source('src/components/AdminDashboard.jsx'),
+    adminSource(),
     source('src/questionBankPaging.js'),
     source('src/examLogic.js')
   ]);
@@ -34,18 +36,21 @@ test('question images are uploaded to private storage instead of encoded into da
 });
 
 test('math is rendered only when the question explicitly delimits it', async () => {
-  const [content, html] = await Promise.all([
+  const [component, content, html] = await Promise.all([
     source('src/components/MathRenderer.jsx'),
+    source('src/mathRendering.js'),
     source('index.html')
   ]);
+  assert.match(component, /from '\.\.\/mathRendering'/);
   assert.match(content, /const mathRegex =/);
   assert.match(content, /import katex from 'katex'/);
+  assert.match(content, /trust: false/);
   assert.doesNotMatch(content, /\\\\\[a-zA-Z\]\+\(\?:\\\{/);
   assert.doesNotMatch(html, /cdn\.jsdelivr\.net/);
 });
 
 test('candidate-facing server errors distinguish exam rules from connectivity failures', async () => {
-  const content = await source('src/App.jsx');
+  const content = await readExamSource();
   assert.match(content, /function examActionErrorMessage/);
   assert.match(content, /already been submitted/);
   assert.match(content, /examActionErrorMessage\(err, 'start'\)/);
@@ -55,7 +60,7 @@ test('candidate-facing server errors distinguish exam rules from connectivity fa
 test('the browser bundle contains no personal developer email or browser-stored admin accounts', async () => {
   const [auth, admin] = await Promise.all([
     source('src/components/AuthPortal.jsx'),
-    source('src/components/AdminDashboard.jsx')
+    adminSource()
   ]);
   assert.doesNotMatch(auth, /hemanthmallela818@gmail\.com/i);
   assert.doesNotMatch(admin, /hemanthmallela818@gmail\.com/i);
@@ -64,8 +69,8 @@ test('the browser bundle contains no personal developer email or browser-stored 
 
 test('administrative access, timing, broad exam assignment, and storage rules are server-safe', async () => {
   const [app, admin, student, operationalMigration, assignmentMigration] = await Promise.all([
-    source('src/App.jsx'),
-    source('src/components/AdminDashboard.jsx'),
+    readExamSource(),
+    adminSource(),
     source('src/components/StudentDashboard.jsx'),
     source('supabase/migrations/20260909060000_operational_security_fixes.sql'),
     source('supabase/migrations/20260909070000_allow_global_exam_sessions.sql')
@@ -84,9 +89,9 @@ test('administrative access, timing, broad exam assignment, and storage rules ar
 
 test('account creation is server-provisioned and application tables never store passwords', async () => {
   const [edgeFunction, migration, admin] = await Promise.all([
-    source('supabase/functions/manage-student/index.ts'),
+    edgeSource(),
     source('supabase/migrations/20260910010000_secure_account_provisioning.sql'),
-    source('src/components/AdminDashboard.jsx')
+    adminSource()
   ]);
   assert.match(edgeFunction, /app_metadata:\s*\{\s*provisioned_by:\s*'admin',\s*provisioned_by_user:\s*user\.id,\s*account_type:\s*'student'/);
   assert.match(migration, /Accounts must be provisioned by an administrator/);
@@ -99,7 +104,7 @@ test('exam start, submit, and termination are server-owned and idempotent', asyn
     source('supabase/migrations/20260910040000_server_owned_exam_payload.sql'),
     source('supabase/migrations/20260910030000_make_submission_idempotent.sql'),
     source('supabase/migrations/20260910020000_harden_exam_termination.sql'),
-    source('src/App.jsx')
+    readExamSource()
   ]);
   assert.match(startMigration, /server_exam_data/);
   assert.match(startMigration, /pg_advisory_xact_lock/);
@@ -137,7 +142,7 @@ test('a clean installation has a server-only administrator bootstrap path', asyn
 
 test('offline recovery is account-bound, versioned, deadline-safe, and never replaces newer server progress', async () => {
   const [app, dashboard, logic, migration] = await Promise.all([
-    source('src/App.jsx'),
+    readExamSource(),
     source('src/components/StudentDashboard.jsx'),
     source('src/examLogic.js'),
     source('supabase/migrations/20260910160000_stage3_integrity_corrections.sql')
@@ -159,7 +164,7 @@ test('offline recovery is account-bound, versioned, deadline-safe, and never rep
 test('student takeover is bound to the signed Supabase auth session at the database boundary', async () => {
   const [auth, app, migration] = await Promise.all([
     source('src/components/AuthPortal.jsx'),
-    source('src/App.jsx'),
+    readExamSource(),
     source('supabase/migrations/20260910170000_server_enforced_student_sessions.sql')
   ]);
   assert.match(auth, /rpc\('claim_student_session'\)/);
@@ -176,7 +181,7 @@ test('student takeover is bound to the signed Supabase auth session at the datab
 
 test('submitted results are retained and unused exam deletion is atomic and audited', async () => {
   const [admin, migration] = await Promise.all([
-    source('src/components/AdminDashboard.jsx'),
+    adminSource(),
     source('supabase/migrations/20260910180000_stage5_academic_record_retention.sql')
   ]);
   assert.doesNotMatch(admin, /from\('student_results'\)\.delete/);
@@ -194,7 +199,7 @@ test('submitted results are retained and unused exam deletion is atomic and audi
 test('student removal is reversible and empty-class deletion is audited', async () => {
   const [auth, admin, migration] = await Promise.all([
     source('src/components/AuthPortal.jsx'),
-    source('src/components/AdminDashboard.jsx'),
+    adminSource(),
     source('supabase/migrations/20260910190000_stage5_student_class_retention.sql')
   ]);
   assert.match(auth, /account is inactive/i);
@@ -215,14 +220,16 @@ test('student removal is reversible and empty-class deletion is audited', async 
 
 test('operational cleanup finalizes expired attempts and audits question maintenance', async () => {
   const [admin, migration] = await Promise.all([
-    source('src/components/AdminDashboard.jsx'),
+    adminSource(),
     source('supabase/migrations/20260910200000_stage5_safe_operational_cleanup.sql')
   ]);
   assert.doesNotMatch(admin, /from\('question_bank'\)\.delete/);
   assert.doesNotMatch(admin, /from\(tableName\)\.delete/);
   assert.match(admin, /rpc\('admin_finalize_expired_sessions'/);
   assert.match(admin, /rpc\('admin_delete_question'/);
-  assert.match(admin, /rpc\('admin_clear_question_bank'/);
+  // Clearing the whole bank is root-only and goes through the audited root cleanup dialog.
+  assert.match(admin, /handleDeleteAllQuestions = \(\) => handleRootScopedClear\('question_bank'/);
+  assert.match(admin, /action: 'clear-scoped-data'/);
   assert.match(migration, /REVOKE DELETE ON public\.active_sessions/);
   assert.match(migration, /submit_exam_stage3_internal/);
   assert.match(migration, /deadline_at <= clock_timestamp\(\)/);
@@ -264,12 +271,12 @@ test('question imports are validated centrally and committed atomically with ide
 
 test('manual authoring and exam assembly reject incomplete required media', async () => {
   const [admin, editor, logic, migration] = await Promise.all([
-    source('src/components/AdminDashboard.jsx'),
+    adminSource(),
     source('src/components/QuestionEditor.jsx'),
     source('src/questionContentLogic.js'),
     source('supabase/migrations/20260910220000_stage6_question_content_and_media_integrity.sql')
   ]);
-  assert.match(admin, /prepareQuestionDraft\(question, selectedQData\)/);
+  assert.match(admin, /prepareQuestionDraft\(question, selectedQData(, \{ allowedSubjects: [A-Za-z]+ \})?\)/);
   assert.match(admin, /has_image_or_diagram: normalizedQuestion\.hasImageOrDiagram/);
   assert.match(editor, /image\/jpeg,image\/png,image\/webp/);
   assert.match(editor, /40000000/);
@@ -301,7 +308,7 @@ test('startup and render failures show a recoverable redacted incident screen', 
 
 test('administrators have an AAL2-only read-only health and audit view', async () => {
   const [admin, operationsView, migration] = await Promise.all([
-    source('src/components/AdminDashboard.jsx'),
+    adminSource(),
     source('src/components/AdminOperationsView.jsx'),
     source('supabase/migrations/20260910230000_stage7_operational_health.sql')
   ]);
@@ -317,7 +324,7 @@ test('administrators have an AAL2-only read-only health and audit view', async (
 
 test('material administrator mutations create server audit events without per-row bulk-import noise', async () => {
   const [edge, importMigration, auditMigration] = await Promise.all([
-    source('supabase/functions/manage-student/index.ts'),
+    edgeSource(),
     source('supabase/migrations/20260910210000_stage6_atomic_question_import.sql'),
     source('supabase/migrations/20260910240000_stage7_admin_action_audit.sql')
   ]);
@@ -335,7 +342,7 @@ test('material administrator mutations create server audit events without per-ro
 
 test('exam overlays and question status controls expose semantic accessibility state', async () => {
   const [app, modal, focus, offline, grid] = await Promise.all([
-    source('src/App.jsx'),
+    readExamSource(),
     source('src/components/AccessibleModal.jsx'),
     source('src/dialogFocus.js'),
     source('src/components/OfflineOverlay.jsx'),
@@ -358,7 +365,7 @@ test('exam overlays and question status controls expose semantic accessibility s
 
 test('large collections are complete, bounded, deferred, and refreshed without event storms', async () => {
   const [admin, student, pagination, indexes, examPaging] = await Promise.all([
-    source('src/components/AdminDashboard.jsx'),
+    adminSource(),
     source('src/components/StudentDashboard.jsx'),
     source('src/paginatedQuery.js'),
     source('supabase/migrations/20260910250000_stage8_scale_indexes.sql'),
@@ -379,7 +386,7 @@ test('large collections are complete, bounded, deferred, and refreshed without e
 
 test('authenticated dashboards retain usable mobile layouts and announce load failures', async () => {
   const [admin, student, css] = await Promise.all([
-    source('src/components/AdminDashboard.jsx'),
+    adminSource(),
     source('src/components/StudentDashboard.jsx'),
     source('src/index.css')
   ]);
@@ -396,7 +403,7 @@ test('authenticated dashboards retain usable mobile layouts and announce load fa
 
 test('the active exam remains usable on narrow screens with announced save and network state', async () => {
   const [app, navbar, question, grid, css] = await Promise.all([
-    source('src/App.jsx'),
+    readExamSource(),
     source('src/components/ExamNavbar.jsx'),
     source('src/components/QuestionPanel.jsx'),
     source('src/components/GridPanel.jsx'),

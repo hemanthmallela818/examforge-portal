@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { readExamSourceSync } from './support/examSource.mjs';
 
 test('Stage 12: Staging rehearsal script enforces concurrency, backoff, and isolation contracts', () => {
   const rehearsalPath = resolve('scripts/rehearse-staging.mjs');
@@ -45,8 +46,7 @@ test('Stage 12: Single active device enforcement and session token binding contr
   assert.match(authContent, /claim_student_session/, 'AuthPortal must call claim_student_session RPC on student login');
   assert.match(authContent, /sessionToken|session_id/, 'AuthPortal must store claimed session token');
 
-  const appPath = resolve('src/App.jsx');
-  const appContent = readFileSync(appPath, 'utf8');
+  const appContent = readExamSourceSync();
 
   // App intercepts replaced session error and preserves attempt work
   assert.match(appContent, /isStudentSessionReplaced/, 'App.jsx must check for session replacement');

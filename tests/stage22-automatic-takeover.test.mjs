@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { readExamSource } from './support/examSource.mjs';
 import { PGlite } from '@electric-sql/pglite';
 
 const migrationUrl = new URL(
@@ -180,7 +181,7 @@ test('Stage 22 atomically takes over a student session without disclosing the re
 test('Stage 22 browser and database contracts preserve recovery and lock rejected devices', async () => {
   const [migration, app, authPortal, examAuthority] = await Promise.all([
     readFile(migrationUrl, 'utf8'),
-    readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
+    readExamSource(),
     readFile(new URL('../src/components/AuthPortal.jsx', import.meta.url), 'utf8'),
     readFile(new URL('../supabase/migrations/20260912103740_stage21_exam_authority_function_hardening.sql', import.meta.url), 'utf8')
   ]);

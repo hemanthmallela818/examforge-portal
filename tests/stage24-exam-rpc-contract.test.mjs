@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { readExamSource } from './support/examSource.mjs';
+import { adminSource } from './support/adminSource.mjs';
 
 test('Stage 24 restores the named PostgREST contract for all exam-flow RPCs', async () => {
   const migration = await readFile(
@@ -28,7 +30,7 @@ test('Stage 24 restores the named PostgREST contract for all exam-flow RPCs', as
 test('offline recovery retains the exam title needed after a full browser reload', async () => {
   const [examLogic, app] = await Promise.all([
     readFile(new URL('../src/examLogic.js', import.meta.url), 'utf8'),
-    readFile(new URL('../src/App.jsx', import.meta.url), 'utf8')
+    readExamSource()
   ]);
 
   assert.match(examLogic, /activeExam:\s*\{[\s\S]*id: examId,[\s\S]*title: examTitle\.trim\(\)/);
@@ -36,17 +38,25 @@ test('offline recovery retains the exam title needed after a full browser reload
 });
 
 test('the safety-critical offline overlay is bundled before the connection is lost', async () => {
-  const app = await readFile(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  const [app, activeExamView, examSource] = await Promise.all([
+    readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/features/exam/ActiveExamView.jsx', import.meta.url), 'utf8'),
+    readExamSource()
+  ]);
 
-  assert.match(app, /import OfflineOverlay from ['"]\.\/components\/OfflineOverlay['"]/);
-  assert.doesNotMatch(app, /lazy\(\(\) => import\(['"]\.\/components\/OfflineOverlay['"]\)\)/);
+  // App statically imports the active exam screen, which statically imports the
+  // overlay, so the overlay ships in the entry chunk rather than a lazy chunk.
+  assert.match(app, /import ActiveExamView from ['"]\.\/features\/exam\/ActiveExamView['"]/);
+  assert.doesNotMatch(app, /lazy\(\(\) => import\(['"]\.\/features\/exam\/ActiveExamView['"]\)\)/);
+  assert.match(activeExamView, /import OfflineOverlay from ['"]\.\.\/\.\.\/components\/OfflineOverlay['"]/);
+  assert.doesNotMatch(examSource, /lazy\(\(\) => import\([^)]*OfflineOverlay['"]\)\)/);
 });
 
 test('browser logout is session-local so an old device cannot revoke a takeover session', async () => {
   const files = await Promise.all([
-    readFile(new URL('../src/App.jsx', import.meta.url), 'utf8'),
+    readExamSource(),
     readFile(new URL('../src/components/AuthPortal.jsx', import.meta.url), 'utf8'),
-    readFile(new URL('../src/components/AdminDashboard.jsx', import.meta.url), 'utf8')
+    adminSource()
   ]);
 
   const combined = files.join('\n');

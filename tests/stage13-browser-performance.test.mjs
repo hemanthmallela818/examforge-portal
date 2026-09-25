@@ -2,13 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { adminSourceSync } from './support/adminSource.mjs';
 
 test('administrator analytics are loaded only when the exam detail needs charts', () => {
-  const dashboard = readFileSync(resolve('src/components/AdminDashboard.jsx'), 'utf8');
+  const dashboard = adminSourceSync();
   const charts = readFileSync(resolve('src/components/AdminAnalyticsCharts.jsx'), 'utf8');
 
   assert.doesNotMatch(dashboard, /from ['"]recharts['"]/, 'Main administrator chunk must not statically import Recharts');
-  assert.match(dashboard, /React\.lazy\(\(\) => import\(['"]\.\/AdminAnalyticsCharts['"]\)\)/);
+  // The exam detail lives in src/features/admin/exams/, so the lazy import is relative to it.
+  assert.match(dashboard, /React\.lazy\(\(\) => import\(['"](?:\.\/|(?:\.\.\/)+components\/)AdminAnalyticsCharts['"]\)\)/);
   assert.match(dashboard, /<React\.Suspense[\s\S]*?<AdminAnalyticsCharts/);
   assert.match(charts, /from ['"]recharts['"]/, 'Lazy analytics chunk must own the chart dependency');
 });
