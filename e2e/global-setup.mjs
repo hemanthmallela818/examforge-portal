@@ -148,6 +148,7 @@ export default async function globalSetup() {
     const recoveryStudentId = `E2E${suffix}401`;
     const storageStudentId = `E2E${suffix}501`;
     const accessibilityStudentId = `E2E${suffix}601`;
+    const singleTabStudentId = `E2E${suffix}701`;
     const adminEmail = `admin-${project}@e2e.local`;
     const operationsAdminEmail = `operations-${project}@e2e.local`;
     const exportAdminEmail = `exports-${project}@e2e.local`;
@@ -264,6 +265,11 @@ export default async function globalSetup() {
       studentId: accessibilityStudentId,
       purpose: 'Accessibility'
     });
+    const singleTabStudentUser = await ensureStudentFixture({
+      project,
+      studentId: singleTabStudentId,
+      purpose: 'Single tab'
+    });
 
     credentials[project] = {
       root: { email: ROOT_EMAIL, password: ADMIN_PASSWORD, id: rootUser.id },
@@ -324,6 +330,12 @@ export default async function globalSetup() {
         email: `${accessibilityStudentId.toLowerCase()}@students.examforge.invalid`,
         password: STUDENT_PASSWORD,
         id: accessibilityStudentUser.id
+      },
+      singleTabStudent: {
+        studentId: singleTabStudentId,
+        email: `${singleTabStudentId.toLowerCase()}@students.examforge.invalid`,
+        password: STUDENT_PASSWORD,
+        id: singleTabStudentUser.id
       }
     };
   }
@@ -335,7 +347,8 @@ export default async function globalSetup() {
     reliabilityStudent,
     recoveryStudent,
     storageStudent,
-    accessibilityStudent
+    accessibilityStudent,
+    singleTabStudent
   }) => [
     student.id,
     authStudent.id,
@@ -343,7 +356,8 @@ export default async function globalSetup() {
     reliabilityStudent.id,
     recoveryStudent.id,
     storageStudent.id,
-    accessibilityStudent.id
+    accessibilityStudent.id,
+    singleTabStudent.id
   ]);
   const { error: resetClaimError } = await service
     .from('students')
