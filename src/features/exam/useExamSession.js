@@ -51,6 +51,7 @@ import { useExamNavigation } from './useExamNavigation';
  * @typedef {import('./examSessionHelpers').ActiveExam} ActiveExam
  * @typedef {import('./examSessionHelpers').Scorecard} Scorecard
  * @typedef {{ preserveAttempt?: boolean }} SafeLogoutOptions
+ * @typedef {import('./examSessionHelpers').TerminationReason} TerminationReason
  * @typedef {'SAVED' | 'SAVING' | 'RETRYING' | 'OFFLINE' | 'FAILED' | 'LOCKED' | 'CONFLICT'} AutosaveStatus
  * @typedef {import('../../types').ActiveExamSessionMirror & {
  *   subjectTimeSeconds?: Record<string, number>
@@ -59,6 +60,24 @@ import { useExamNavigation } from './useExamNavigation';
 
 /** @type {QuestionResponse} */
 const NOT_VISITED_RESPONSE = { selectedOption: null, status: 'NOT_VISITED' };
+
+// How long "Ending your exam…" waits for the server before recording the
+// termination for a later retry and showing the terminated screen anyway.
+const TERMINATE_REQUEST_TIMEOUT_MS = 10_000;
+
+/**
+ * @template T
+ * @param {PromiseLike<T>} request
+ * @param {number} ms
+ * @returns {Promise<T>}
+ */
+const withTimeout = (request, ms) => new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('The request timed out.')), ms);
+  Promise.resolve(request).then(
+    value => { clearTimeout(timer); resolve(value); },
+    error => { clearTimeout(timer); reject(error); }
+  );
+});
 
 /**
  * @param {{
@@ -100,7 +119,12 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
   const safeLogoutRef = useRef(/** @type {((options?: SafeLogoutOptions) => void) | null} */ (null));
   const studentSessionLockedRef = useRef(false);
   const [studentSessionLocked, setStudentSessionLocked] = useState(false);
-  const terminateExamRef = useRef(/** @type {(() => Promise<void>) | undefined} */ (undefined));
+  const terminateExamRef = useRef(/** @type {((reason?: TerminationReason) => Promise<void>) | undefined} */ (undefined));
+  // Termination waits for the server before the "Exam Terminated" screen, so a
+  // quick return to the dashboard never shows the attempt as still open.
+  const terminatingRef = useRef(false);
+  const [isTerminating, setIsTerminating] = useState(false);
+  const [terminationReason, setTerminationReason] = useState(/** @type {TerminationReason | null} */ (null));
   const confirmSubmitExamRef = useRef(/** @type {(() => Promise<void>) | undefined} */ (undefined));
 
   const {
@@ -108,9 +132,14 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
     isAlertingRef,
     lockdownActiveRef,
     lockdownActive,
+    warning,
     clearLockdown,
     handleReturnToExam
-  } = useExamLockdown({ active: examState === 'ACTIVE', terminateExamRef });
+  } = useExamLockdown({
+    active: examState === 'ACTIVE',
+    terminateExamRef,
+    warningScope: { student: currentStudent, examId: activeExam?.id }
+  });
 
   // Only the transition to "deadline reached" re-renders the session; the
   // per-second countdown text is rendered by ExamNavbar's own clock subscriber.
@@ -494,30 +523,33 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
     return () => clearTimeout(timer);
   }, [userResponses, examState, currentStudent, activeExam, examData, activeSubject, currentIndices, offlineSince, handleSafeLogout]);
 
-  const terminateExam = useCallback(async () => {
-    if (studentSessionLockedRef.current) return;
-    setExamState('TERMINATED');
-    clearLockdown();
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(err => console.error(err));
-    }
+  const terminateExam = useCallback(async (/** @type {TerminationReason} */ reason = 'ended') => {
+    if (studentSessionLockedRef.current || terminatingRef.current) return;
+    terminatingRef.current = true;
+    // No further warnings while the attempt is being ended.
+    isAlertingRef.current = true;
+    setTerminationReason(reason);
+    setIsTerminating(true);
 
     if (currentStudent && activeExam) {
       try {
-        const { error } = await supabase.rpc('terminate_exam', {
-          exam_id_param: activeExam.id
-        });
+        const { error } = await withTimeout(
+          supabase.rpc('terminate_exam', { exam_id_param: activeExam.id }),
+          TERMINATE_REQUEST_TIMEOUT_MS
+        );
         if (error) throw error;
-        clearOfflineRecoveryRecord({ student: currentStudent, examId: activeExam.id, userUuid: currentStudent.docId });
       } catch (err) {
         console.error("Failed to persist termination result:", err);
         if (isStudentSessionReplaced(err)) {
+          terminatingRef.current = false;
+          setIsTerminating(false);
           studentSessionLockedRef.current = true;
           setStudentSessionLocked(true);
           handleSafeLogout({ preserveAttempt: true });
           setTimeout(() => customAlert(examActionErrorMessage(err, 'submit')), 100);
           return;
         }
+        // Retried on the next sign-in or reconnect; terminate_exam is idempotent.
         if (!savePendingTerminationRecord({
           student: currentStudent,
           examId: activeExam.id,
@@ -526,8 +558,19 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
           console.error('Failed to cache pending termination: browser storage unavailable.');
         }
       }
+      // The attempt is over on this device either way: never offer to resume it.
+      clearOfflineRecoveryRecord({ student: currentStudent, examId: activeExam.id, userUuid: currentStudent.docId });
     }
-  }, [currentStudent, activeExam, handleSafeLogout, clearLockdown, setExamState]);
+
+    terminatingRef.current = false;
+    setIsTerminating(false);
+    clearLockdown();
+    setExamState('TERMINATED');
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(err => console.error(err));
+    }
+    navigator.keyboard?.unlock?.();
+  }, [currentStudent, activeExam, handleSafeLogout, clearLockdown, setExamState, isAlertingRef]);
 
   useEffect(() => {
     terminateExamRef.current = terminateExam;
@@ -930,6 +973,9 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
     studentSessionLocked,
     // Lockdown
     lockdownActive,
+    warning,
+    isTerminating,
+    terminationReason,
     handleReturnToExam,
     // Submission
     showSubmitModal,
