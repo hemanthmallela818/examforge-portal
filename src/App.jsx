@@ -8,6 +8,8 @@ import LiveAnnouncer from './components/LiveAnnouncer';
 import ActiveExamView from './features/exam/ActiveExamView';
 import { readStoredActiveSession, readStoredStudent } from './features/exam/examSessionHelpers';
 import { useExamSession } from './features/exam/useExamSession';
+import { useSingleExamTab } from './features/exam/useSingleExamTab';
+import ExamTabLockedView from './features/exam/ExamTabLockedView';
 import { refreshBranding } from './branding/brandingStore';
 
 const AdminDashboard = lazy(() => import('./components/AdminDashboard'));
@@ -133,8 +135,15 @@ function App() {
     }
   }, [currentStudent]);
 
+  // One tab per student may run the exam. Other tabs see a blocking screen and
+  // the session hook treats them as not in the exam (no timers, autosave or lockdown).
+  const examTabStatus = useSingleExamTab(
+    (examState === 'PRE_EXAM' || examState === 'ACTIVE') ? currentStudent?.docId : null
+  );
+  const examTabOwner = examTabStatus === 'owner';
+
   const session = useExamSession({
-    examState,
+    examState: examTabOwner ? examState : 'EXAM_TAB_LOCKED',
     setExamState,
     currentStudent,
     setCurrentStudent,
@@ -171,7 +180,11 @@ function App() {
           <AdminDashboard onBackToLogin={handleAdminBackToLogin} />
         </Suspense>
       )}
-      {examState === 'PRE_EXAM' && (
+      {!examTabOwner && examTabStatus === 'checking' && <LoadingBlock label="Opening exam…" className="min-h-dvh bg-slate-50" />}
+      {(examTabStatus === 'blocked' || examTabStatus === 'free') && (
+        <ExamTabLockedView status={examTabStatus} onContinueHere={() => window.location.reload()} />
+      )}
+      {examTabOwner && examState === 'PRE_EXAM' && (
         <PreExam
           startExam={startExam}
           activeExamId={activeExam?.id}
@@ -187,7 +200,7 @@ function App() {
       {examState === 'SUBMITTED' && (
         <Result results={results} onBackToDashboard={() => setExamState(currentStudent ? 'STUDENT_DASHBOARD' : 'AUTH')} />
       )}
-      {examState === 'ACTIVE' && (
+      {examTabOwner && examState === 'ACTIVE' && (
         <ActiveExamView session={session} currentStudent={currentStudent} />
       )}
       </Suspense>
