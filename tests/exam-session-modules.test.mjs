@@ -68,3 +68,42 @@ test('autosave and subject timing keep their debounce and interval contracts', a
   assert.match(examSource, /retryDelayMs\(retry, \{ capMs: 5000 \}\)/);
   assert.match(examSource, /attempt >= 4 \|\| !isTransientRpcError\(submitError/);
 });
+
+test('the lockdown warning count is kept per student and attempt, and cleared when the attempt ends', async () => {
+  const { readExamWarningCount, saveExamWarningCount, clearOfflineRecoveryRecord } = await import('../src/examLogic.js');
+  const values = new Map();
+  const storage = {
+    getItem: k => (values.has(k) ? values.get(k) : null),
+    setItem: (k, v) => { values.set(k, String(v)); },
+    removeItem: k => { values.delete(k); }
+  };
+  const student = { id: 'ABC123', docId: 'uuid-1', name: 'Student' };
+  const other = { id: 'XYZ999', docId: 'uuid-2', name: 'Other' };
+
+  assert.equal(readExamWarningCount({ student, examId: 'exam-1', storage }), 0);
+  assert.equal(saveExamWarningCount({ student, examId: 'exam-1', storage, count: 2 }), true);
+  assert.equal(readExamWarningCount({ student, examId: 'exam-1', storage }), 2);
+  assert.equal(readExamWarningCount({ student, examId: 'exam-2', storage }), 0, 'another exam starts at zero');
+  assert.equal(readExamWarningCount({ student: other, examId: 'exam-1', storage }), 0, 'another student starts at zero');
+
+  values.set([...values.keys()][0], 'not a number');
+  assert.equal(readExamWarningCount({ student, examId: 'exam-1', storage }), 0, 'corrupt values read as zero');
+
+  saveExamWarningCount({ student, examId: 'exam-1', storage, count: 1 });
+  clearOfflineRecoveryRecord({ student, examId: 'exam-1', userUuid: student.docId, storage });
+  assert.equal(readExamWarningCount({ student, examId: 'exam-1', storage }), 0, 'ending the attempt clears the count');
+});
+
+test('only leaving the exam is a counted warning; blocked actions are explained, not counted', async () => {
+  const lockdown = await source('src/features/exam/useExamLockdown.js');
+  const { MAX_EXAM_WARNINGS, examLeaveReasonText, examWarningConsequenceText } = await import('../src/features/exam/useExamLockdown.js');
+  assert.equal(MAX_EXAM_WARNINGS, 2);
+  assert.match(examLeaveReasonText('tab'), /another tab, window or app/);
+  assert.match(examLeaveReasonText('fullscreen'), /fullscreen/);
+  assert.equal(examWarningConsequenceText(1), 'Your exam will end automatically if you leave it 2 more times.');
+  assert.equal(examWarningConsequenceText(2), 'Your exam will end automatically if you leave it again.');
+  assert.match(lockdown, /handleContextMenu = \(e\) => blockAction\(/);
+  assert.match(lockdown, /handleClipboardOrDrag = \(event\) => blockAction\(/);
+  assert.match(lockdown, /handleLeave\('tab'\)/);
+  assert.match(lockdown, /handleLeave\('fullscreen'\)/);
+});

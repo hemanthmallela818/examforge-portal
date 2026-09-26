@@ -18,6 +18,12 @@ import { sessionBelongsToStudent, RECOVERY_SCHEMA_VERSION } from '../../examLogi
  */
 
 /**
+ * Why an attempt was ended early: the student left the exam (another tab,
+ * window or app, or fullscreen) once too often, or it was ended another way.
+ * @typedef {import('./useExamLockdown').ExamLeaveReason | 'ended'} TerminationReason
+ */
+
+/**
  * An exam as listed on the student dashboard and held as the active exam.
  * @typedef {{
  *   id: string,

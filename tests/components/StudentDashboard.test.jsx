@@ -99,3 +99,24 @@ describe('StudentDashboard grouping (U13)', () => {
     expect(screen.queryByRole('region', { name: /Completed/ })).toBeNull();
   });
 });
+
+describe('StudentDashboard after a termination', () => {
+  it('never offers Start or Resume for an attempt ended on this device before its result arrives', async () => {
+    const { savePendingTerminationRecord } = await import('../../src/examLogic');
+    savePendingTerminationRecord({ student, examId: 'live', userUuid: student.docId });
+    // A stale "in progress" record for the same exam must not bring back Resume.
+    localStorage.setItem('cbt_active_exam_session', JSON.stringify({
+      studentId: student.id, userUuid: student.docId, activeExam: { id: 'live' }, endTime: Date.now() + 60_000
+    }));
+    vi.mocked(fetchAllRows)
+      .mockResolvedValueOnce(rows.results)
+      .mockResolvedValueOnce(rows.exams);
+    render(<StudentDashboard student={student} onLogout={vi.fn()} onStartExam={vi.fn()} onViewResult={vi.fn()} />);
+
+    const completed = await screen.findByRole('region', { name: /Completed/ });
+    const card = /** @type {HTMLElement} */ (within(completed).getByText('Live Mock').closest('.student-exam-card'));
+    expect(within(card).getByText('Ended, result pending')).toBeTruthy();
+    expect(within(card).queryByRole('button', { name: /Start Exam|Resume Exam/ })).toBeNull();
+    expect(screen.queryByRole('region', { name: /Live now/ })).toBeNull();
+  });
+});

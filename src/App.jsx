@@ -150,7 +150,7 @@ function App() {
     setResults,
     initialActiveSession: initialActiveSession.current
   });
-  const { handleSafeLogout, handleStudentLogin, handleStartExamFlow, startExam, activeExam, examData } = session;
+  const { handleSafeLogout, handleStudentLogin, handleStartExamFlow, startExam, activeExam, examData, terminationReason } = session;
   const handleAdminBackToLogin = useCallback(() => setExamState('AUTH'), []);
 
   return (
@@ -195,7 +195,11 @@ function App() {
         />
       )}
       {examState === 'TERMINATED' && (
-        <Terminated onBackToDashboard={() => setExamState(currentStudent ? 'STUDENT_DASHBOARD' : 'AUTH')} />
+        <Terminated
+          reason={terminationReason}
+          onBackToDashboard={() => setExamState(currentStudent ? 'STUDENT_DASHBOARD' : 'AUTH')}
+          onLogout={() => handleSafeLogout()}
+        />
       )}
       {examState === 'SUBMITTED' && (
         <Result results={results} onBackToDashboard={() => setExamState(currentStudent ? 'STUDENT_DASHBOARD' : 'AUTH')} />

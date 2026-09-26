@@ -83,6 +83,38 @@ export function formatRecoveryStorageKey(studentKey, examId) {
 }
 
 /**
+ * How many lockdown warnings the student has had in this attempt. Kept on the
+ * device so reloading the exam page cannot reset the count.
+ * @param {unknown} studentKey
+ * @param {unknown} examId
+ * @returns {string}
+ */
+export function formatExamWarningsStorageKey(studentKey, examId) {
+  return `cbt_exam_warnings_v${RECOVERY_SCHEMA_VERSION}_${studentKey}_${examId}`;
+}
+
+/**
+ * @param {StudentExamScope} scope
+ * @returns {number} 0 when nothing (or nothing valid) is stored.
+ */
+export function readExamWarningCount({ student, examId, userUuid, storage }) {
+  const studentKey = studentStorageKey(student, userUuid);
+  if (!studentKey || !examId) return 0;
+  const count = Number.parseInt(storageGet(storage, formatExamWarningsStorageKey(studentKey, examId)) || '', 10);
+  return Number.isInteger(count) && count > 0 ? count : 0;
+}
+
+/**
+ * @param {StudentExamScope & { count: number }} scope
+ * @returns {boolean}
+ */
+export function saveExamWarningCount({ student, examId, userUuid, storage, count }) {
+  const studentKey = studentStorageKey(student, userUuid);
+  if (!studentKey || !examId) return false;
+  return storageSet(storage, formatExamWarningsStorageKey(studentKey, examId), String(Math.max(0, Math.trunc(count))));
+}
+
+/**
  * @param {unknown} studentKey
  * @param {unknown} examId
  * @returns {string}
@@ -508,6 +540,7 @@ export function clearOfflineRecoveryRecord({ student, examId, userUuid, storage 
   if (student && examId) {
     const studentKey = userUuid || student.docId || student.id;
     storageRemove(storage, formatRecoveryStorageKey(studentKey, examId));
+    storageRemove(storage, formatExamWarningsStorageKey(studentKey, examId));
   }
   const mirrorRaw = storageGet(storage, 'cbt_active_exam_session');
   try {

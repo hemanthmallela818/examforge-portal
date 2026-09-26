@@ -8,7 +8,8 @@ import {
   clearOfflineRecoveryRecord,
   readPendingSubmissionRecord,
   beginPendingSubmissionSync,
-  finishPendingSubmissionSync
+  finishPendingSubmissionSync,
+  readPendingTerminationRecord
 } from '../examLogic';
 import { fetchAllRows } from '../paginatedQuery';
 import { useRemainingSeconds } from '../features/exam/examClock';
@@ -40,10 +41,11 @@ const EXAM_GROUPS = [
 /**
  * @param {DashboardExam} exam
  * @param {Set<string>} completedExams
+ * @param {string | null} endingExamId exam ended on this device whose result has not reached the server yet
  * @returns {ExamGroupKey}
  */
-const examGroupOf = (exam, completedExams) => {
-  if (completedExams.has(exam.id)) return 'completed';
+const examGroupOf = (exam, completedExams, endingExamId) => {
+  if (completedExams.has(exam.id) || exam.id === endingExamId) return 'completed';
   if (exam.status === 'ACTIVE') return 'live';
   if (exam.status === 'ENDED') return 'ended';
   return 'upcoming';
@@ -234,6 +236,13 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
     return null;
   })();
 
+  // An attempt ended on this device (terminated) whose result is still on its
+  // way to the server. It is over: never offer Start or Resume for it.
+  const endingExamId = (() => {
+    const pending = readPendingTerminationRecord({ student, userUuid: student?.docId });
+    return pending?.examId ? String(pending.examId) : null;
+  })();
+
   const syncPendingOfflineSubmission = async () => {
     if (!pendingSubmissionExamId) return;
     const parsed = readPendingSubmissionRecord({
@@ -421,9 +430,9 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
   const groupedExams = useMemo(() => {
     /** @type {Record<ExamGroupKey, DashboardExam[]>} */
     const groups = { live: [], upcoming: [], completed: [], ended: [] };
-    exams.forEach(exam => groups[examGroupOf(exam, completedExams)].push(exam));
+    exams.forEach(exam => groups[examGroupOf(exam, completedExams, endingExamId)].push(exam));
     return groups;
-  }, [exams, completedExams]);
+  }, [exams, completedExams, endingExamId]);
 
   // Oldest to newest, using the exam creation order the list already carries.
   const trendPoints = useMemo(() => [...groupedExams.completed]
@@ -551,6 +560,7 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
                     <div className={cn('flex flex-col gap-3 *:flex *:flex-col *:gap-4 *:rounded-xl *:border *:bg-white', group.cardBorder, '*:p-5 *:transition-shadow *:hover:shadow-card sm:*:flex-row sm:*:items-center sm:*:justify-between')}>
                       {groupExams.map(exam => {
                         const isCompleted = completedExams.has(exam.id);
+                        const isEnding = !isCompleted && exam.id === endingExamId;
                         const isActive = exam.status === 'ACTIVE';
                         const isPending = exam.status === 'PENDING';
                         const isEnded = exam.status === 'ENDED';
@@ -565,6 +575,8 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
                                 <h5 className="min-w-0 break-words text-base font-semibold text-slate-900">{exam.title}</h5>
                                 {isCompleted ? (
                                   <Badge variant="success"><CheckCircle2 aria-hidden="true" /> Completed</Badge>
+                                ) : isEnding ? (
+                                  <Badge variant="warning"><CloudUpload aria-hidden="true" /> Ended, result pending</Badge>
                                 ) : isEnded ? (
                                   <Badge variant="neutral"><CircleStop aria-hidden="true" /> Ended</Badge>
                                 ) : isPending ? (
@@ -584,7 +596,12 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
                                   </span>
                                 )}
                               </div>
-                              {!isCompleted && isActive && isResumable && (
+                              {isEnding && (
+                                <p className="mt-2 inline-flex items-center gap-1.5 text-sm text-slate-600">
+                                  <CloudUpload className="size-4 shrink-0 text-amber-600" aria-hidden="true" /> This attempt was ended. Your result will appear once it reaches the exam server.
+                                </p>
+                              )}
+                              {!isCompleted && !isEnding && isActive && isResumable && (
                                 <AttemptCountdown endTime={/** @type {number} */ (activeLocalSession?.endTime)} />
                               )}
                               {!isCompleted && isPending && (
@@ -605,7 +622,7 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
                                     <BarChart3 aria-hidden="true" /> View Scorecard
                                   </Button>
                                 )
-                              ) : isEnded ? (
+                              ) : isEnding ? null : isEnded ? (
                                 <span className="text-sm text-slate-500">This exam has ended.</span>
                               ) : isActive ? (
                                 <Button
