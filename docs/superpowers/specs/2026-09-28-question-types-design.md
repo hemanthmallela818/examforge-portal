@@ -150,10 +150,12 @@ One SQL helper, `assert_valid_question_details(type, details)`, holds these rule
 The unique index `question_bank_canonical_text_unique` is recreated on:
 
 ```
-md5(canonical_question_text(question_text) || '|' || COALESCE(details::text, ''))
+md5(canonical_question_text(question_text) || '|' || COALESCE((details #- '{passage,key}')::text, ''))
 ```
 
 Without this, every "Match List-I with List-II…" stem, and every short follow-up question in a paragraph set, would collide with the first one. Rows without `details` keep their current duplicate behaviour.
+
+The paragraph key is left out of the key, so the same question under the same paragraph text is still a duplicate when it arrives in a new set, for example through a re-import.
 
 Three places use the same key:
 
@@ -319,6 +321,8 @@ Invalid answers raise the same errors as today's invalid MCQ and numerical answe
   - Rows sharing a key form one set and must have identical text.
   - A mismatch is reported as the new row error `ROW_PASSAGE_MISMATCH`.
   - Each file-local key becomes a fresh UUID for the import batch, so an import always creates new sets.
+  - Retrying the same batch reuses the same UUIDs, so the retried payload is identical.
+  - A row whose question and paragraph text already exist in the bank is reported as a duplicate.
 - **New row errors:** `ROW_INVALID_MULTI_ANSWER`, `ROW_INVALID_INTEGER_ANSWER`, `ROW_INVALID_MATCH_LISTS`, and `ROW_PASSAGE_MISMATCH`.
 - **The atomic import payload** gains `details`.
 - **The AI importer prompt** and the per-row editors cover the new types.
@@ -334,6 +338,8 @@ Invalid answers raise the same errors as today's invalid MCQ and numerical answe
 
   Old cached app bundles do not understand the new types, but no exam can contain them until someone authors one.
 - Sessions in progress during the deployment grade identically, because their papers have no `marking` and only old types.
+- The migration sets a 5-second `lock_timeout`, so it fails fast instead of making live submissions wait behind its table locks. Apply it outside exam windows, and re-run it if it times out.
+- Stored exam papers are re-checked on every status change. That check does not add the "no options on value questions" rule, which applies only when a paper is saved with its answers, so ending an existing exam cannot start failing.
 
 ## 12. Testing
 

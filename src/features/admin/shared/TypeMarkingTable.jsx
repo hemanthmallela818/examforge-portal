@@ -17,7 +17,8 @@ import { questionTypeInfo } from '../../../questionTypes';
 export default function TypeMarkingTable({ types, marking, defaults, onChange, locked = false }) {
   const idPrefix = useId();
   const current = marking || {};
-  const rows = [...new Set(types.flatMap(type => questionTypeInfo(type)?.code || []))];
+  // Types that still hold values stay visible, so a value can always be fixed.
+  const rows = [...new Set([...types, ...Object.keys(current)].flatMap(type => questionTypeInfo(type)?.code || []))];
   if (rows.length === 0) return null;
 
   /**

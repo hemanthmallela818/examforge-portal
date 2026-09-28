@@ -146,6 +146,15 @@ describe('CreateExamCard', () => {
     expect(createButton().disabled).toBe(false);
   });
 
+  it('keeps a type with marks visible after its questions are deselected', async () => {
+    const { rerenderWith } = renderCard(['q1', 'q2']);
+    const table = () => screen.getByRole('group', { name: 'Marking by question type' });
+    await user.type(within(table()).getByLabelText('Multiple correct: marks for a wrong answer'), '2');
+    rerenderWith(['q1']);
+    expect(within(table()).getByLabelText('Multiple correct: marks for a wrong answer').value).toBe('2');
+    expect(screen.getByRole('alert').textContent).toContain('Multiple correct: marks for a wrong answer');
+  });
+
   it('shows no per-type table before questions are selected', () => {
     renderCard();
     expect(screen.queryByRole('group', { name: 'Marking by question type' })).toBeNull();

@@ -57,6 +57,18 @@ describe('StudentAnswerReviewModal', () => {
     expect(mcq.textContent).not.toContain('Correct answer:');
   });
 
+  it('shows the paragraph of a paragraph-set question', () => {
+    const withPassage = { ...paper, questions: { Physics: [{ ...paper.questions.Physics[2], details: { passage: { key: 'k', text: 'A lamp is rated 60 W.' } } }] } };
+    renderModal({
+      paper: withPassage,
+      snapshot_format: 'by_question_id',
+      responses: { 'q-mcq': { question_id: 'q-mcq', selected_option: 1, status: 'ANSWERED' } },
+      question_scores: { 'q-mcq': { outcome: 'CORRECT', marks: 4 } }
+    });
+    expect(screen.getByText('Paragraph')).toBeTruthy();
+    expect(screen.getByText('A lamp is rated 60 W.')).toBeTruthy();
+  });
+
   it('withholds the per-question view for older positional snapshots', () => {
     renderModal({ snapshot_format: 'legacy_position', responses: { Physics: [{ selectedOption: 1, status: 'ANSWERED' }] } });
     expect(screen.getByText(/Per-question review is unavailable for attempts submitted before this update/)).toBeTruthy();

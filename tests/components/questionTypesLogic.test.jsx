@@ -49,6 +49,15 @@ describe('exam assembly', () => {
     expect(record.questions_data.marking).toEqual({ MCQ: { correct: 3, incorrect: -1 }, MULTIPLE_CORRECT: { partial: false } });
   });
 
+  it('orders a paragraph set by question number whatever the selection order', () => {
+    const numbered = (id, number) => ({ ...question(id, 'Physics', 'MCQ', passage('k2')), questionNumber: number });
+    const record = assembleExamRecord({
+      title: 'Paper', targetClass: '12', targetSection: 'A', duration: 60, marksCorrect: 4, marksIncorrect: -1,
+      template: null, questions: [question('x', 'Physics'), numbered('third', 9), numbered('first', 3), numbered('second', 5)], compareSubjects: null
+    });
+    expect(record.questions_data.questions.Physics.map(q => q.id)).toEqual(['x', 'first', 'second', 'third']);
+  });
+
   it('omits marking when nothing is set', () => {
     expect(compactMarking({ MCQ: {}, INTEGER: { correct: '' } })).toBeUndefined();
     const record = assembleExamRecord({

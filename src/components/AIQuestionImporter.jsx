@@ -210,6 +210,8 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank, allowedSubjec
   const [importStats, setImportStats] = useState({ success: 0, rejected: 0, total: 0 });
   const [fileName, setFileName] = useState('');
   const [importBatchId, setImportBatchId] = useState(/** @type {string | null} */ (null));
+  // Paragraph UUIDs for the current batch; a retry of the same batch reuses them.
+  const passageIdsRef = useRef(/** @type {{ batchId: string | null, ids: Map<string, string> }} */ ({ batchId: null, ids: new Map() }));
   const [readingFile, setReadingFile] = useState(false);
 
   const fileInputRef = useRef(/** @type {HTMLInputElement | null} */ (null));
@@ -469,7 +471,10 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank, allowedSubjec
       setImporting(true);
       setImportProgress(0);
       setImportStats({ success: 0, rejected: 0, total: approvedQs.length });
-      const payload = buildAtomicImportPayload(revalidatedQuestions);
+      if (passageIdsRef.current.batchId !== importBatchId) {
+        passageIdsRef.current = { batchId: importBatchId, ids: new Map() };
+      }
+      const payload = buildAtomicImportPayload(revalidatedQuestions, passageIdsRef.current.ids);
 
       let confirmation;
       try {

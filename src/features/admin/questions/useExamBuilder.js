@@ -32,8 +32,10 @@ export function assembleExamRecord({ title, targetClass, targetSection, duration
   /** @type {Record<string, import('../../../types').QuestionBankItem[]>} */
   const questionsObj = {};
   subjects.forEach(sub => {
-    // A paragraph set's questions sit together, where its first question appears.
-    questionsObj[sub] = passageBlocks(questions.filter(q => q.subject === sub)).flat();
+    // A paragraph set's questions sit together, where its first question
+    // appears, in bank order (follow-ups often build on earlier questions).
+    questionsObj[sub] = passageBlocks(questions.filter(q => q.subject === sub))
+      .flatMap(block => (block.length > 1 ? [...block].sort((a, b) => (a.questionNumber || 0) - (b.questionNumber || 0)) : block));
   });
   const perTypeMarking = compactMarking(marking);
 

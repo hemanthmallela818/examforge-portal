@@ -17,6 +17,10 @@
 
 BEGIN;
 
+-- Fail fast instead of queueing live exam traffic behind this migration's
+-- table locks; re-run outside an exam window if it times out.
+SET LOCAL lock_timeout = '5s';
+
 -- ---------------------------------------------------------------------------
 -- Shared, data-free helpers
 -- ---------------------------------------------------------------------------
@@ -142,7 +146,7 @@ BEGIN
       END IF;
       FOR item IN SELECT element.value FROM pg_catalog.jsonb_array_elements(list_value) AS element LOOP
         IF pg_catalog.jsonb_typeof(item) OPERATOR(pg_catalog.<>) 'string'
-          OR pg_catalog.length(pg_catalog.btrim(item #>> '{}')) NOT BETWEEN 1 AND 2000
+          OR pg_catalog.length(pg_catalog.btrim(item #>> '{}', E' \t\r\n')) NOT BETWEEN 1 AND 2000
         THEN
           RETURN 'Every List-I and List-II item needs 1 to 2000 characters';
         END IF;
@@ -159,7 +163,7 @@ BEGIN
         OPERATOR(pg_catalog.<>) '{}'::pg_catalog.jsonb
       OR COALESCE(passage ->> 'key', '') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
       OR pg_catalog.jsonb_typeof(passage -> 'text') IS DISTINCT FROM 'string'
-      OR pg_catalog.length(pg_catalog.btrim(passage ->> 'text')) NOT BETWEEN 1 AND 10000
+      OR pg_catalog.length(pg_catalog.btrim(passage ->> 'text', E' \t\r\n')) NOT BETWEEN 1 AND 10000
     THEN
       RETURN 'The paragraph must have a valid key and 1 to 10000 characters of text';
     END IF;
@@ -169,7 +173,9 @@ END;
 $function$;
 
 -- Duplicate-detection key: the canonical text plus the structured content
--- (match lists, paragraph), so shared stems do not collide.
+-- (match lists, paragraph text), so shared stems do not collide. The
+-- paragraph key is left out: the same question under the same paragraph text
+-- is a duplicate even when it arrives in a new set (e.g. a re-import).
 CREATE OR REPLACE FUNCTION public.question_identity_key(question_text pg_catalog.text, details pg_catalog.jsonb)
 RETURNS pg_catalog.text
 LANGUAGE sql
@@ -179,7 +185,7 @@ SET search_path = ''
 AS $function$
   SELECT public.canonical_question_text(question_text)
     OPERATOR(pg_catalog.||) '|'
-    OPERATOR(pg_catalog.||) COALESCE(details::pg_catalog.text, '')
+    OPERATOR(pg_catalog.||) COALESCE((details OPERATOR(pg_catalog.#-) '{passage,key}')::pg_catalog.text, '')
 $function$;
 
 REVOKE ALL ON FUNCTION public.question_type_is_option_based(pg_catalog.text) FROM PUBLIC, anon;
@@ -308,7 +314,7 @@ BEGIN
     RAISE EXCEPTION '%', details_error;
   END IF;
   IF NEW.details IS NOT NULL AND NEW.details ? 'passage' THEN
-    NEW.details := jsonb_set(NEW.details, '{passage,text}', to_jsonb(btrim(NEW.details #>> '{passage,text}')));
+    NEW.details := jsonb_set(NEW.details, '{passage,text}', to_jsonb(btrim(NEW.details #>> '{passage,text}', E' \t\r\n')));
   END IF;
 
   NEW.has_image_or_diagram := COALESCE(NEW.has_image_or_diagram, false) OR NEW.question_image_url IS NOT NULL;
@@ -622,7 +628,7 @@ SECURITY INVOKER
 SET search_path = ''
 AS $function$
 DECLARE
-  cleaned pg_catalog.text := pg_catalog.btrim(COALESCE(passage_text_param, ''));
+  cleaned pg_catalog.text := pg_catalog.btrim(COALESCE(passage_text_param, ''), E' \t\r\n');
   updated_count pg_catalog.int4;
 BEGIN
   IF NOT public.is_admin_aal2() THEN
@@ -819,7 +825,9 @@ BEGIN
       END IF;
     END IF;
   ELSE
-    IF pg_catalog.jsonb_typeof(options) = 'array' AND pg_catalog.jsonb_array_length(options) > 0 THEN
+    -- Checked with the answers (full-paper validation) only, as before: the
+    -- stored-paper check runs on every status change of existing exams.
+    IF require_answer AND pg_catalog.jsonb_typeof(options) = 'array' AND pg_catalog.jsonb_array_length(options) > 0 THEN
       RETURN pg_catalog.format('%s question "%s" must not have multiple-choice options', label, qid);
     END IF;
     IF check_answer AND NOT public.is_valid_correct_answer(qtype, answer) THEN
@@ -1336,7 +1344,7 @@ BEGIN
       GROUP BY items.block
     )
     SELECT COALESCE(
-      pg_catalog.jsonb_agg(items.question ORDER BY blocks.draw, items.position),
+      pg_catalog.jsonb_agg(items.question ORDER BY blocks.draw, blocks.block, items.position),
       '[]'::pg_catalog.jsonb
     )
     INTO shuffled_subject

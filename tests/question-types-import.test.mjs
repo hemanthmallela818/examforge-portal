@@ -117,3 +117,24 @@ test('failed rows are exported back in the reviewed file format', () => {
   assert.equal(reparsed[0].correctAnswer, '0,2');
   assert.deepEqual(reparsed[1].matchLists, { left: ['a', 'b'], right: ['c', 'd'] });
 });
+
+test('a retried import batch sends an identical payload', () => {
+  const parsed = parse([
+    row({ question_type: 'INTEGER', options: [], correct_answer: '3', passage: { key: 'P7', text: 'Retry paragraph' } }),
+    row({ question_type: 'INTEGER', options: [], correct_answer: '4', passage: { key: 'P7', text: 'Retry paragraph' } })
+  ]);
+  const batchIds = new Map();
+  const first = JSON.stringify(buildAtomicImportPayload(parsed, batchIds));
+  const retry = JSON.stringify(buildAtomicImportPayload(parsed, batchIds));
+  assert.equal(retry, first);
+});
+
+test('re-importing a paragraph question already in the bank is a duplicate', () => {
+  const bank = [{ id: 'b1', text: 'How far does it travel?', details: { passage: { key: '00000000-0000-4000-8000-00000000cafe', text: 'A car moves at 20 m/s.' } } }];
+  const [again, otherText] = parse([
+    row({ question_text: 'How far does it travel?', passage: { key: 'P1', text: 'A car moves at 20 m/s.' } }),
+    row({ question_text: 'How far does it travel?', passage: { key: 'P2', text: 'A train moves at 30 m/s.' } })
+  ], bank);
+  assert.deepEqual(codes(again), ['ROW_DUPLICATE_QUESTION_BANK']);
+  assert.deepEqual(codes(otherText), []);
+});

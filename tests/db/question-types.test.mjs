@@ -437,3 +437,59 @@ test('an exam without per-type marking grades exactly as before', async () => {
   assert.equal(Number(result.totalScore), 4 + 4 - 1);
   assert.equal(result.partial, 0);
 });
+
+// ---------------------------------------------------------------------------
+// Review follow-ups
+// ---------------------------------------------------------------------------
+
+test('the same paragraph and question under a different paragraph key is a duplicate', async () => {
+  const text = 'Duplicate paragraph follow-up';
+  await insertQuestion({ type: 'NUMERICAL', text, options: [], answer: '1', details: { passage: { key: testUuid('a'), text: 'Shared paragraph text' } } });
+  await assert.rejects(
+    insertQuestion({ type: 'NUMERICAL', text, options: [], answer: '1', details: { passage: { key: testUuid('a'), text: 'Shared paragraph text' } } }),
+    /question_bank_identity_unique/
+  );
+});
+
+test('whitespace-only paragraph and list text is rejected everywhere', async () => {
+  await assert.rejects(
+    insertQuestion({ type: 'MCQ', answer: '0', details: { passage: { key: testUuid('a'), text: '\n\t ' } } }),
+    /The paragraph must have a valid key/
+  );
+  await assert.rejects(
+    insertQuestion({ type: 'MATRIX_MATCH', answer: '0', details: { matchLists: { left: ['a', '\t'], right: ['b', 'c'] } } }),
+    /Every List-I and List-II item needs 1 to 2000 characters/
+  );
+  const key = testUuid('a');
+  await insertQuestion({ type: 'MCQ', answer: '0', details: { passage: { key, text: 'Real text' } } });
+  const admin = await h.asAdmin();
+  await assert.rejects(admin.value('SELECT public.admin_update_passage($1, $2)', [key, '\n\t\r ']), /Paragraph text must contain between 1 and 10000 characters/);
+  assert.equal(await admin.value('SELECT public.admin_update_passage($1, $2)', [key, '\n Trimmed paragraph \t']), 1);
+  const su = await h.asSuperuser();
+  assert.equal(await su.value(`SELECT details #>> '{passage,text}' FROM public.question_bank WHERE details #>> '{passage,key}' = $1`, [key]), 'Trimmed paragraph');
+});
+
+test('stored (answer-free) papers are checked as before for value questions', async () => {
+  const su = await h.asSuperuser();
+  const legacy = { id: 'n1', type: 'NUMERICAL', text: 'Legacy', options: ['stray option'] };
+  assert.equal(await su.value('SELECT public.paper_question_error($1::jsonb, false)', [JSON.stringify(legacy)]), null);
+  assert.match(await su.value('SELECT public.paper_question_error($1::jsonb, true)', [JSON.stringify({ ...legacy, correctAnswer: '1' })]), /must not have multiple-choice options/);
+});
+
+test('a review captured before this change reads as legacy_position', async () => {
+  const { examId, student, started } = await startTypesExam('QT-LEGACY-REVIEW');
+  assert.ok(started.version);
+  // Simulate a result committed by the previous grader: the capture trigger
+  // stores the positional snapshot with the default format.
+  const su = await h.asSuperuser();
+  const resultId = await su.value(
+    `INSERT INTO public.student_results (exam_id, student_id, student_name, total_score, max_score, correct, incorrect, unattempted, subject_scores)
+     VALUES ($1, $2, 'Legacy', 0, 28, 0, 0, 7, '{"Physics": 0}') RETURNING id`,
+    [examId, student.studentId]
+  );
+  const admin = await h.asAdmin();
+  const review = await admin.value('SELECT public.get_admin_student_result_review($1)', [resultId]);
+  assert.equal(review.snapshot_format, 'legacy_position');
+  assert.equal(review.question_scores, null);
+  assert.ok(Array.isArray(review.responses.Physics), 'positional snapshot');
+});

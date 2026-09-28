@@ -83,6 +83,12 @@ export default function StudentAnswerReviewModal({ review: resultReview, onClose
                             <Badge variant={outcome.variant}>{outcome.label}</Badge>
                           </span>
                         </div>
+                        {question.details?.passage?.text && (
+                          <details className="mb-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                            <summary className="cursor-pointer font-medium">Paragraph</summary>
+                            <p className="mt-1 whitespace-pre-wrap"><MathRenderer text={question.details.passage.text} /></p>
+                          </details>
+                        )}
                         <div className="text-sm text-slate-800">
                           <MathRenderer text={question.text || ''} />
                         </div>

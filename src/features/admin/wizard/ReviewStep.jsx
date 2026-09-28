@@ -59,7 +59,7 @@ export default function ReviewStep({ examBuilder, selectedQuestions, catalog, on
   const {
     newExamTitle, examTargetClass, examTargetSection, examDuration, examMarksCorrect, examMarksIncorrect, examMarking, selectedTemplate
   } = examBuilder;
-  const marking = compactMarking(examMarking);
+  const marking = useMemo(() => compactMarking(examMarking), [examMarking]);
   const template = /** @type {import('../../../types').PatternTemplate | null} */ (selectedTemplate);
   const verified = useVerifiedQuestions(selectedQuestions);
   const [showPreview, setShowPreview] = useState(false);

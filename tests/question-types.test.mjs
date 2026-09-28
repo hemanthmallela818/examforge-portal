@@ -106,6 +106,11 @@ test('duplicate keys include structured details', () => {
     questionIdentityKey('x', { passage: { key: 'k', text: 't' } }),
     'key order does not matter'
   );
+  assert.equal(
+    questionIdentityKey('x', { passage: { key: 'set-1', text: 'Same paragraph' } }),
+    questionIdentityKey('x', { passage: { key: 'set-2', text: 'Same paragraph' } }),
+    'the paragraph key is not part of the identity'
+  );
 });
 
 test('resolveMarking mirrors the database fallbacks', () => {

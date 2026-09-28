@@ -230,13 +230,24 @@ export const canonicalQuestionText = value => String(value ?? '')
 
 /**
  * Duplicate-detection key: canonical text plus structured details (match
- * lists, paragraph), so two matrix-match questions sharing a stem are not
- * duplicates. Mirrors the database's question_identity_key.
+ * lists, paragraph text), so two matrix-match questions sharing a stem are not
+ * duplicates. The paragraph key is left out, so the same question under the
+ * same paragraph text is a duplicate even in a new set. Mirrors the database's
+ * question_identity_key.
  * @param {unknown} text
  * @param {QuestionDetails | null | undefined} details
  * @returns {string}
  */
-export const questionIdentityKey = (text, details) => `${canonicalQuestionText(text)}|${details ? stableStringify(details) : ''}`;
+export const questionIdentityKey = (text, details) => {
+  if (!details) return `${canonicalQuestionText(text)}|`;
+  /** @type {UntrustedInput} */
+  const identity = { ...details };
+  if (details.passage && typeof details.passage === 'object') {
+    const { key: _key, ...passage } = details.passage;
+    identity.passage = passage;
+  }
+  return `${canonicalQuestionText(text)}|${stableStringify(identity)}`;
+};
 
 /**
  * Type details for an authored row; a missing type is invalid (never MCQ).
@@ -254,7 +265,7 @@ const importIdentityKey = question => {
   /** @type {UntrustedInput} */
   const details = {};
   if (question.matchLists) details.matchLists = question.matchLists;
-  if (question.passage) details.passage = question.passage;
+  if (question.passage) details.passage = { key: '', text: question.passage.text };
   return questionIdentityKey(question.text, Object.keys(details).length ? details : null);
 };
 
@@ -584,8 +595,7 @@ export const validateImportQuestions = (inputQuestions, questionBank = [], optio
       warnings.push(msg);
       rowErrors.push({ code: 'ROW_PASSAGE_MISMATCH', field: 'passage', message: msg });
     }
-    // Imported paragraphs always get new keys, so they cannot duplicate a bank question.
-    if (key && !question.passage && bankKeys.has(key)) {
+    if (key && bankKeys.has(key)) {
       const msg = 'A matching question already exists in the Question Bank.';
       warnings.push(msg);
       rowErrors.push({ code: 'ROW_DUPLICATE_QUESTION_BANK', field: 'text', message: msg });
@@ -706,13 +716,14 @@ export const parseImportJsonText = (input, questionBank = [], options = {}) => {
 
 /**
  * Approved rows for the atomic import RPC. Each file-local paragraph key
- * becomes one new UUID, so every import creates new paragraph sets.
+ * becomes a new UUID, so every import creates new paragraph sets. Pass the
+ * same `passageIds` map for every attempt of one import batch: a retry must
+ * send an identical payload.
  * @param {ValidatedImportQuestion[]} questions
+ * @param {Map<string, string>} [passageIds] File-local key -> UUID, filled as needed.
  * @returns {AtomicImportRow[]}
  */
-export const buildAtomicImportPayload = questions => {
-  /** @type {Map<string, string>} */
-  const passageIds = new Map();
+export const buildAtomicImportPayload = (questions, passageIds = new Map()) => {
   /** @param {string} key */
   const passageId = key => {
     if (!passageIds.has(key)) passageIds.set(key, crypto.randomUUID());

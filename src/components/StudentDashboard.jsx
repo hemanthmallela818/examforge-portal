@@ -16,6 +16,7 @@ import { useRemainingSeconds } from '../features/exam/examClock';
 import BrandLogo from '../branding/BrandLogo';
 import { useBranding } from '../branding/brandingStore';
 import ThemeToggle from '../theme/ThemeToggle';
+import { committedResultToScorecard } from '../features/exam/examSessionHelpers';
 
 /**
  * @typedef {import('../features/exam/examSessionHelpers').CurrentStudent} CurrentStudent
@@ -273,14 +274,7 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
             clearOfflineRecoveryRecord({ student, examId: pendingSubmissionExamId });
             setPendingSubmissionExamId(null);
             if (onViewResult) {
-              onViewResult({
-                totalScore: committedResult.total_score,
-                maxScore: committedResult.max_score,
-                correct: committedResult.correct,
-                incorrect: committedResult.incorrect,
-                unattempted: committedResult.unattempted,
-                subjectScores: committedResult.subject_scores
-              });
+              onViewResult(committedResultToScorecard(committedResult));
             } else {
               await fetchExamsAndResults();
             }
