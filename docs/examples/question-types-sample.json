@@ -1,0 +1,247 @@
+{
+  "version": "1.0",
+  "questions": [
+    {
+      "id": "phy-mcq-01",
+      "question_number": 1,
+      "question_text": "A body of mass $2\\,\\text{kg}$ moves with a speed of $3\\,\\text{m/s}$. What is its kinetic energy?",
+      "question_type": "MCQ",
+      "options": [
+        { "label": "A", "text": "$6\\,\\text{J}$" },
+        { "label": "B", "text": "$9\\,\\text{J}$" },
+        { "label": "C", "text": "$12\\,\\text{J}$" },
+        { "label": "D", "text": "$18\\,\\text{J}$" }
+      ],
+      "correct_answer": "B",
+      "subject": "Physics",
+      "has_image_or_diagram": false
+    },
+    {
+      "id": "phy-multi-01",
+      "question_number": 2,
+      "question_text": "Which of the following are vector quantities?",
+      "question_type": "MULTIPLE_CORRECT",
+      "options": [
+        { "label": "A", "text": "Force" },
+        { "label": "B", "text": "Mass" },
+        { "label": "C", "text": "Velocity" },
+        { "label": "D", "text": "Temperature" }
+      ],
+      "correct_answer": ["A", "C"],
+      "subject": "Physics",
+      "has_image_or_diagram": false
+    },
+    {
+      "id": "phy-int-01",
+      "question_number": 3,
+      "question_text": "A ball is dropped from rest from a height of $45\\,\\text{m}$. Taking $g = 10\\,\\text{m/s}^2$, find the time (in seconds) it takes to reach the ground.",
+      "question_type": "INTEGER",
+      "options": [],
+      "correct_answer": "3",
+      "subject": "Physics",
+      "has_image_or_diagram": false
+    },
+    {
+      "id": "phy-matrix-01",
+      "question_number": 4,
+      "question_text": "Match each physical quantity in List-I with its SI unit in List-II.",
+      "question_type": "MATRIX_MATCH",
+      "options": [
+        { "label": "A", "text": "P→3, Q→4, R→2, S→1" },
+        { "label": "B", "text": "P→3, Q→2, R→4, S→1" },
+        { "label": "C", "text": "P→4, Q→3, R→2, S→1" },
+        { "label": "D", "text": "P→1, Q→4, R→2, S→3" }
+      ],
+      "correct_answer": "A",
+      "subject": "Physics",
+      "has_image_or_diagram": false,
+      "match_lists": {
+        "list_i": ["Force", "Power", "Energy", "Pressure"],
+        "list_ii": ["Pascal", "Joule", "Newton", "Watt"]
+      }
+    },
+    {
+      "id": "phy-para1-q1",
+      "question_number": 5,
+      "question_text": "What is the time of flight of the projectile (in seconds)?",
+      "question_type": "INTEGER",
+      "options": [],
+      "correct_answer": "2",
+      "subject": "Physics",
+      "has_image_or_diagram": false,
+      "passage": {
+        "key": "P1",
+        "text": "A projectile is launched from level ground with a speed of $20\\,\\text{m/s}$ at an angle of $30^\\circ$ above the horizontal. Take $g = 10\\,\\text{m/s}^2$ and neglect air resistance."
+      }
+    },
+    {
+      "id": "phy-para1-q2",
+      "question_number": 6,
+      "question_text": "What is the maximum height reached by the projectile (in metres)?",
+      "question_type": "NUMERICAL",
+      "options": [],
+      "correct_answer": "5",
+      "subject": "Physics",
+      "has_image_or_diagram": false,
+      "passage": {
+        "key": "P1",
+        "text": "A projectile is launched from level ground with a speed of $20\\,\\text{m/s}$ at an angle of $30^\\circ$ above the horizontal. Take $g = 10\\,\\text{m/s}^2$ and neglect air resistance."
+      }
+    },
+    {
+      "id": "phy-para1-q3",
+      "question_number": 7,
+      "question_text": "What is the speed of the projectile at its highest point?",
+      "question_type": "MCQ",
+      "options": [
+        { "label": "A", "text": "$0$" },
+        { "label": "B", "text": "$10\\,\\text{m/s}$" },
+        { "label": "C", "text": "$10\\sqrt{3}\\,\\text{m/s}$" },
+        { "label": "D", "text": "$20\\,\\text{m/s}$" }
+      ],
+      "correct_answer": "C",
+      "subject": "Physics",
+      "has_image_or_diagram": false,
+      "passage": {
+        "key": "P1",
+        "text": "A projectile is launched from level ground with a speed of $20\\,\\text{m/s}$ at an angle of $30^\\circ$ above the horizontal. Take $g = 10\\,\\text{m/s}^2$ and neglect air resistance."
+      }
+    },
+    {
+      "id": "chem-ar-01",
+      "question_number": 8,
+      "question_text": "Assertion (A): Ice floats on water.\n\nReason (R): Ice is less dense than liquid water because hydrogen bonding gives it an open, cage-like structure.",
+      "question_type": "ASSERTION_REASON",
+      "options": [
+        { "label": "A", "text": "Both (A) and (R) are true and (R) is the correct explanation of (A)." },
+        { "label": "B", "text": "Both (A) and (R) are true but (R) is not the correct explanation of (A)." },
+        { "label": "C", "text": "(A) is true but (R) is false." },
+        { "label": "D", "text": "(A) is false but (R) is true." }
+      ],
+      "correct_answer": "A",
+      "subject": "Chemistry",
+      "has_image_or_diagram": false
+    },
+    {
+      "id": "chem-num-01",
+      "question_number": 9,
+      "question_text": "How many moles of $\\text{CO}_2$ are present in $4.4\\,\\text{g}$ of the gas? (C = 12, O = 16)",
+      "question_type": "NUMERICAL",
+      "options": [],
+      "correct_answer": "0.1",
+      "subject": "Chemistry",
+      "has_image_or_diagram": false
+    },
+    {
+      "id": "chem-multi-01",
+      "question_number": 10,
+      "question_text": "Which of the following are noble gases?",
+      "question_type": "MULTIPLE_CORRECT",
+      "options": [
+        { "label": "A", "text": "Argon" },
+        { "label": "B", "text": "Nitrogen" },
+        { "label": "C", "text": "Neon" },
+        { "label": "D", "text": "Chlorine" }
+      ],
+      "correct_answer": "A,C",
+      "subject": "Chemistry",
+      "has_image_or_diagram": false
+    },
+    {
+      "id": "chem-mcq-01",
+      "question_number": 11,
+      "question_text": "What is the hybridisation of carbon in methane, $\\text{CH}_4$?",
+      "question_type": "MCQ",
+      "options": [
+        { "label": "A", "text": "$sp$" },
+        { "label": "B", "text": "$sp^2$" },
+        { "label": "C", "text": "$sp^3$" },
+        { "label": "D", "text": "$dsp^2$" }
+      ],
+      "correct_answer": "C",
+      "subject": "Chemistry",
+      "has_image_or_diagram": false
+    },
+    {
+      "id": "math-int-01",
+      "question_number": 12,
+      "question_text": "If $x + 7 = 2$, find the value of $x$.",
+      "question_type": "INTEGER",
+      "options": [],
+      "correct_answer": "-5",
+      "subject": "Mathematics",
+      "has_image_or_diagram": false
+    },
+    {
+      "id": "math-matrix-01",
+      "question_number": 13,
+      "question_text": "Match each function in List-I with its derivative in List-II.",
+      "question_type": "MATRIX_MATCH",
+      "options": [
+        { "label": "A", "text": "P→3, Q→1, R→2, S→4" },
+        { "label": "B", "text": "P→3, Q→5, R→2, S→4" },
+        { "label": "C", "text": "P→2, Q→1, R→3, S→4" },
+        { "label": "D", "text": "P→3, Q→1, R→4, S→2" }
+      ],
+      "correct_answer": "A",
+      "subject": "Mathematics",
+      "has_image_or_diagram": false,
+      "match_lists": {
+        "list_i": ["$x^2$", "$\\sin x$", "$e^x$", "$\\ln x$"],
+        "list_ii": ["$\\cos x$", "$e^x$", "$2x$", "$\\frac{1}{x}$", "$-\\sin x$"]
+      }
+    },
+    {
+      "id": "math-para2-q1",
+      "question_number": 14,
+      "question_text": "Which of the following are elements of $A \\cap B$?",
+      "question_type": "MULTIPLE_CORRECT",
+      "options": [
+        { "label": "A", "text": "$1$" },
+        { "label": "B", "text": "$3$" },
+        { "label": "C", "text": "$5$" },
+        { "label": "D", "text": "$4$" }
+      ],
+      "correct_answer": "B,D",
+      "subject": "Mathematics",
+      "has_image_or_diagram": false,
+      "passage": {
+        "key": "P2",
+        "text": "Let $A = \\{1, 2, 3, 4\\}$ and $B = \\{3, 4, 5\\}$."
+      }
+    },
+    {
+      "id": "math-para2-q2",
+      "question_number": 15,
+      "question_text": "How many elements does $A \\cup B$ have?",
+      "question_type": "INTEGER",
+      "options": [],
+      "correct_answer": "5",
+      "subject": "Mathematics",
+      "has_image_or_diagram": false,
+      "passage": {
+        "key": "P2",
+        "text": "Let $A = \\{1, 2, 3, 4\\}$ and $B = \\{3, 4, 5\\}$."
+      }
+    },
+    {
+      "id": "math-para2-q3",
+      "question_number": 16,
+      "question_text": "Which set is equal to $A - B$?",
+      "question_type": "MCQ",
+      "options": [
+        { "label": "A", "text": "$\\{1, 2\\}$" },
+        { "label": "B", "text": "$\\{3, 4\\}$" },
+        { "label": "C", "text": "$\\{5\\}$" },
+        { "label": "D", "text": "$\\{1, 2, 5\\}$" }
+      ],
+      "correct_answer": "A",
+      "subject": "Mathematics",
+      "has_image_or_diagram": false,
+      "passage": {
+        "key": "P2",
+        "text": "Let $A = \\{1, 2, 3, 4\\}$ and $B = \\{3, 4, 5\\}$."
+      }
+    }
+  ]
+}
