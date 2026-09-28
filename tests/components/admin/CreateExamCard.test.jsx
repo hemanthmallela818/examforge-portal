@@ -39,10 +39,11 @@ const classes = [
 ];
 
 const subjectsById = { q1: 'Physics', q2: 'Physics', q3: 'Chemistry', q4: 'Physics', q5: 'Biology' };
+const typesById = { q1: 'MCQ', q2: 'MULTIPLE_CORRECT', q3: 'MCQ', q4: 'INTEGER', q5: 'MCQ' };
 
 function Harness({ selectedQuestions, onExamCreated = () => {} }) {
   const examBuilder = useExamBuilder({ selectedQuestions, setSelectedQuestions: () => {}, onExamCreated });
-  return <CreateExamCard examBuilder={examBuilder} selectedQuestions={selectedQuestions} knownQuestionSubjects={subjectsById} />;
+  return <CreateExamCard examBuilder={examBuilder} selectedQuestions={selectedQuestions} knownQuestionSubjects={subjectsById} knownQuestionTypes={typesById} />;
 }
 
 const contextValue = {
@@ -132,6 +133,31 @@ describe('CreateExamCard', () => {
     await user.type(durationInput(), '0');
     expect(screen.getByRole('alert').textContent).toContain('Duration must be a whole number between 1 and 600 minutes.');
     expect(createButton().disabled).toBe(true);
+  });
+
+  it('offers per-type marks only for the selected types and validates them', async () => {
+    renderCard(['q1', 'q2']);
+    const table = screen.getByRole('group', { name: 'Marking by question type' });
+    expect(within(table).getAllByRole('rowheader').map(cell => cell.textContent)).toEqual(['Single correct', 'Multiple correctPartial marks']);
+    await user.type(within(table).getByLabelText('Multiple correct: marks for a wrong answer'), '2');
+    expect(screen.getByRole('alert').textContent).toContain('Multiple correct: marks for a wrong answer must be between -100 and 0');
+    expect(createButton().disabled).toBe(true);
+    await user.clear(within(table).getByLabelText('Multiple correct: marks for a wrong answer'));
+    expect(createButton().disabled).toBe(false);
+  });
+
+  it('keeps a type with marks visible after its questions are deselected', async () => {
+    const { rerenderWith } = renderCard(['q1', 'q2']);
+    const table = () => screen.getByRole('group', { name: 'Marking by question type' });
+    await user.type(within(table()).getByLabelText('Multiple correct: marks for a wrong answer'), '2');
+    rerenderWith(['q1']);
+    expect(within(table()).getByLabelText('Multiple correct: marks for a wrong answer').value).toBe('2');
+    expect(screen.getByRole('alert').textContent).toContain('Multiple correct: marks for a wrong answer');
+  });
+
+  it('shows no per-type table before questions are selected', () => {
+    renderCard();
+    expect(screen.queryByRole('group', { name: 'Marking by question type' })).toBeNull();
   });
 
   it('fills the section from the chosen class and disables section until a class is chosen', async () => {

@@ -60,8 +60,10 @@ test('student reloads, works offline, reconnects, submits once, and revisits the
   await chemistryAutosave;
   await expect(page.getByTitle('All responses saved to server')).toBeVisible({ timeout: 20_000 });
   await page.getByRole('button', { name: 'Mathematics' }).click();
-  const mathematicsAutosave = waitForConfirmedAutosave(page, 'Mathematics', 2);
-  await page.getByRole('radio', { name: /C\.\s*Three/ }).check();
+  // Multiple correct: ticking B and D saves the canonical "1,3".
+  const mathematicsAutosave = waitForConfirmedAutosave(page, 'Mathematics', '1,3');
+  await page.getByRole('checkbox', { name: /B\.\s*Two/ }).check();
+  await page.getByRole('checkbox', { name: /D\.\s*Four/ }).check();
   await page.getByRole('button', { name: /Save & Next/ }).click();
   await mathematicsAutosave;
   await expect(page.getByTitle('All responses saved to server')).toBeVisible();

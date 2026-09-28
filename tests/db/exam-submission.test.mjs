@@ -65,6 +65,7 @@ test('versioned submit grades the server snapshot and ignores the client payload
     totalScore: 3,
     maxScore: 12,
     correct: 1,
+    partial: 0,
     incorrect: 1,
     unattempted: 1,
     subjectScores: { Physics: 3, Mathematics: 0 }

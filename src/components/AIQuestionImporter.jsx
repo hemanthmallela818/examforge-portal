@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { supabase } from '../supabase';
 import MathRenderer from './MathRenderer';
+import MatchListsTable from './MatchListsTable';
 import { customAlert, customConfirm } from '../utils';
+import { QUESTION_TYPES, decodeOptionSet, encodeOptionSet, questionTypeInfo } from '../questionTypes';
 import AccessibleModal from './AccessibleModal';
 import {
   AlertTriangle,
@@ -124,13 +126,23 @@ STRICT CONVERSION RULES:
    - All mathematical symbols, formulas, equations, superscripts, subscripts, and scientific units MUST be rendered in KaTeX/LaTeX syntax wrapped in $...$ (for inline) or $$...$$ (for display equations).
    - In JSON strings, ALWAYS double-escape all backslashes (e.g. \\\\frac{a}{b}, \\\\sqrt{x}, \\\\theta, \\\\Delta, \\\\times, \\\\pm, \\\\rightarrow, \\\\text{...}).
    - Ensure all math delimiters ($ or $$) are strictly balanced with opening and closing pairs.
-3. question_type: Exactly "MCQ" or "NUMERICAL".
+3. question_type: Exactly one of:
+   - "MCQ": single correct option.
+   - "MULTIPLE_CORRECT": one or more correct options (JEE Advanced "one or more options correct").
+   - "INTEGER": the answer is a whole number.
+   - "NUMERICAL": the answer is a decimal number.
+   - "MATRIX_MATCH": match List-I with List-II; the four options are complete matchings (e.g. "P→2, Q→1, R→4, S→3").
+   - "ASSERTION_REASON": the question text contains "Assertion (A): ..." and "Reason (R): ..." with the four standard options.
 4. options:
-   - For "MCQ": Exactly 4 options labeled "A", "B", "C", and "D" with their corresponding text. Use LaTeX $...$ for mathematical expressions inside options.
-   - For "NUMERICAL": Empty array [].
+   - For "MCQ", "MULTIPLE_CORRECT", "MATRIX_MATCH" and "ASSERTION_REASON": Exactly 4 options labeled "A", "B", "C", and "D" with their corresponding text. Use LaTeX $...$ for mathematical expressions inside options.
+   - For "INTEGER" and "NUMERICAL": Empty array [].
 5. correct_answer:
-   - For "MCQ": The correct option letter ("A", "B", "C", or "D").
+   - For "MCQ", "MATRIX_MATCH" and "ASSERTION_REASON": The correct option letter ("A", "B", "C", or "D").
+   - For "MULTIPLE_CORRECT": Every correct letter separated by commas, e.g. "A,C".
+   - For "INTEGER": A whole number string (e.g. "42", "-7", "0").
    - For "NUMERICAL": The numeric answer as a clean decimal string (e.g. "42", "-2.5", "0"). If unknown from the source paper, provide the solved answer or "0".
+   - MATRIX_MATCH only: also add "match_lists": { "list_i": ["...", "..."], "list_ii": ["...", "..."] } with List-I (2 to 6 items, labelled P, Q, R, S, T, U in order) and List-II (2 to 8 items, labelled 1, 2, 3, ... in order).
+   - PARAGRAPH-BASED (comprehension) questions: add "passage": { "key": "P1", "text": "<the full paragraph>" } to EVERY question of the set, using the same key and exactly the same paragraph text; use a new key (P2, P3, ...) for each paragraph.
 6. subject: __SUBJECT_RULE__
 7. AUTOMATIC IMAGE & DIAGRAM DETECTION ("has_image_or_diagram"):
    - You MUST automatically check every question in the source paper for diagrams or images and set this flag accurately. Do NOT require the user to check it manually!
@@ -198,6 +210,8 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank, allowedSubjec
   const [importStats, setImportStats] = useState({ success: 0, rejected: 0, total: 0 });
   const [fileName, setFileName] = useState('');
   const [importBatchId, setImportBatchId] = useState(/** @type {string | null} */ (null));
+  // Paragraph UUIDs for the current batch; a retry of the same batch reuses them.
+  const passageIdsRef = useRef(/** @type {{ batchId: string | null, ids: Map<string, string> }} */ ({ batchId: null, ids: new Map() }));
   const [readingFile, setReadingFile] = useState(false);
 
   const fileInputRef = useRef(/** @type {HTMLInputElement | null} */ (null));
@@ -374,11 +388,16 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank, allowedSubjec
     setQuestions(previous => validateImportQuestions(
       previous.map(question => {
         if (question.id !== id) return question;
-        if (field === 'type' && value === 'NUMERICAL') {
-          return { ...question, type: value, options: [], correctAnswer: '' };
-        }
-        if (field === 'type' && value === 'MCQ') {
-          return { ...question, type: value, options: ['', '', '', ''], correctAnswer: '' };
+        if (field === 'type') {
+          const next = questionTypeInfo(value);
+          const keepOptions = next?.optionBased && questionTypeInfo(question.type)?.optionBased;
+          return {
+            ...question,
+            type: String(value),
+            options: next?.optionBased ? (keepOptions ? question.options : ['', '', '', '']) : [],
+            correctAnswer: '',
+            matchLists: next?.code === 'MATRIX_MATCH' ? (question.matchLists || { left: ['', ''], right: ['', ''] }) : null
+          };
         }
         return { ...question, [field]: value };
       }),
@@ -452,7 +471,10 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank, allowedSubjec
       setImporting(true);
       setImportProgress(0);
       setImportStats({ success: 0, rejected: 0, total: approvedQs.length });
-      const payload = buildAtomicImportPayload(revalidatedQuestions);
+      if (passageIdsRef.current.batchId !== importBatchId) {
+        passageIdsRef.current = { batchId: importBatchId, ids: new Map() };
+      }
+      const payload = buildAtomicImportPayload(revalidatedQuestions, passageIdsRef.current.ids);
 
       let confirmation;
       try {
@@ -928,8 +950,8 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank, allowedSubjec
                               aria-label={`Question type for row ${q.rowNumber}`}
                               className="h-8 text-xs"
                             >
-                              <option value="MCQ">MCQ</option>
-                              <option value="NUMERICAL">NUMERICAL</option>
+                              {!questionTypeInfo(q.type) && <option value={q.type}>{q.type || 'Choose a type…'} (not allowed)</option>}
+                              {QUESTION_TYPES.map(type => <option key={type.code} value={type.code}>{type.label}</option>)}
                             </Select>
                           </div>
                         </div>
@@ -991,7 +1013,36 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank, allowedSubjec
                             </p>
                           )}
 
-                          {q.type === 'MCQ' ? (
+                          {q.passage && (
+                            <Field label={`Paragraph (${q.passage.key})`} htmlFor={`import-passage-${q.id}`} hint="Every question of this paragraph must use exactly the same text.">
+                              <Textarea
+                                id={`import-passage-${q.id}`}
+                                value={q.passage.text}
+                                onChange={(e) => handleUpdateQuestionField(q.id, 'passage', { key: q.passage?.key || '', text: e.target.value })}
+                                maxLength={10000}
+                                rows={3}
+                                className="min-h-20 resize-y"
+                              />
+                            </Field>
+                          )}
+
+                          {q.type === 'MATRIX_MATCH' && (
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              {/** @type {const} */ (['left', 'right']).map(side => (
+                                <Field key={side} label={`${side === 'left' ? 'List-I' : 'List-II'} (one item per line)`} htmlFor={`import-${side}-${q.id}`}>
+                                  <Textarea
+                                    id={`import-${side}-${q.id}`}
+                                    value={(q.matchLists?.[side] || []).join('\n')}
+                                    onChange={(e) => handleUpdateQuestionField(q.id, 'matchLists', { left: q.matchLists?.left || [], right: q.matchLists?.right || [], [side]: e.target.value.split('\n') })}
+                                    rows={3}
+                                    className="min-h-20 resize-y text-xs"
+                                  />
+                                </Field>
+                              ))}
+                            </div>
+                          )}
+
+                          {questionTypeInfo(q.type)?.optionBased ? (
                             <div className="flex flex-col gap-1.5">
                               <span className="text-sm font-medium text-slate-700">Options</span>
                               <div className="grid gap-2 sm:grid-cols-2">
@@ -1014,12 +1065,32 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank, allowedSubjec
                           ) : (
                             <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-2 text-xs italic text-slate-500">
                               <Hash className="size-3.5" aria-hidden="true" />
-                              Numerical Question - No options required.
+                              {q.type === 'INTEGER' ? 'Integer' : 'Numerical'} Question - No options required.
                             </div>
                           )}
 
+                          {q.type === 'MULTIPLE_CORRECT' ? (
+                            <fieldset className="flex flex-wrap items-center gap-3">
+                              <legend className="mb-1 text-sm font-medium text-slate-700">Correct Options</legend>
+                              {['A', 'B', 'C', 'D'].map((lbl, oIdx) => {
+                                const chosen = decodeOptionSet(q.correctAnswer);
+                                return (
+                                  <label key={lbl} className="inline-flex items-center gap-1.5 text-sm text-slate-800">
+                                    <input
+                                      type="checkbox"
+                                      className="size-4 accent-brand-600"
+                                      checked={chosen.includes(oIdx)}
+                                      aria-label={`Option ${lbl} is correct for row ${q.rowNumber}`}
+                                      onChange={() => handleUpdateQuestionField(q.id, 'correctAnswer', encodeOptionSet(chosen.includes(oIdx) ? chosen.filter(i => i !== oIdx) : [...chosen, oIdx]) ?? '')}
+                                    />
+                                    {lbl}
+                                  </label>
+                                );
+                              })}
+                            </fieldset>
+                          ) : (
                           <Field label="Correct Answer" htmlFor={`import-correct-answer-${q.id}`}>
-                            {q.type === 'MCQ' ? (
+                            {questionTypeInfo(q.type)?.optionBased ? (
                               <Select
                                 id={`import-correct-answer-${q.id}`}
                                 value={q.correctAnswer}
@@ -1038,13 +1109,14 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank, allowedSubjec
                                 type="text"
                                 value={q.correctAnswer}
                                 onChange={(e) => handleUpdateQuestionField(q.id, 'correctAnswer', e.target.value)}
-                                inputMode="decimal"
+                                inputMode={q.type === 'INTEGER' ? 'numeric' : 'decimal'}
                                 maxLength={100}
-                                placeholder="Correct numerical value..."
+                                placeholder={q.type === 'INTEGER' ? 'Correct whole number...' : 'Correct numerical value...'}
                                 className="h-9 tabular-nums"
                               />
                             )}
                           </Field>
+                          )}
                         </div>
 
                         {/* Right Side: Math Rendered Preview */}
@@ -1055,14 +1127,22 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank, allowedSubjec
                           </span>
 
                           <div className="flex flex-1 flex-col gap-3 overflow-y-auto">
+                            {q.passage?.text && (
+                              <div className="whitespace-pre-wrap text-sm text-slate-700">
+                                <strong>Paragraph:</strong> <MathRenderer text={q.passage.text} />
+                              </div>
+                            )}
                             <div className="text-sm text-slate-900">
                               <strong>Text:</strong> <MathRenderer text={q.text || '(No text entered)'} />
                             </div>
+                            {q.type === 'MATRIX_MATCH' && q.matchLists && <MatchListsTable lists={q.matchLists} className="text-xs" />}
 
-                            {q.type === 'MCQ' && (
+                            {questionTypeInfo(q.type)?.optionBased && (
                               <div className="flex flex-col gap-1.5 text-sm text-slate-600">
                                 {['A', 'B', 'C', 'D'].map((lbl, oIdx) => {
-                                  const isCorrect = q.correctAnswer === String(oIdx);
+                                  const isCorrect = q.type === 'MULTIPLE_CORRECT'
+                                    ? decodeOptionSet(q.correctAnswer).includes(oIdx)
+                                    : q.correctAnswer === String(oIdx);
                                   return (
                                     <div
                                       key={lbl}

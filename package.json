@@ -43,7 +43,7 @@
     "ops:prove-storage-restore:staging": "node scripts/prove-local-storage-restore.mjs --staging",
     "supabase:local": "node scripts/run-supabase.mjs",
     "lint": "eslint . --max-warnings=0",
-    "lint:syntax": "node --check src/runtimeConfig.js src/runtimeDiagnostics.js src/browserStorage.js src/adminDataReliability.js src/numericalAnswerPolicy.js src/resultExportLogic.js src/accessibilityLogic.js src/imageValidation.js src/importLogic.js src/examLogic.js src/examPreflightLogic.js src/paginatedQuery.js src/questionBankPaging.js src/examListPaging.js src/resultPaging.js scripts/bootstrap-admin.mjs scripts/operational-health-check.mjs scripts/prove-local-backup-restore.mjs scripts/prove-local-storage-restore.mjs scripts/rehearse-staging.mjs scripts/rehearse-local.mjs scripts/run-supabase.mjs",
+    "lint:syntax": "node --check src/runtimeConfig.js src/runtimeDiagnostics.js src/browserStorage.js src/adminDataReliability.js src/numericalAnswerPolicy.js src/questionTypes.js src/resultExportLogic.js src/accessibilityLogic.js src/imageValidation.js src/importLogic.js src/examLogic.js src/examPreflightLogic.js src/paginatedQuery.js src/questionBankPaging.js src/examListPaging.js src/resultPaging.js scripts/bootstrap-admin.mjs scripts/operational-health-check.mjs scripts/prove-local-backup-restore.mjs scripts/prove-local-storage-restore.mjs scripts/rehearse-staging.mjs scripts/rehearse-local.mjs scripts/run-supabase.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "test:components": "vitest run --config vitest.config.mjs",
     "test:db": "node --test --test-concurrency=1 tests/db/*.test.mjs",

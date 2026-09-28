@@ -4,6 +4,7 @@ export const NUMERICAL_ABSOLUTE_TOLERANCE = 0.00001;
 
 const COMPLETE_DECIMAL = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
 const POTENTIAL_DECIMAL = /^[+-]?(?:\d*(?:\.\d*)?)?$/;
+const COMPLETE_INTEGER = /^[+-]?\d+$/;
 
 /** @import { NumericalValidation } from './types' */
 
@@ -51,4 +52,24 @@ export function isValidNumericalAnswer(value, maxLength = CANDIDATE_NUMERICAL_MA
 export function isPotentialNumericalAnswer(value, maxLength = CANDIDATE_NUMERICAL_MAX_LENGTH) {
   const result = validateNumericalAnswer(value, maxLength);
   return result.valid || result.transient;
+}
+
+/**
+ * Whole-number answers for integer-type questions; same result shape as
+ * validateNumericalAnswer. A lone sign is an in-progress value.
+ * @param {unknown} value
+ * @param {number} [maxLength]
+ * @returns {NumericalValidation}
+ */
+export function validateIntegerAnswer(value, maxLength = CANDIDATE_NUMERICAL_MAX_LENGTH) {
+  const text = value === null || value === undefined ? '' : String(value);
+  if (text === '') return { valid: false, empty: true, transient: true, text, error: '' };
+  if (text.length > maxLength) {
+    return { valid: false, empty: false, transient: false, text, error: `Use at most ${maxLength} characters.` };
+  }
+  if (COMPLETE_INTEGER.test(text)) return { valid: true, empty: false, transient: false, text, error: '' };
+  if (/^[+-]$/.test(text)) {
+    return { valid: false, empty: false, transient: true, text, error: 'Finish entering the whole number.' };
+  }
+  return { valid: false, empty: false, transient: false, text, error: 'Enter a whole number, for example 42 or -7.' };
 }

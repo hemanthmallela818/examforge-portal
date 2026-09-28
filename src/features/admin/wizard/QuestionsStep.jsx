@@ -4,6 +4,7 @@ import MathRenderer from '../../../components/MathRenderer';
 import { MAX_EXAM_QUESTIONS } from '../adminConstants';
 import { PagerButtons, pagerNavClass } from '../shared/AdminUi';
 import { WIZARD_QUESTION_PAGE_SIZE } from './useWizardQuestionBrowser';
+import { QUESTION_TYPES, isOptionBased, questionTypeLabel } from '../../../questionTypes';
 
 const formatMarks = (/** @type {number | null} */ value) => (value === null ? '—' : Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 }));
 
@@ -143,8 +144,7 @@ export default function QuestionsStep({ examBuilder, selectedQuestions, setSelec
           </Select>
           <Select aria-label="Show questions of type" value={query.type} onChange={event => setType(event.target.value)}>
             <option value="">All types</option>
-            <option value="MCQ">MCQ</option>
-            <option value="NUMERICAL">Numerical</option>
+            {QUESTION_TYPES.map(type => <option key={type.code} value={type.code}>{type.label}</option>)}
           </Select>
         </div>
 
@@ -195,7 +195,8 @@ export default function QuestionsStep({ examBuilder, selectedQuestions, setSelec
                       <span className="flex flex-wrap items-center gap-1.5">
                         {question.questionNumber ? <span className="text-xs font-semibold text-slate-500 tabular-nums">Q{question.questionNumber}</span> : null}
                         <Badge variant="brand">{question.subject}</Badge>
-                        <Badge variant={question.type === 'NUMERICAL' ? 'warning' : 'success'}>{question.type === 'NUMERICAL' ? 'Numerical' : 'MCQ'}</Badge>
+                        <Badge variant={isOptionBased(question.type) ? 'success' : 'warning'}>{question.type === 'MCQ' ? 'MCQ' : questionTypeLabel(question.type)}</Badge>
+                        {question.details?.passage && <Badge variant="neutral">Paragraph set</Badge>}
                         {question.hasImageOrDiagram && !question.questionImageUrl && (
                           <Badge variant="danger"><AlertTriangle aria-hidden="true" /> Needs image</Badge>
                         )}

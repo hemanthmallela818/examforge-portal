@@ -5,6 +5,7 @@
 import { countBySubject, evaluatePatternSelection, validateExamSettings } from '../../../examPatternLogic';
 import { validateExamPreflight } from '../../../examPreflightLogic';
 import { prepareQuestionDraft } from '../../../questionContentLogic';
+import { resolveMarking } from '../../../questionTypes';
 import { MAX_EXAM_QUESTIONS } from '../adminConstants';
 
 /** @typedef {'details' | 'questions' | 'marking' | 'review'} WizardStepId */
@@ -48,7 +49,7 @@ export function validateQuestionsStep({ selectedCount, patternCheck }) {
 }
 
 /**
- * @param {{ duration: unknown, marksCorrect: unknown, marksIncorrect: unknown }} settings
+ * @param {{ duration: unknown, marksCorrect: unknown, marksIncorrect: unknown, marking?: unknown }} settings
  * @returns {string[]}
  */
 export function validateMarkingStep(settings) {
@@ -58,35 +59,42 @@ export function validateMarkingStep(settings) {
 /**
  * Live per-subject counts and marks for the current selection. Pattern
  * sections come first (in pattern order, with their required count), then any
- * other selected subjects in the configured subject order.
+ * other selected subjects in the configured subject order. Marks use each
+ * question's type marking (falling back to the exam-wide marks).
  * @param {{
  *   selectedIds: string[],
  *   subjectsById: Record<string, string>,
+ *   typesById?: Record<string, string>,
  *   marksCorrect: unknown,
+ *   marking?: import('../../../types').ExamMarking | null,
  *   template: import('../../../types').PatternTemplate | null,
  *   compareSubjects?: ((a: string, b: string) => number) | null
  * }} input
  */
-export function summarizeSelection({ selectedIds, subjectsById, marksCorrect, template, compareSubjects }) {
+export function summarizeSelection({ selectedIds, subjectsById, typesById = {}, marksCorrect, marking = null, template, compareSubjects }) {
   const counts = countBySubject(selectedIds.map(id => subjectsById[id]));
-  const perQuestion = Number(marksCorrect);
-  const marksFor = (/** @type {number} */ questions) => (Number.isFinite(perQuestion) ? questions * perQuestion : null);
+  const validMarks = Number.isFinite(Number(marksCorrect));
+  const paper = { marksCorrect, marking };
+  /** @param {string[]} ids */
+  const marksFor = ids => (validMarks ? ids.reduce((sum, id) => sum + resolveMarking(paper, typesById[id]).correct, 0) : null);
+  /** @param {string} subject */
+  const idsIn = subject => selectedIds.filter(id => subjectsById[id] === subject);
   const patternCheck = template ? evaluatePatternSelection(template, counts) : null;
   /** @type {Array<{ subject: string, count: number, required: number | null, status: 'ok' | 'short' | 'over' | 'extra' | null, marks: number | null }>} */
   const rows = [];
   if (patternCheck) {
-    patternCheck.rows.forEach(row => rows.push({ subject: row.subject, count: row.selected, required: row.required, status: row.status, marks: marksFor(row.selected) }));
-    patternCheck.extras.forEach(extra => rows.push({ subject: extra.subject, count: extra.selected, required: null, status: 'extra', marks: marksFor(extra.selected) }));
+    patternCheck.rows.forEach(row => rows.push({ subject: row.subject, count: row.selected, required: row.required, status: row.status, marks: marksFor(idsIn(row.subject)) }));
+    patternCheck.extras.forEach(extra => rows.push({ subject: extra.subject, count: extra.selected, required: null, status: 'extra', marks: marksFor(idsIn(extra.subject)) }));
   } else {
     const subjects = Object.keys(counts);
     subjects.sort(typeof compareSubjects === 'function' ? compareSubjects : (a, b) => a.localeCompare(b));
-    subjects.forEach(subject => rows.push({ subject, count: counts[subject], required: null, status: null, marks: marksFor(counts[subject]) }));
+    subjects.forEach(subject => rows.push({ subject, count: counts[subject], required: null, status: null, marks: marksFor(idsIn(subject)) }));
   }
   return {
     rows,
     patternCheck,
     totalQuestions: selectedIds.length,
-    totalMarks: marksFor(selectedIds.length)
+    totalMarks: marksFor(selectedIds)
   };
 }
 
@@ -104,7 +112,7 @@ export function summarizeSelection({ selectedIds, subjectsById, marksCorrect, te
  * questions and the exact record the Create action will insert.
  * @param {{
  *   details: { title: string, targetClass: string, targetSection: string },
- *   settings: { duration: unknown, marksCorrect: unknown, marksIncorrect: unknown },
+ *   settings: { duration: unknown, marksCorrect: unknown, marksIncorrect: unknown, marking?: unknown },
  *   template: import('../../../types').PatternTemplate | null,
  *   verifiedQuestions: import('../../../types').QuestionBankItem[] | null,
  *   verificationError?: string,

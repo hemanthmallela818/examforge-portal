@@ -191,6 +191,7 @@ function App() {
           duration={examData?.duration}
           marksCorrect={examData?.marksCorrect}
           marksIncorrect={examData?.marksIncorrect}
+          marking={examData?.marking}
           subjects={examData?.subjects}
         />
       )}

@@ -199,6 +199,28 @@ describe('ExamCreationWizard', () => {
     expect(showToast).toHaveBeenCalledWith('Exam created successfully!', 'success');
   });
 
+  it('sets per-type marks for the selected types and saves them with the exam', async () => {
+    renderWizard();
+    await completeDetails();
+    await user.click(screen.getByLabelText('Select all on this page (3)'));
+    await user.click(next());
+
+    const table = screen.getByRole('group', { name: 'Marking by question type' });
+    const rowNames = within(table).getAllByRole('rowheader').map(cell => cell.textContent);
+    expect(rowNames).toEqual(['Single correct', 'Numerical value']);
+    await user.type(within(table).getByLabelText('Numerical value: marks for a wrong answer'), '0');
+    await user.type(within(table).getByLabelText('Single correct: marks for a correct answer'), '3');
+
+    await user.click(next());
+    await screen.findByText('Ready to create');
+    expect(screen.getByText('Numerical value: +4 / 0')).toBeTruthy();
+    // The footer enables Create once the review reports ready (a separate state update).
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create exam' }).disabled).toBe(false));
+    await user.click(screen.getByRole('button', { name: 'Create exam' }));
+    await waitFor(() => expect(insert).toHaveBeenCalledTimes(1));
+    expect(insert.mock.calls[0][0].questions_data.marking).toEqual({ NUMERICAL: { incorrect: 0 }, MCQ: { correct: 3 } });
+  });
+
   it('asks before discarding a draft', async () => {
     const { onClose } = renderWizard();
     await user.type(screen.getByLabelText('Exam title'), 'Draft');

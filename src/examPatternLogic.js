@@ -2,6 +2,7 @@
  * F1 exam patterns: compare the questions an administrator selected with the
  * subject sections required by a pattern, and order exam subjects.
  */
+import { validateMarking } from './questionTypes.js';
 
 /**
  * @import {
@@ -90,10 +91,10 @@ export function orderExamSubjects(subjects, template, compare) {
 
 /**
  * Validate exam settings that the create-exam form edits directly.
- * @param {{ duration: unknown, marksCorrect: unknown, marksIncorrect: unknown }} settings
+ * @param {{ duration: unknown, marksCorrect: unknown, marksIncorrect: unknown, marking?: unknown }} settings
  * @returns {string[]} Problems; empty when valid.
  */
-export function validateExamSettings({ duration, marksCorrect, marksIncorrect }) {
+export function validateExamSettings({ duration, marksCorrect, marksIncorrect, marking }) {
   /** @type {string[]} */
   const problems = [];
   const d = Number(duration);
@@ -106,6 +107,7 @@ export function validateExamSettings({ duration, marksCorrect, marksIncorrect })
   if (!Number.isFinite(i) || i < -100 || i > 0 || Math.round(i * 100) !== i * 100) {
     problems.push('Marks for a wrong answer must be between -100 and 0 (two decimals at most).');
   }
+  problems.push(...validateMarking(marking));
   return problems;
 }
 
@@ -138,6 +140,8 @@ export const validatePatternDraft = (draft, subjects) => {
   if (!Number.isFinite(incorrect) || incorrect < -100 || incorrect > 0 || !hasTwoDecimals(incorrect)) {
     errors.push('Marks for a wrong answer must be between -100 and 0 (two decimals at most).');
   }
+
+  errors.push(...validateMarking(draft.marking));
 
   if (draft.sections.length === 0) errors.push('Add at least one subject section.');
   if (draft.sections.length > MAX_PATTERN_SECTIONS) errors.push(`A pattern can have at most ${MAX_PATTERN_SECTIONS} subject sections.`);

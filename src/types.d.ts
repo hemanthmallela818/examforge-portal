@@ -67,6 +67,57 @@ export interface StudentIdentity {
   docId?: string | null;
 }
 
+// ---------------------------------------------------------------------------
+// Question types (questionTypes.js)
+// ---------------------------------------------------------------------------
+
+export type QuestionTypeCode =
+  | 'MCQ' | 'MULTIPLE_CORRECT' | 'INTEGER' | 'NUMERICAL' | 'MATRIX_MATCH' | 'ASSERTION_REASON';
+
+export interface QuestionTypeInfo {
+  code: QuestionTypeCode;
+  /** Administrator-facing name, e.g. "Multiple correct". */
+  label: string;
+  /** Candidate-facing badge, e.g. "MULTIPLE CORRECT". */
+  badge: string;
+  /** Four options A-D (true) or a typed value (false). */
+  optionBased: boolean;
+  valueKind: 'decimal' | 'integer' | null;
+}
+
+/** Matrix match: List-I (labelled P, Q, ...) and List-II (labelled 1, 2, ...). */
+export interface MatchLists {
+  left: string[];
+  right: string[];
+}
+
+/** A paragraph shared by every question with the same key. */
+export interface PassageDetails {
+  key: string;
+  text: string;
+}
+
+export interface QuestionDetails {
+  matchLists?: MatchLists;
+  passage?: PassageDetails;
+}
+
+/** Optional per-type marks; missing fields fall back to the exam-wide marks. */
+export interface MarkingEntry {
+  correct?: number;
+  incorrect?: number;
+  /** Multiple correct only: partial credit on (default) or off. */
+  partial?: boolean;
+}
+
+export type ExamMarking = Partial<Record<QuestionTypeCode, MarkingEntry>>;
+
+export interface ResolvedMarking {
+  correct: number;
+  incorrect: number;
+  partial: boolean;
+}
+
 /** A question as delivered inside a server-owned exam paper. */
 export interface ExamQuestion {
   id: string;
@@ -76,6 +127,7 @@ export interface ExamQuestion {
   questionImageUrl?: string | null;
   optionImageUrls?: Array<string | null> | null;
   hasImageOrDiagram?: boolean;
+  details?: QuestionDetails | null;
 }
 
 /** The question paper: ordered subjects and their questions. */
@@ -85,6 +137,7 @@ export interface ExamPaper {
   duration?: number;
   marksCorrect?: number;
   marksIncorrect?: number;
+  marking?: ExamMarking | null;
 }
 
 /** Row shape sent to the submit RPC. */
@@ -197,7 +250,7 @@ export interface RpcErrorLike {
 // Question import (importLogic.js, questionContentLogic.js)
 // ---------------------------------------------------------------------------
 
-export type ImportQuestionType = 'MCQ' | 'NUMERICAL';
+export type ImportQuestionType = QuestionTypeCode;
 
 export interface ImportOptions {
   /** Administrator-configured subjects; falls back to ALLOWED_IMPORT_SUBJECTS. */
@@ -214,13 +267,17 @@ export interface ImportQuestion {
   sourceId: string;
   rowNumber: number;
   text: string;
-  /** Upper-cased source type; only 'MCQ' | 'NUMERICAL' pass validation. */
+  /** Upper-cased source type; only QuestionTypeCode values pass validation. */
   type: string;
   options: string[];
-  /** MCQ: '0'..'3' after normalisation; NUMERICAL: decimal text. */
+  /** Option types: '0'..'3' ("0,2" for multiple correct); value types: the typed number. */
   correctAnswer: string;
   subject: string;
   hasImageOrDiagram: boolean;
+  /** Matrix match lists (import files use match_lists { list_i, list_ii }). */
+  matchLists: MatchLists | null;
+  /** Paragraph with its file-local key; a new UUID is assigned on import. */
+  passage: PassageDetails | null;
   schemaWarnings: string[];
   approved: boolean | undefined;
 }
@@ -244,6 +301,7 @@ export interface QuestionTextLike {
   docId?: string;
   text?: string | null;
   question_text?: string | null;
+  details?: QuestionDetails | null;
 }
 
 export interface ImportFileLike {
@@ -267,6 +325,7 @@ export interface AtomicImportRow {
   category: 'Mains';
   points: number;
   neg_points: number;
+  details?: QuestionDetails;
 }
 
 /** Normalised question produced by the Question Editor. */
@@ -280,6 +339,7 @@ export interface PreparedQuestion {
   questionImageUrl: string | null;
   optionImageUrls: unknown[];
   hasImageOrDiagram: boolean;
+  details: QuestionDetails | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -299,6 +359,7 @@ export interface PatternTemplate {
   durationMinutes?: number | string;
   marksCorrect?: number | string;
   marksIncorrect?: number | string;
+  marking?: ExamMarking | null;
   sections: PatternSection[];
 }
 
@@ -308,6 +369,7 @@ export interface PatternDraft {
   durationMinutes: number | string;
   marksCorrect: number | string;
   marksIncorrect: number | string;
+  marking?: ExamMarking | null;
   sections: PatternSection[];
 }
 
@@ -375,7 +437,7 @@ export interface QuestionBankItem {
   docId: string;
   id: string;
   subject: string;
-  type: 'MCQ' | 'NUMERICAL';
+  type: string;
   questionNumber: number;
   text: string;
   options: string[] | null;
@@ -383,6 +445,7 @@ export interface QuestionBankItem {
   questionImageUrl: string | null;
   optionImageUrls: Array<string | null> | null;
   hasImageOrDiagram: boolean;
+  details: QuestionDetails | null;
   createdAt: string;
 }
 
@@ -609,6 +672,7 @@ export interface ExamTemplateEntry {
   durationMinutes: number;
   marksCorrect: number;
   marksIncorrect: number;
+  marking?: ExamMarking | null;
   sections: PatternSection[];
   isActive: boolean;
   totalQuestions: number;

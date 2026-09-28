@@ -271,3 +271,78 @@ describe('QuestionEditor image drag and drop', { timeout: 20_000 }, () => {
     expect(onSave.mock.calls[0][0].questionImageUrl).toBe(secondPath);
   });
 });
+
+describe('QuestionEditor new question types', { timeout: 20_000 }, () => {
+  const complete = { ...baseQuestion, options: ['Alpha', 'Beta', 'Gamma', 'Delta'] };
+
+  it('saves a multiple-correct answer as "1,3"', async () => {
+    const user = userEvent.setup({ delay: null });
+    const { onSave } = renderEditor(complete);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Question Type' }), 'MULTIPLE_CORRECT');
+    expect(within(preview()).getByText('MULTIPLE CORRECT')).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: /Option A/ }).value).toBe('Alpha');
+    await user.click(screen.getByRole('checkbox', { name: 'Option B' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Option D' }));
+    const marked = within(preview()).getAllByRole('listitem').map(item => item.textContent.includes('Correct'));
+    expect(marked).toEqual([false, true, false, true]);
+    await user.click(screen.getByRole('button', { name: /Save Changes/ }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave.mock.calls[0][0]).toMatchObject({ type: 'MULTIPLE_CORRECT', correctAnswer: '1,3' });
+  });
+
+  it('fills the Assertion–Reason template on a blank question', async () => {
+    const user = userEvent.setup({ delay: null });
+    renderEditor({ ...baseQuestion, text: '', options: ['', '', '', ''] });
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Question Type' }), 'ASSERTION_REASON');
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Question Prompt' }).value).toMatch(/^Assertion \(A\):/));
+    expect(screen.getByRole('textbox', { name: /Option A/ }).value).toMatch(/Both \(A\) and \(R\) are true and \(R\) is the correct explanation/);
+    expect(within(preview()).getByText('ASSERTION–REASON')).toBeTruthy();
+  });
+
+  it('edits List-I and List-II for matrix match and saves them', async () => {
+    const user = userEvent.setup({ delay: null });
+    const { onSave } = renderEditor(complete);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Question Type' }), 'MATRIX_MATCH');
+    await user.click(screen.getByRole('button', { name: 'Add List-II item' }));
+    const fill = async (name, value) => user.type(screen.getByRole('textbox', { name }), value);
+    await fill('List-I item P', 'Force');
+    await fill('List-I item Q', 'Power');
+    await fill('List-II item 1', 'Newton');
+    await fill('List-II item 2', 'Watt');
+    await fill('List-II item 3', 'Joule');
+    expect(within(preview()).getByRole('table', { name: 'List-I and List-II' }).textContent).toContain('3.Joule');
+    await user.click(screen.getByRole('button', { name: /Save Changes/ }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave.mock.calls[0][0].details).toEqual({ matchLists: { left: ['Force', 'Power'], right: ['Newton', 'Watt', 'Joule'] } });
+  });
+
+  it('takes a whole-number answer for integer type', async () => {
+    const user = userEvent.setup({ delay: null });
+    const { onSave } = renderEditor(complete);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Question Type' }), 'INTEGER');
+    expect(within(preview()).getByText('INTEGER TYPE')).toBeTruthy();
+    await user.type(screen.getByRole('textbox', { name: /Exact Correct Answer \(Whole Number\)/ }), '-12');
+    expect(within(preview()).getByText('-12')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: /Save Changes/ }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave.mock.calls[0][0]).toMatchObject({ type: 'INTEGER', correctAnswer: '-12', options: [] });
+  });
+
+  it('shows an existing paragraph read-only and a new one as editable', () => {
+    const passage = { key: '00000000-0000-4000-8000-00000000cafe', text: 'A ball is thrown upwards.' };
+    renderEditor({ ...complete, details: { passage } });
+    expect(screen.queryByRole('textbox', { name: /Paragraph/ })).toBeNull();
+    expect(screen.getByText(/use “Edit paragraph” in the question bank/)).toBeTruthy();
+    expect(within(preview()).getByText('A ball is thrown upwards.')).toBeTruthy();
+  });
+
+  it('lets the author write the paragraph of a new set', async () => {
+    const user = userEvent.setup({ delay: null });
+    const passage = { key: '00000000-0000-4000-8000-00000000beef', text: '' };
+    const { onSave } = renderEditor({ ...complete, docId: 'new', details: { passage }, isNewPassage: true });
+    await user.type(screen.getByRole('textbox', { name: /Paragraph/ }), 'A block rests on a table.');
+    await user.click(screen.getByRole('button', { name: /Save Changes/ }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave.mock.calls[0][0].details).toEqual({ passage: { key: passage.key, text: 'A block rests on a table.' } });
+  });
+});

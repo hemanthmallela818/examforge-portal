@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import MathRenderer from './MathRenderer';
 import StorageImage from './StorageImage';
+import MatchListsTable from './MatchListsTable';
+import { MATCH_LEFT_LABELS, MATCH_RIGHT_LABELS, decodeOptionSet, questionTypeInfo } from '../questionTypes';
 import { Check, CheckCircle2, Copy, FileText, Hash, Search, SearchX } from 'lucide-react';
 import { Badge, Button, Card, CardContent, CardDescription, CardHeader, EmptyState, Input, cn } from './ui';
 
@@ -11,6 +13,20 @@ import { Badge, Button, Card, CardContent, CardDescription, CardHeader, EmptySta
  * @property {string} [title]
  * @property {{ subjects?: string[], questions?: Record<string, ArchiveQuestion[] | undefined> } | null} [questionsData]
  */
+
+/**
+ * How a question's answer is shown: a typed value, or the correct option indices.
+ * @param {ArchiveQuestion} q
+ */
+const answerShape = (q) => {
+  const info = questionTypeInfo(q.type);
+  const isValue = info ? !info.optionBased : !q.options || q.options.length === 0;
+  return {
+    info,
+    isValue,
+    correct: info?.code === 'MULTIPLE_CORRECT' ? decodeOptionSet(q.correctAnswer) : [Number(q.correctAnswer)]
+  };
+};
 
 /** @param {{ exam: ArchiveExam | null | undefined }} props */
 const ExamQuestionsArchive = ({ exam }) => {
@@ -64,14 +80,22 @@ const ExamQuestionsArchive = ({ exam }) => {
   const handleCopyAsText = () => {
     let textOutput = `=== ${exam.title} - Question Archive ===\n\n`;
     allQuestions.forEach((q, index) => {
-      const isNumerical = (q.type || '').toUpperCase() === 'NUMERICAL' || (q.type || '').toUpperCase() === 'NAT' || !q.options || q.options.length === 0;
-      textOutput += `Q${index + 1} [${q.subject}] (${isNumerical ? 'NUMERICAL' : 'MCQ'}): ${q.text || '(Image Question)'}\n`;
-      if (isNumerical) {
-        textOutput += `   [NUMERICAL ANSWER]: ${q.correctAnswer}\n`;
+      const { info, isValue, correct } = answerShape(q);
+      const typeName = info ? info.code : (isValue ? 'NUMERICAL' : 'MCQ');
+      const passage = q.details?.passage?.text;
+      if (passage) textOutput += `[PARAGRAPH]: ${passage}\n`;
+      textOutput += `Q${index + 1} [${q.subject}] (${typeName}): ${q.text || '(Image Question)'}\n`;
+      const lists = q.details?.matchLists;
+      if (lists) {
+        lists.left.forEach((item, i) => { textOutput += `   List-I ${MATCH_LEFT_LABELS[i]}. ${item}\n`; });
+        lists.right.forEach((item, i) => { textOutput += `   List-II ${MATCH_RIGHT_LABELS[i]}. ${item}\n`; });
+      }
+      if (isValue) {
+        textOutput += `   [${info?.code === 'INTEGER' ? 'INTEGER' : 'NUMERICAL'} ANSWER]: ${q.correctAnswer}\n`;
       } else if (q.options && Array.isArray(q.options)) {
         q.options.forEach((opt, optIdx) => {
           const letter = String.fromCharCode(65 + optIdx);
-          const isCorrect = Number(q.correctAnswer) === optIdx;
+          const isCorrect = correct.includes(optIdx);
           textOutput += `   ${letter}) ${opt || '(Image Option)'} ${isCorrect ? ' [CORRECT]' : ''}\n`;
         });
       }
@@ -152,7 +176,9 @@ const ExamQuestionsArchive = ({ exam }) => {
           <EmptyState icon={SearchX} title="No questions found matching your filter criteria." />
         ) : (
           <div className="flex max-h-[700px] flex-col gap-4 overflow-y-auto pr-1">
-            {filteredQuestions.map((q, idx) => (
+            {filteredQuestions.map((q, idx) => {
+              const { info, isValue, correct } = answerShape(q);
+              return (
               <article
                 key={`${q.subject}-${idx}-${q.id || 'noid'}`}
                 className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50/60 p-5"
@@ -160,10 +186,17 @@ const ExamQuestionsArchive = ({ exam }) => {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-semibold text-slate-900">Question #{q.displayNumber}</span>
                   <Badge variant="brand" className="uppercase tracking-wide">{q.subject}</Badge>
-                  <Badge variant={q.type === 'NUMERICAL' ? 'warning' : 'success'} className="uppercase tracking-wide">
-                    {q.type === 'NUMERICAL' ? 'NUMERICAL VALUE TYPE' : 'MCQ'}
+                  <Badge variant={isValue ? 'warning' : 'success'} className="uppercase tracking-wide">
+                    {info?.code === 'MCQ' ? 'MCQ' : info?.badge || (isValue ? 'NUMERICAL VALUE TYPE' : 'MCQ')}
                   </Badge>
                 </div>
+
+                {q.details?.passage && (
+                  <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800">
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Paragraph</p>
+                    <p className="whitespace-pre-wrap"><MathRenderer text={q.details.passage.text} /></p>
+                  </div>
+                )}
 
                 <div className="text-base font-medium leading-relaxed text-slate-900">
                   <MathRenderer text={q.text} />
@@ -179,17 +212,19 @@ const ExamQuestionsArchive = ({ exam }) => {
                   </div>
                 )}
 
+                {q.details?.matchLists && <MatchListsTable lists={q.details.matchLists} className="bg-white text-sm" />}
+
                 {/* Options / Numerical Answer */}
-                {q.type === 'NUMERICAL' || !q.options || q.options.length === 0 ? (
+                {isValue || !q.options ? (
                   <div className="mt-2 flex flex-wrap items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
                     <Hash className="size-4 shrink-0 text-amber-600" aria-hidden="true" />
-                    <span>Correct Numerical Answer:</span>
+                    <span>Correct {info?.code === 'INTEGER' ? 'Integer' : 'Numerical'} Answer:</span>
                     <span className="rounded-md bg-amber-100 px-2.5 py-0.5 font-mono text-base text-amber-900 ring-1 ring-amber-200 tabular-nums">{q.correctAnswer}</span>
                   </div>
                 ) : (
                   <div className="mt-1 grid gap-2.5 md:grid-cols-2">
                     {q.options && q.options.map((opt, optIdx) => {
-                      const isCorrect = Number(q.correctAnswer) === optIdx;
+                      const isCorrect = correct.includes(optIdx);
                       const optImg = q.optionImageUrls && q.optionImageUrls[optIdx];
                       const letter = String.fromCharCode(65 + optIdx);
 
@@ -236,7 +271,8 @@ const ExamQuestionsArchive = ({ exam }) => {
                   </div>
                 )}
               </article>
-            ))}
+              );
+            })}
           </div>
         )}
       </CardContent>

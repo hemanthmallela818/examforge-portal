@@ -3,16 +3,19 @@ import { Alert, Badge, Button, Card, CardContent, CardDescription, CardHeader, C
 import { countBySubject, evaluatePatternSelection, validateExamSettings } from '../../../examPatternLogic';
 import { useAdminContext } from '../adminContext';
 import { MAX_EXAM_QUESTIONS } from '../adminConstants';
+import TypeMarkingTable from '../shared/TypeMarkingTable';
+import { compactMarking } from '../../../questionTypes';
 
 /**
  * Sticky "Create Exam" card beside the Question Bank, with the live F1 pattern check.
  * @param {{
  *   examBuilder: import('./useExamBuilder').ExamBuilder,
  *   selectedQuestions: string[],
- *   knownQuestionSubjects: Record<string, string>
+ *   knownQuestionSubjects: Record<string, string>,
+ *   knownQuestionTypes?: Record<string, string>
  * }} props
  */
-export default function CreateExamCard({ examBuilder, selectedQuestions, knownQuestionSubjects }) {
+export default function CreateExamCard({ examBuilder, selectedQuestions, knownQuestionSubjects, knownQuestionTypes = {} }) {
   const { classes } = useAdminContext().classBook;
   const {
     newExamTitle,
@@ -24,6 +27,8 @@ export default function CreateExamCard({ examBuilder, selectedQuestions, knownQu
     setExamMarksCorrect,
     examMarksIncorrect,
     setExamMarksIncorrect,
+    examMarking,
+    setExamMarking,
     examTargetClass,
     setExamTargetClass,
     examTargetSection,
@@ -38,7 +43,8 @@ export default function CreateExamCard({ examBuilder, selectedQuestions, knownQu
   const patternCheck = selectedTemplate
     ? evaluatePatternSelection(/** @type {import('../../../types').PatternTemplate} */ (selectedTemplate), countBySubject(selectedQuestions.map(id => knownQuestionSubjects[id])))
     : null;
-  const settingsProblems = validateExamSettings({ duration: examDuration, marksCorrect: examMarksCorrect, marksIncorrect: examMarksIncorrect });
+  const settingsProblems = validateExamSettings({ duration: examDuration, marksCorrect: examMarksCorrect, marksIncorrect: examMarksIncorrect, marking: compactMarking(examMarking) });
+  const selectedTypes = selectedQuestions.map(id => knownQuestionTypes[id]).filter(Boolean);
 
   return (
     <Card>
@@ -188,6 +194,13 @@ export default function CreateExamCard({ examBuilder, selectedQuestions, knownQu
             />
           </Field>
         </div>
+        <TypeMarkingTable
+          types={selectedTypes}
+          marking={examMarking}
+          defaults={{ correct: examMarksCorrect, incorrect: examMarksIncorrect }}
+          onChange={setExamMarking}
+          locked={Boolean(selectedTemplate)}
+        />
         {settingsProblems.length > 0 && (
           <Alert variant="danger" role="alert">{settingsProblems[0]}</Alert>
         )}

@@ -1,16 +1,52 @@
-import { useState } from 'react';
-import { AlertTriangle, CheckCircle2, Hash, Library, ListOrdered, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { useId, useState } from 'react';
+import { AlertTriangle, BookOpen, CheckCircle2, Hash, Library, ListOrdered, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import {
-  Alert, Badge, Button, Card, CardContent, CardHeader, CardTitle, Checkbox, EmptyState, Input, LoadingBlock, Select, cn
+  Alert, Badge, Button, Card, CardContent, CardHeader, CardTitle, Checkbox, EmptyState, Input, LoadingBlock, Select, Textarea, cn
 } from '../../../components/ui';
 import QuestionEditor from '../../../components/QuestionEditor';
 import MathRenderer from '../../../components/MathRenderer';
 import StorageImage from '../../../components/StorageImage';
+import MatchListsTable from '../../../components/MatchListsTable';
+import AccessibleModal from '../../../components/AccessibleModal';
+import { QUESTION_TYPES, decodeOptionSet, questionTypeInfo } from '../../../questionTypes';
 import { useAdminContext } from '../adminContext';
 import { QUESTION_BANK_PAGE_SIZE } from '../adminConstants';
 import { PagerButtons, pagerNavClass } from '../shared/AdminUi';
 import CreateExamCard from './CreateExamCard';
 import ExamCreationWizard from '../wizard/ExamCreationWizard';
+
+/**
+ * Edits the paragraph shared by every question in a set.
+ * @param {{ passage: import('../../../types').PassageDetails, onSave: (text: string) => Promise<boolean>, onClose: () => void }} props
+ */
+function PassageDialog({ passage, onSave, onClose }) {
+  const [text, setText] = useState(passage.text);
+  const [saving, setSaving] = useState(false);
+  const titleId = useId();
+  return (
+    <AccessibleModal labelledBy={titleId} onEscape={onClose} maxWidth="720px">
+      <div className="flex flex-col gap-4 text-left">
+        <h2 id={titleId} className="text-lg font-semibold text-slate-900">Edit paragraph</h2>
+        <p className="text-sm text-slate-500">The change applies to every question in this paragraph set. Exams already created keep their copy.</p>
+        <Textarea aria-label="Paragraph text" value={text} onChange={(e) => setText(e.target.value)} className="min-h-48 resize-y" />
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button
+            disabled={saving || !text.trim()}
+            onClick={async () => {
+              setSaving(true);
+              const saved = await onSave(text);
+              setSaving(false);
+              if (saved) onClose();
+            }}
+          >
+            Save paragraph
+          </Button>
+        </div>
+      </div>
+    </AccessibleModal>
+  );
+}
 
 /**
  * One question in the bank list: selection, badges, text, media and answer key.
@@ -19,10 +55,16 @@ import ExamCreationWizard from '../wizard/ExamCreationWizard';
  *   selected: boolean,
  *   onToggle: (checked: boolean) => void,
  *   onEdit: () => void,
- *   onDelete: () => void
+ *   onDelete: () => void,
+ *   onAddToPassage: () => void,
+ *   onEditPassage: () => void
  * }} props
  */
-function QuestionBankItem({ question: q, selected, onToggle, onEdit, onDelete }) {
+function QuestionBankItem({ question: q, selected, onToggle, onEdit, onDelete, onAddToPassage, onEditPassage }) {
+  const typeInfo = questionTypeInfo(q.type);
+  const isValueType = typeInfo ? !typeInfo.optionBased : !q.options?.length;
+  const correctIndices = typeInfo?.code === 'MULTIPLE_CORRECT' ? decodeOptionSet(q.correctAnswer) : [Number(q.correctAnswer)];
+  const passage = q.details?.passage;
   return (
     <div className={cn('flex gap-3 rounded-xl border p-4 transition-colors', selected ? 'border-brand-300 bg-brand-50/60' : 'border-slate-200 bg-white hover:border-slate-300')}>
       <Checkbox
@@ -35,9 +77,10 @@ function QuestionBankItem({ question: q, selected, onToggle, onEdit, onDelete })
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-1.5">
             <Badge variant="brand">{q.subject}</Badge>
-            <Badge variant={q.type === 'NUMERICAL' ? 'warning' : 'success'}>
-              {q.type === 'NUMERICAL' ? 'NUMERICAL VALUE' : 'MCQ'}
+            <Badge variant={isValueType ? 'warning' : 'success'}>
+              {typeInfo?.code === 'MCQ' ? 'MCQ' : typeInfo?.code === 'NUMERICAL' ? 'NUMERICAL VALUE' : (typeInfo?.label || q.type)}
             </Badge>
+            {passage && <Badge variant="neutral"><BookOpen aria-hidden="true" /> Paragraph set</Badge>}
           </div>
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="sm" onClick={onEdit}>
@@ -48,6 +91,15 @@ function QuestionBankItem({ question: q, selected, onToggle, onEdit, onDelete })
             </Button>
           </div>
         </div>
+        {passage && (
+          <div className="mt-2.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+            <p className="line-clamp-3 whitespace-pre-wrap text-sm text-slate-700"><MathRenderer text={passage.text} /></p>
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              <Button variant="ghost" size="sm" onClick={onAddToPassage}><Plus aria-hidden="true" /> Add question to this paragraph</Button>
+              <Button variant="ghost" size="sm" onClick={onEditPassage}><Pencil aria-hidden="true" /> Edit paragraph</Button>
+            </div>
+          </div>
+        )}
         <div className="my-2.5 text-sm font-medium leading-relaxed text-slate-900">
           {q.questionNumber && <span className="mr-2 text-slate-500 tabular-nums">Q{q.questionNumber}.</span>}
           <MathRenderer text={q.text} />
@@ -62,16 +114,17 @@ function QuestionBankItem({ question: q, selected, onToggle, onEdit, onDelete })
             <StorageImage src={q.questionImageUrl} alt="Question" className="max-h-[100px] max-w-full rounded border border-slate-200" />
           </div>
         )}
-        {q.type === 'NUMERICAL' || !q.options || q.options.length === 0 ? (
+        {q.details?.matchLists && <MatchListsTable lists={q.details.matchLists} className="mb-2.5 text-sm" />}
+        {isValueType || !q.options ? (
           <div className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm font-semibold text-amber-800">
-            <Hash className="size-4" aria-hidden="true" /> Correct Numerical Answer: {q.correctAnswer}
+            <Hash className="size-4" aria-hidden="true" /> Correct {typeInfo?.code === 'INTEGER' ? 'Integer' : 'Numerical'} Answer: {q.correctAnswer}
           </div>
         ) : (
           <div className="grid gap-2 text-sm text-slate-600 sm:grid-cols-2">
             {q.options.map((opt, i) => (
-              <div key={i} className={cn('flex flex-col rounded-lg px-2.5 py-1.5', Number(q.correctAnswer) === i ? 'bg-emerald-50 font-semibold text-emerald-700 ring-1 ring-emerald-200' : 'bg-slate-50')}>
+              <div key={i} className={cn('flex flex-col rounded-lg px-2.5 py-1.5', correctIndices.includes(i) ? 'bg-emerald-50 font-semibold text-emerald-700 ring-1 ring-emerald-200' : 'bg-slate-50')}>
                 <span className="flex items-start gap-1.5">
-                  {Number(q.correctAnswer) === i && <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden="true" />}
+                  {correctIndices.includes(i) && <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden="true" />}
                   <span>{String.fromCharCode(65 + i)}) <MathRenderer text={opt} /></span>
                 </span>
                 {q.optionImageUrls?.[i] && (
@@ -98,9 +151,12 @@ export default function QuestionBankView({ questionBankState, examBuilder, onDel
   const { dataLoadState, isRootDeveloper, catalog } = useAdminContext();
   const { subjectCatalog, activeSubjectNames, compareSubjects } = catalog;
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [newQuestionType, setNewQuestionType] = useState('MCQ');
+  const [passageDialog, setPassageDialog] = useState(/** @type {import('../../../types').PassageDetails | null} */ (null));
   const {
     questionBank,
     knownQuestionSubjects,
+    knownQuestionTypes,
     fetchQuestionBank,
     editingQuestion,
     setEditingQuestion,
@@ -120,7 +176,10 @@ export default function QuestionBankView({ questionBankState, examBuilder, onDel
     questionBankSnapshot,
     handleSaveQuestion,
     handleDeleteQuestion,
-    handleAddBlankQuestion
+    handleAddBlankQuestion,
+    handleNewParagraphSet,
+    handleAddQuestionToPassage,
+    handleUpdatePassage
   } = questionBankState;
 
   /** @type {Record<string, import('../../../types').QuestionBankItem[]>} */
@@ -168,26 +227,37 @@ export default function QuestionBankView({ questionBankState, examBuilder, onDel
           onCancel={() => setEditingQuestion(null)}
         />
       )}
+      {passageDialog && (
+        <PassageDialog
+          passage={passageDialog}
+          onSave={(text) => handleUpdatePassage(passageDialog.key, text)}
+          onClose={() => setPassageDialog(null)}
+        />
+      )}
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <Card className="min-w-0">
           <CardHeader className="items-center">
             <CardTitle as="h2"><Library aria-hidden="true" /> Question Bank</CardTitle>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Select
+                aria-label="Type of the new question"
+                value={newQuestionType}
+                onChange={(e) => setNewQuestionType(e.target.value)}
+                className="h-8 w-auto text-sm"
+              >
+                {QUESTION_TYPES.map(type => <option key={type.code} value={type.code}>{type.label}</option>)}
+              </Select>
               <Button
                 variant="secondary"
                 size="sm"
                 className="border-brand-200 text-brand-700 hover:border-brand-300 hover:bg-brand-50"
-                onClick={() => handleAddBlankQuestion('MCQ')}
+                onClick={() => handleAddBlankQuestion(newQuestionType)}
               >
-                <Plus aria-hidden="true" /> Create Blank MCQ
+                <Plus aria-hidden="true" /> Create question
               </Button>
-              <Button
-                variant="warning"
-                size="sm"
-                onClick={() => handleAddBlankQuestion('NUMERICAL')}
-              >
-                <Plus aria-hidden="true" /> Create Blank Numerical (NAT)
+              <Button variant="secondary" size="sm" onClick={handleNewParagraphSet}>
+                <BookOpen aria-hidden="true" /> New paragraph set
               </Button>
             </div>
           </CardHeader>
@@ -235,8 +305,7 @@ export default function QuestionBankView({ questionBankState, examBuilder, onDel
                   setQuestionBankPage(0);
                 }}>
                   <option value="">All types</option>
-                  <option value="MCQ">MCQ</option>
-                  <option value="NUMERICAL">Numerical</option>
+                  {QUESTION_TYPES.map(type => <option key={type.code} value={type.code}>{type.label}</option>)}
                 </Select>
               </div>
             </div>
@@ -303,6 +372,8 @@ export default function QuestionBankView({ questionBankState, examBuilder, onDel
                               : current.filter(id => id !== q.docId))}
                             onEdit={() => setEditingQuestion(q)}
                             onDelete={() => handleDeleteQuestion(q.docId)}
+                            onAddToPassage={() => handleAddQuestionToPassage(q)}
+                            onEditPassage={() => q.details?.passage && setPassageDialog(q.details.passage)}
                           />
                         ))}
                       </div>
@@ -326,7 +397,7 @@ export default function QuestionBankView({ questionBankState, examBuilder, onDel
 
         {/* Create Exam Card (quick path) plus the step-by-step wizard entry point */}
         <div className="flex flex-col gap-3 lg:sticky lg:top-24">
-          <CreateExamCard examBuilder={examBuilder} selectedQuestions={selectedQuestions} knownQuestionSubjects={knownQuestionSubjects} />
+          <CreateExamCard examBuilder={examBuilder} selectedQuestions={selectedQuestions} knownQuestionSubjects={knownQuestionSubjects} knownQuestionTypes={knownQuestionTypes} />
           <Button variant="secondary" className="w-full" onClick={() => setWizardOpen(true)}>
             <ListOrdered aria-hidden="true" /> Step-by-step wizard
           </Button>
@@ -338,6 +409,7 @@ export default function QuestionBankView({ questionBankState, examBuilder, onDel
           selectedQuestions={selectedQuestions}
           setSelectedQuestions={setSelectedQuestions}
           initialSubjectsById={knownQuestionSubjects}
+          initialTypesById={knownQuestionTypes}
           onClose={() => setWizardOpen(false)}
         />
       )}

@@ -6,6 +6,7 @@ import { prepareQuestionDraft } from '../../../questionContentLogic';
 import { countBySubject, evaluatePatternSelection, orderExamSubjects, validateExamSettings } from '../../../examPatternLogic';
 import { useAdminContext } from '../adminContext';
 import { MAX_EXAM_QUESTIONS } from '../adminConstants';
+import { compactMarking, passageBlocks } from '../../../questionTypes';
 
 /** @typedef {ReturnType<typeof useExamBuilder>} ExamBuilder */
 
@@ -20,18 +21,23 @@ import { MAX_EXAM_QUESTIONS } from '../adminConstants';
  *   duration: number | string,
  *   marksCorrect: number | string,
  *   marksIncorrect: number | string,
+ *   marking?: import('../../../types').ExamMarking | null,
  *   template: import('../../../types').PatternTemplate | null,
  *   questions: import('../../../types').QuestionBankItem[],
  *   compareSubjects: ((a: string, b: string) => number) | null
  * }} input
  */
-export function assembleExamRecord({ title, targetClass, targetSection, duration, marksCorrect, marksIncorrect, template, questions, compareSubjects }) {
+export function assembleExamRecord({ title, targetClass, targetSection, duration, marksCorrect, marksIncorrect, marking, template, questions, compareSubjects }) {
   const subjects = orderExamSubjects(questions.map(q => q.subject), template, compareSubjects);
   /** @type {Record<string, import('../../../types').QuestionBankItem[]>} */
   const questionsObj = {};
   subjects.forEach(sub => {
-    questionsObj[sub] = questions.filter(q => q.subject === sub);
+    // A paragraph set's questions sit together, where its first question
+    // appears, in bank order (follow-ups often build on earlier questions).
+    questionsObj[sub] = passageBlocks(questions.filter(q => q.subject === sub))
+      .flatMap(block => (block.length > 1 ? [...block].sort((a, b) => (a.questionNumber || 0) - (b.questionNumber || 0)) : block));
   });
+  const perTypeMarking = compactMarking(marking);
 
   return {
     title,
@@ -43,6 +49,7 @@ export function assembleExamRecord({ title, targetClass, targetSection, duration
       duration: Number(duration),
       marksCorrect: Number(marksCorrect),
       marksIncorrect: Number(marksIncorrect),
+      ...(perTypeMarking ? { marking: perTypeMarking } : {}),
       ...(template ? { pattern: { id: template.id, name: template.name } } : {})
     },
     class: targetClass,
@@ -70,6 +77,8 @@ export function useExamBuilder({ selectedQuestions, setSelectedQuestions, onExam
   const [examDuration, setExamDuration] = useState(/** @type {number | string} */ (180));
   const [examMarksCorrect, setExamMarksCorrect] = useState(/** @type {number | string} */ (4));
   const [examMarksIncorrect, setExamMarksIncorrect] = useState(/** @type {number | string} */ (-1));
+  // Optional per-type marks; blank entries use the exam-wide marks above.
+  const [examMarking, setExamMarking] = useState(/** @type {import('../../../types').ExamMarking} */ ({}));
   const [examTargetClass, setExamTargetClass] = useState('');
   const [examTargetSection, setExamTargetSection] = useState('');
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
@@ -83,6 +92,7 @@ export function useExamBuilder({ selectedQuestions, setSelectedQuestions, onExam
       setExamDuration(template.durationMinutes);
       setExamMarksCorrect(Number(template.marksCorrect));
       setExamMarksIncorrect(Number(template.marksIncorrect));
+      setExamMarking(template.marking || {});
     }
   };
 
@@ -105,7 +115,7 @@ export function useExamBuilder({ selectedQuestions, setSelectedQuestions, onExam
       await customAlert("Please select a target Class and Section for the exam.");
       return false;
     }
-    const settingsProblems = validateExamSettings({ duration: examDuration, marksCorrect: examMarksCorrect, marksIncorrect: examMarksIncorrect });
+    const settingsProblems = validateExamSettings({ duration: examDuration, marksCorrect: examMarksCorrect, marksIncorrect: examMarksIncorrect, marking: compactMarking(examMarking) });
     if (settingsProblems.length > 0) {
       await customAlert(settingsProblems.join('\n'));
       return false;
@@ -159,6 +169,7 @@ export function useExamBuilder({ selectedQuestions, setSelectedQuestions, onExam
       duration: examDuration,
       marksCorrect: examMarksCorrect,
       marksIncorrect: examMarksIncorrect,
+      marking: examMarking,
       template: /** @type {import('../../../types').PatternTemplate | null} */ (selectedTemplate),
       questions: selectedQData,
       compareSubjects
@@ -174,6 +185,7 @@ export function useExamBuilder({ selectedQuestions, setSelectedQuestions, onExam
       setExamDuration(180);
       setExamMarksCorrect(4);
       setExamMarksIncorrect(-1);
+      setExamMarking({});
       setSelectedTemplateId('');
       onExamCreated();
       showToast("Exam created successfully!", "success");
@@ -197,6 +209,8 @@ export function useExamBuilder({ selectedQuestions, setSelectedQuestions, onExam
     setExamMarksCorrect,
     examMarksIncorrect,
     setExamMarksIncorrect,
+    examMarking,
+    setExamMarking,
     examTargetClass,
     setExamTargetClass,
     examTargetSection,

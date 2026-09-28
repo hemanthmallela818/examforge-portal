@@ -6,6 +6,8 @@ import { supabase } from '../supabase';
 import { customConfirm, showToast } from '../utils';
 import { MAX_PATTERN_QUESTIONS, MAX_PATTERN_SECTIONS, validatePatternDraft } from '../examPatternLogic';
 import AccessibleModal from './AccessibleModal';
+import TypeMarkingTable from '../features/admin/shared/TypeMarkingTable';
+import { QUESTION_TYPES, compactMarking } from '../questionTypes';
 import {
   Alert, Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Checkbox, EmptyState, Field, Input,
   LoadingBlock, Select, Textarea, cn
@@ -32,6 +34,7 @@ const emptyDraft = () => ({
   durationMinutes: 180,
   marksCorrect: 4,
   marksIncorrect: -1,
+  marking: {},
   isActive: true,
   sections: [{ subject: '', questionCount: 25 }]
 });
@@ -319,7 +322,8 @@ const PatternEditor = ({ initial, subjects, onClose, onSaved }) => {
         marks_correct_param: Number(draft.marksCorrect),
         marks_incorrect_param: Number(draft.marksIncorrect),
         sections_param: draft.sections.map(section => ({ subject: section.subject, questionCount: Number(section.questionCount) })),
-        is_active_param: draft.isActive
+        is_active_param: draft.isActive,
+        marking_param: compactMarking(draft.marking) || null
       });
       if (error) throw error;
       showToast(`Pattern "${name}" saved.`, 'success');
@@ -366,6 +370,13 @@ const PatternEditor = ({ initial, subjects, onClose, onSaved }) => {
             </Field>
           </div>
         </div>
+
+        <TypeMarkingTable
+          types={QUESTION_TYPES.map(type => type.code)}
+          marking={draft.marking}
+          defaults={{ correct: draft.marksCorrect, incorrect: draft.marksIncorrect }}
+          onChange={marking => update({ marking })}
+        />
 
         <fieldset className="flex flex-col gap-3">
           <legend className="mb-2 flex w-full items-center justify-between text-sm font-semibold text-slate-700">
@@ -466,6 +477,7 @@ const PatternsPanel = ({ templates, subjects, onChanged }) => {
     durationMinutes: template.durationMinutes,
     marksCorrect: Number(template.marksCorrect),
     marksIncorrect: Number(template.marksIncorrect),
+    marking: template.marking || {},
     isActive: copy ? true : template.isActive,
     sections: template.sections.map(section => ({ subject: section.subject, questionCount: section.questionCount }))
   });

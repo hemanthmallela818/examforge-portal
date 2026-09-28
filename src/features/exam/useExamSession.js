@@ -35,7 +35,7 @@ import {
   isStudentSessionReplaced,
   examActionErrorMessage,
   committedResultToScorecard,
-  shuffleArray
+  shuffleQuestionBlocks
 } from './examSessionHelpers';
 import { useDeadlineReached } from './examClock';
 import { useExamLockdown } from './useExamLockdown';
@@ -660,7 +660,7 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
       const jumbledQuestions = {};
       (data.subjects || []).forEach(sub => {
         const subQuestions = data.questions?.[sub] || [];
-        jumbledQuestions[sub] = shuffleArray(subQuestions);
+        jumbledQuestions[sub] = shuffleQuestionBlocks(subQuestions);
       });
       finalExamData = {
         ...data,

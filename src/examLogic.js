@@ -587,8 +587,12 @@ export function mergeOfflineResponses(serverExamData, serverResponses, localResp
         const validStatus = /** @type {ResponseStatus} */ (VALID_RESPONSE_STATUSES.has(localResp.status) ? localResp.status : 'NOT_VISITED');
 
         if (hasLocalOption || validStatus !== 'NOT_VISITED') {
+          // A local clear (an unanswered status) wins over the server's older
+          // answer; pairing that answer with an unanswered status would be
+          // rejected by the server's autosave.
+          const answered = validStatus === 'ANSWERED' || validStatus === 'ANSWERED_MARKED';
           return {
-            selectedOption: hasLocalOption ? option : (serverResp?.selectedOption ?? null),
+            selectedOption: hasLocalOption ? option : (answered ? (serverResp?.selectedOption ?? null) : null),
             status: validStatus
           };
         }

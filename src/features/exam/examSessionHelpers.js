@@ -1,4 +1,5 @@
 // Pure helpers shared by the student exam session hooks and the App shell.
+import { passageBlocks } from '../../questionTypes';
 import { safeStorageGet, safeStorageSet, safeStorageRemove, safeStorageJson } from '../../browserStorage';
 import { APP_ERROR, classifyAppError } from '../../appErrors';
 import { sessionBelongsToStudent, RECOVERY_SCHEMA_VERSION } from '../../examLogic';
@@ -109,6 +110,7 @@ export const committedResultToScorecard = (committedResult) => ({
   totalScore: committedResult.total_score,
   maxScore: committedResult.max_score,
   correct: committedResult.correct,
+  partial: committedResult.partial ?? 0,
   incorrect: committedResult.incorrect,
   unattempted: committedResult.unattempted,
   subjectScores: committedResult.subject_scores
@@ -128,3 +130,12 @@ export const shuffleArray = (arr) => {
   }
   return copy;
 };
+
+/**
+ * Shuffles questions in blocks, like the server: a paragraph set (same
+ * details.passage.key) moves as one block and keeps its order.
+ * @template {{ details?: import('../../types').QuestionDetails | null } | null | undefined} Q
+ * @param {readonly Q[]} questions
+ * @returns {Q[]}
+ */
+export const shuffleQuestionBlocks = (questions) => shuffleArray(passageBlocks(questions)).flat();

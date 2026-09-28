@@ -29,9 +29,9 @@ const questionData = {
       hasImageOrDiagram: false
     }],
     Mathematics: [{
-      id: 'e2e-mathematics-1', subject: 'Mathematics', type: 'MCQ',
-      text: 'Select the third option.', options: ['One', 'Two', 'Three', 'Four'],
-      correctAnswer: '2', hasImageOrDiagram: false
+      id: 'e2e-mathematics-1', subject: 'Mathematics', type: 'MULTIPLE_CORRECT',
+      text: 'Select the second and fourth options.', options: ['One', 'Two', 'Three', 'Four'],
+      correctAnswer: '1,3', hasImageOrDiagram: false
     }]
   }
 };
