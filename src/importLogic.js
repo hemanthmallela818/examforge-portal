@@ -1,5 +1,6 @@
 import { stableStringify } from './examLogic.js';
 import { AUTHOR_NUMERICAL_MAX_LENGTH, isValidNumericalAnswer } from './numericalAnswerPolicy.js';
+import { QUESTION_TYPES, encodeOptionSet, isValidAuthorAnswer, questionTypeInfo, validateQuestionDetails } from './questionTypes.js';
 
 /**
  * @import {
@@ -115,7 +116,7 @@ export const IMPORT_JSON_SCHEMA_DOCUMENT = Object.freeze({
           id: { type: 'string', minLength: 1, maxLength: 128 },
           question_number: { type: 'integer', minimum: 1 },
           question_text: { type: 'string', minLength: 1, maxLength: 10000 },
-          question_type: { enum: ['MCQ', 'NUMERICAL'] },
+          question_type: { enum: QUESTION_TYPES.map(type => type.code) },
           options: {
             type: 'array',
             maxItems: 4,
@@ -134,9 +135,32 @@ export const IMPORT_JSON_SCHEMA_DOCUMENT = Object.freeze({
               ]
             }
           },
-          correct_answer: { type: ['string', 'number'], maxLength: 100 },
+          correct_answer: {
+            oneOf: [
+              { type: ['string', 'number'], maxLength: 100 },
+              { type: 'array', minItems: 1, maxItems: 4, uniqueItems: true, items: { enum: ['A', 'B', 'C', 'D'] } }
+            ]
+          },
           subject: { enum: ALLOWED_IMPORT_SUBJECTS },
-          has_image_or_diagram: { type: 'boolean' }
+          has_image_or_diagram: { type: 'boolean' },
+          match_lists: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['list_i', 'list_ii'],
+            properties: {
+              list_i: { type: 'array', minItems: 2, maxItems: 6, items: { type: 'string', minLength: 1, maxLength: 2000 } },
+              list_ii: { type: 'array', minItems: 2, maxItems: 8, items: { type: 'string', minLength: 1, maxLength: 2000 } }
+            }
+          },
+          passage: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['key', 'text'],
+            properties: {
+              key: { type: 'string', minLength: 1, maxLength: 128 },
+              text: { type: 'string', minLength: 1, maxLength: 10000 }
+            }
+          }
         }
       }
     }
@@ -145,7 +169,7 @@ export const IMPORT_JSON_SCHEMA_DOCUMENT = Object.freeze({
 
 const SOURCE_QUESTION_KEYS = new Set([
   'id', 'question_number', 'question_text', 'question_type', 'options',
-  'correct_answer', 'subject', 'has_image_or_diagram'
+  'correct_answer', 'subject', 'has_image_or_diagram', 'match_lists', 'passage'
 ]);
 
 /**
@@ -215,6 +239,26 @@ export const canonicalQuestionText = value => String(value ?? '')
 export const questionIdentityKey = (text, details) => `${canonicalQuestionText(text)}|${details ? stableStringify(details) : ''}`;
 
 /**
+ * Type details for an authored row; a missing type is invalid (never MCQ).
+ * @param {unknown} type
+ */
+const authoredTypeInfo = type => (String(type ?? '').trim() ? questionTypeInfo(type) : null);
+
+/**
+ * Duplicate key for an import row: its lists and its file-local paragraph.
+ * @param {ImportQuestion} question
+ * @returns {string} '' when the row has no text.
+ */
+const importIdentityKey = question => {
+  if (!canonicalQuestionText(question.text)) return '';
+  /** @type {UntrustedInput} */
+  const details = {};
+  if (question.matchLists) details.matchLists = question.matchLists;
+  if (question.passage) details.passage = question.passage;
+  return questionIdentityKey(question.text, Object.keys(details).length ? details : null);
+};
+
+/**
  * @param {UntrustedInput} option String or `{ label, text }`.
  * @returns {string}
  */
@@ -225,16 +269,62 @@ const normalizeOption = option => {
 };
 
 /**
- * MCQ letters A-D become '0'-'3'; anything else is returned trimmed.
+ * @param {string} part
+ * @returns {number | null} Option index for A-D / 0-3, otherwise null.
+ */
+const optionIndexOf = part => {
+  const upper = part.trim().toUpperCase();
+  if (/^[A-D]$/.test(upper)) return upper.charCodeAt(0) - 65;
+  return /^[0-3]$/.test(upper) ? Number(upper) : null;
+};
+
+/**
+ * Single-answer option types: letters A-D become '0'-'3'. Multiple correct:
+ * "A, C", ["C", "A"] or "0,2" become the canonical "0,2". Anything that
+ * cannot be read is returned as text so validation can report it.
  * @param {unknown} value
  * @param {string} type
  * @returns {string}
  */
 const normalizeCorrectAnswer = (value, type) => {
+  const info = authoredTypeInfo(type);
+  if (info?.code === 'MULTIPLE_CORRECT') {
+    const parts = Array.isArray(value) ? value.map(part => String(part ?? '')) : String(value ?? '').split(',');
+    const indices = parts.map(optionIndexOf);
+    if (parts.length > 0 && indices.every(index => index !== null)) {
+      return encodeOptionSet(/** @type {number[]} */ (indices)) || '';
+    }
+    return Array.isArray(value) ? value.join(',') : String(value ?? '').trim();
+  }
   const answer = String(value ?? '').trim();
-  if (type !== 'MCQ') return answer;
+  if (!info?.optionBased) return answer;
   const upper = answer.toUpperCase();
   return /^[A-D]$/.test(upper) ? String(upper.charCodeAt(0) - 65) : answer;
+};
+
+/**
+ * Source `match_lists { list_i, list_ii }` or editor `matchLists { left, right }`.
+ * @param {UntrustedInput} raw
+ * @returns {{ left: string[], right: string[] } | null}
+ */
+const normalizeMatchLists = raw => {
+  const source = raw?.match_lists ?? raw?.matchLists;
+  if (!source || typeof source !== 'object') return null;
+  const left = source.list_i ?? source.left;
+  const right = source.list_ii ?? source.right;
+  /** @param {unknown} list */
+  const clean = list => (Array.isArray(list) ? list.map(item => String(item ?? '').trim()) : []);
+  return { left: clean(left), right: clean(right) };
+};
+
+/**
+ * @param {UntrustedInput} raw
+ * @returns {{ key: string, text: string } | null}
+ */
+const normalizePassage = raw => {
+  const source = raw?.passage;
+  if (!source || typeof source !== 'object') return null;
+  return { key: String(source.key ?? '').trim(), text: String(source.text ?? '').trim() };
 };
 
 /**
@@ -261,6 +351,7 @@ const normalizeRawQuestion = (raw, index, strictSource = false, allowedSubjects 
   // archive. Normalize it on ingest so valid numeric questions aren't rejected
   // as an unknown type.
   const type = rawType === 'NAT' ? 'NUMERICAL' : rawType;
+  const optionBased = authoredTypeInfo(type)?.optionBased === true;
   const rawOptions = Array.isArray(raw?.options) ? raw.options : [];
   /** @type {string[]} */
   const schemaWarnings = strictSource
@@ -286,7 +377,7 @@ const normalizeRawQuestion = (raw, index, strictSource = false, allowedSubjects 
     schemaWarnings.push('question_number must be a positive integer.');
   }
 
-  if (type === 'MCQ' && Array.isArray(raw?.options)) {
+  if (optionBased && Array.isArray(raw?.options)) {
     raw.options.forEach((/** @type {UntrustedInput} */ option, /** @type {number} */ optionIndex) => {
       if (option && typeof option === 'object' && !Array.isArray(option)) {
         const expectedLabel = String.fromCharCode(65 + optionIndex);
@@ -315,6 +406,8 @@ const normalizeRawQuestion = (raw, index, strictSource = false, allowedSubjects 
     correctAnswer: normalizeCorrectAnswer(raw?.correct_answer ?? raw?.correctAnswer, type),
     subject: normalizeSubject(raw?.subject, allowedSubjects),
     hasImageOrDiagram: Boolean(raw?.has_image_or_diagram ?? raw?.hasImageOrDiagram),
+    matchLists: normalizeMatchLists(raw),
+    passage: normalizePassage(raw),
     schemaWarnings,
     approved: typeof raw?.approved === 'boolean' ? raw.approved : undefined
   };
@@ -335,8 +428,10 @@ const validateOne = (question, allowedSubjects = ALLOWED_IMPORT_SUBJECTS) => {
     warnings.push(msg);
     rowErrors.push({ code: 'ROW_INVALID_SUBJECT', field: 'subject', message: msg });
   }
-  if (!['MCQ', 'NUMERICAL'].includes(question.type)) {
-    const msg = 'Question type must be MCQ or NUMERICAL.';
+  const typeInfo = authoredTypeInfo(question.type);
+  const typeLabel = typeInfo?.code === 'MCQ' ? 'MCQ' : typeInfo?.label || question.type;
+  if (!typeInfo) {
+    const msg = `Question type must be ${QUESTION_TYPES.map(type => type.code).join(', ')}.`;
     warnings.push(msg);
     rowErrors.push({ code: 'ROW_INVALID_TYPE', field: 'type', message: msg });
   }
@@ -357,19 +452,19 @@ const validateOne = (question, allowedSubjects = ALLOWED_IMPORT_SUBJECTS) => {
     rowErrors.push({ code: 'ROW_UNBALANCED_LATEX', field: 'text', message: msg });
   }
 
-  if (question.type === 'MCQ') {
+  if (typeInfo?.optionBased) {
     if (question.options.length !== 4) {
-      const msg = 'MCQ must have exactly 4 options.';
+      const msg = `${typeLabel} must have exactly 4 options.`;
       warnings.push(msg);
       rowErrors.push({ code: 'ROW_INVALID_OPTIONS_COUNT', field: 'options', message: msg });
     }
     if (question.options.some(option => !option)) {
-      const msg = 'Every MCQ option must contain text.';
+      const msg = `Every ${typeLabel} option must contain text.`;
       warnings.push(msg);
       rowErrors.push({ code: 'ROW_EMPTY_OPTION', field: 'options', message: msg });
     }
     if (question.options.some(option => option.length > 5000)) {
-      const msg = 'Each MCQ option must not exceed 5,000 characters.';
+      const msg = `Each ${typeLabel} option must not exceed 5,000 characters.`;
       warnings.push(msg);
       rowErrors.push({ code: 'ROW_OPTION_TOO_LONG', field: 'options', message: msg });
     }
@@ -382,25 +477,69 @@ const validateOne = (question, allowedSubjects = ALLOWED_IMPORT_SUBJECTS) => {
       }
     });
     if (new Set(question.options.map(canonicalQuestionText)).size !== question.options.length) {
-      const msg = 'MCQ options must be unique.';
+      const msg = `${typeLabel} options must be unique.`;
       warnings.push(msg);
       rowErrors.push({ code: 'ROW_DUPLICATE_OPTIONS', field: 'options', message: msg });
     }
-    if (!/^[0-3]$/.test(question.correctAnswer)) {
+    if (typeInfo.code === 'MULTIPLE_CORRECT') {
+      if (!isValidAuthorAnswer(typeInfo.code, question.correctAnswer)) {
+        const msg = 'Correct answer must list one or more of A, B, C, D (for example "A,C").';
+        warnings.push(msg);
+        rowErrors.push({ code: 'ROW_INVALID_MULTI_ANSWER', field: 'correctAnswer', message: msg });
+      }
+    } else if (!/^[0-3]$/.test(question.correctAnswer)) {
       const msg = 'Correct answer must be A, B, C, or D (0, 1, 2, or 3).';
       warnings.push(msg);
       rowErrors.push({ code: 'ROW_INVALID_ANSWER', field: 'correctAnswer', message: msg });
     }
-  } else if (question.type === 'NUMERICAL') {
+  } else if (typeInfo) {
     if (question.options.length !== 0) {
-      const msg = 'Numerical questions must have an empty options array.';
+      const msg = `${typeInfo.code === 'INTEGER' ? 'Integer' : 'Numerical'} questions must have an empty options array.`;
       warnings.push(msg);
       rowErrors.push({ code: 'ROW_NUMERICAL_NONEMPTY_OPTIONS', field: 'options', message: msg });
     }
-    if (!isValidNumericalAnswer(question.correctAnswer, AUTHOR_NUMERICAL_MAX_LENGTH)) {
+    if (typeInfo.code === 'INTEGER') {
+      if (!isValidAuthorAnswer(typeInfo.code, question.correctAnswer)) {
+        const msg = 'Integer question correct answer must be a whole number of at most 100 characters.';
+        warnings.push(msg);
+        rowErrors.push({ code: 'ROW_INVALID_INTEGER_ANSWER', field: 'correctAnswer', message: msg });
+      }
+    } else if (!isValidNumericalAnswer(question.correctAnswer, AUTHOR_NUMERICAL_MAX_LENGTH)) {
       const msg = 'Numerical question correct answer must be a valid number of at most 100 characters.';
       warnings.push(msg);
       rowErrors.push({ code: 'ROW_INVALID_NUMERICAL_ANSWER', field: 'correctAnswer', message: msg });
+    }
+  }
+
+  if (typeInfo) {
+    const listsError = validateQuestionDetails(typeInfo.code, question.matchLists ? { matchLists: question.matchLists } : null);
+    if (listsError) {
+      const msg = `${listsError}.`;
+      warnings.push(msg);
+      rowErrors.push({ code: 'ROW_INVALID_MATCH_LISTS', field: 'matchLists', message: msg });
+    }
+    [...(question.matchLists?.left || []), ...(question.matchLists?.right || [])].forEach(item => {
+      const itemLatexIssue = checkLatexDelimiters(item);
+      if (itemLatexIssue) {
+        const msg = `${itemLatexIssue} Fix List-I or List-II before approval.`;
+        warnings.push(msg);
+        rowErrors.push({ code: 'ROW_UNBALANCED_LATEX', field: 'matchLists', message: msg });
+      }
+    });
+  }
+  if (question.passage) {
+    const { key, text } = question.passage;
+    if (key.length < 1 || key.length > 128 || text.length < 1 || text.length > 10000) {
+      const msg = 'A paragraph needs a key of 1 to 128 characters and 1 to 10,000 characters of text.';
+      warnings.push(msg);
+      rowErrors.push({ code: 'ROW_INVALID_PASSAGE', field: 'passage', message: msg });
+    } else {
+      const passageLatexIssue = checkLatexDelimiters(text);
+      if (passageLatexIssue) {
+        const msg = `${passageLatexIssue} Fix the paragraph before approval.`;
+        warnings.push(msg);
+        rowErrors.push({ code: 'ROW_UNBALANCED_LATEX', field: 'passage', message: msg });
+      }
     }
   }
   return { warnings, rowErrors };
@@ -417,21 +556,36 @@ export const validateImportQuestions = (inputQuestions, questionBank = [], optio
   if (!Array.isArray(inputQuestions)) throw new Error('Questions must be provided as an array.');
   const allowedSubjects = resolveAllowedSubjects(options.allowedSubjects);
   const normalized = inputQuestions.map((question, index) => normalizeRawQuestion(question, index, options.strictSource === true, allowedSubjects));
-  const bankKeys = new Set((Array.isArray(questionBank) ? questionBank : []).map(question => canonicalQuestionText(question.text ?? question.question_text)).filter(Boolean));
+  const bankKeys = new Set((Array.isArray(questionBank) ? questionBank : [])
+    .filter(question => canonicalQuestionText(question.text ?? question.question_text))
+    .map(question => questionIdentityKey(question.text ?? question.question_text, question.details)));
   /** @type {Map<string, number>} */
   const uploadCounts = new Map();
   /** @type {Map<string, number>} */
   const sourceIdCounts = new Map();
+  /** @type {Map<string, Set<string>>} */
+  const passageTexts = new Map();
   normalized.forEach(question => {
-    const key = canonicalQuestionText(question.text);
+    const key = importIdentityKey(question);
     if (key) uploadCounts.set(key, (uploadCounts.get(key) || 0) + 1);
     if (question.sourceId) sourceIdCounts.set(question.sourceId, (sourceIdCounts.get(question.sourceId) || 0) + 1);
+    if (question.passage?.key) {
+      const texts = passageTexts.get(question.passage.key) || new Set();
+      texts.add(question.passage.text);
+      passageTexts.set(question.passage.key, texts);
+    }
   });
 
   return normalized.map(question => {
     const { warnings, rowErrors } = validateOne(question, allowedSubjects);
-    const key = canonicalQuestionText(question.text);
-    if (key && bankKeys.has(key)) {
+    const key = importIdentityKey(question);
+    if (question.passage?.key && /** @type {Set<string>} */ (passageTexts.get(question.passage.key)).size > 1) {
+      const msg = `Every question in paragraph "${question.passage.key}" must use exactly the same paragraph text.`;
+      warnings.push(msg);
+      rowErrors.push({ code: 'ROW_PASSAGE_MISMATCH', field: 'passage', message: msg });
+    }
+    // Imported paragraphs always get new keys, so they cannot duplicate a bank question.
+    if (key && !question.passage && bankKeys.has(key)) {
       const msg = 'A matching question already exists in the Question Bank.';
       warnings.push(msg);
       rowErrors.push({ code: 'ROW_DUPLICATE_QUESTION_BANK', field: 'text', message: msg });
@@ -551,20 +705,38 @@ export const parseImportJsonText = (input, questionBank = [], options = {}) => {
 };
 
 /**
+ * Approved rows for the atomic import RPC. Each file-local paragraph key
+ * becomes one new UUID, so every import creates new paragraph sets.
  * @param {ValidatedImportQuestion[]} questions
  * @returns {AtomicImportRow[]}
  */
-export const buildAtomicImportPayload = questions => questions.filter(question => question.approved).map(question => ({
-  subject: question.subject,
-  type: question.type,
-  question_text: question.text,
-  options: question.type === 'MCQ' ? question.options : [],
-  correct_answer: question.correctAnswer,
-  has_image_or_diagram: Boolean(question.hasImageOrDiagram),
-  category: 'Mains',
-  points: 4,
-  neg_points: -1
-}));
+export const buildAtomicImportPayload = questions => {
+  /** @type {Map<string, string>} */
+  const passageIds = new Map();
+  /** @param {string} key */
+  const passageId = key => {
+    if (!passageIds.has(key)) passageIds.set(key, crypto.randomUUID());
+    return /** @type {string} */ (passageIds.get(key));
+  };
+  return questions.filter(question => question.approved).map(question => {
+    /** @type {QuestionDetails} */
+    const details = {};
+    if (question.type === 'MATRIX_MATCH' && question.matchLists) details.matchLists = question.matchLists;
+    if (question.passage) details.passage = { key: passageId(question.passage.key), text: question.passage.text };
+    return {
+      subject: question.subject,
+      type: question.type,
+      question_text: question.text,
+      options: questionTypeInfo(question.type)?.optionBased ? question.options : [],
+      correct_answer: question.correctAnswer,
+      has_image_or_diagram: Boolean(question.hasImageOrDiagram),
+      category: 'Mains',
+      points: 4,
+      neg_points: -1,
+      ...(Object.keys(details).length ? { details } : {})
+    };
+  });
+};
 
 /**
  * @param {Array<Partial<ValidatedImportQuestion> & Pick<ImportQuestion, 'type' | 'correctAnswer'>>} questions
@@ -580,15 +752,16 @@ export const exportFailedImportRows = (questions) => {
       instructions: 'Fix errors in the questions below and re-upload to the Question Importer.'
     },
     questions: failedQuestions.map((q, idx) => {
+      const optionBased = questionTypeInfo(q.type)?.optionBased === true;
       let ansLabel = q.correctAnswer;
-      if (q.type === 'MCQ' && /^[0-3]$/.test(q.correctAnswer)) {
-        ansLabel = String.fromCharCode(65 + Number(q.correctAnswer));
+      if (optionBased && /^[0-3](,[0-3])*$/.test(q.correctAnswer)) {
+        ansLabel = q.correctAnswer.split(',').map(index => String.fromCharCode(65 + Number(index))).join(',');
       }
       return {
         question_number: q.rowNumber || idx + 1,
         question_text: q.text,
         question_type: q.type,
-        options: q.type === 'MCQ'
+        options: optionBased
           ? (q.options || []).map((optText, optIdx) => ({
               label: String.fromCharCode(65 + optIdx),
               text: optText
@@ -597,6 +770,8 @@ export const exportFailedImportRows = (questions) => {
         correct_answer: ansLabel,
         subject: q.subject,
         has_image_or_diagram: Boolean(q.hasImageOrDiagram),
+        ...(q.matchLists ? { match_lists: { list_i: q.matchLists.left, list_ii: q.matchLists.right } } : {}),
+        ...(q.passage ? { passage: q.passage } : {}),
         diagnostics: {
           errors: q.warnings || []
         }

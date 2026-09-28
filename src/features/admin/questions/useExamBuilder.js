@@ -6,8 +6,21 @@ import { prepareQuestionDraft } from '../../../questionContentLogic';
 import { countBySubject, evaluatePatternSelection, orderExamSubjects, validateExamSettings } from '../../../examPatternLogic';
 import { useAdminContext } from '../adminContext';
 import { MAX_EXAM_QUESTIONS } from '../adminConstants';
+import { passageBlocks } from '../../../questionTypes';
 
 /** @typedef {ReturnType<typeof useExamBuilder>} ExamBuilder */
+
+/**
+ * Per-type marking without empty entries, or undefined when nothing is set.
+ * @param {import('../../../types').ExamMarking | null | undefined} marking
+ */
+export function compactMarking(marking) {
+  if (!marking) return undefined;
+  const entries = Object.entries(marking)
+    .map(([code, entry]) => [code, Object.fromEntries(Object.entries(entry || {}).filter(([, value]) => value !== undefined && value !== null && value !== ''))])
+    .filter(([, entry]) => Object.keys(entry).length > 0);
+  return entries.length ? /** @type {import('../../../types').ExamMarking} */ (Object.fromEntries(entries)) : undefined;
+}
 
 /**
  * Builds the `cbt_exams` insert payload from server-verified questions. Shared
@@ -20,18 +33,21 @@ import { MAX_EXAM_QUESTIONS } from '../adminConstants';
  *   duration: number | string,
  *   marksCorrect: number | string,
  *   marksIncorrect: number | string,
+ *   marking?: import('../../../types').ExamMarking | null,
  *   template: import('../../../types').PatternTemplate | null,
  *   questions: import('../../../types').QuestionBankItem[],
  *   compareSubjects: ((a: string, b: string) => number) | null
  * }} input
  */
-export function assembleExamRecord({ title, targetClass, targetSection, duration, marksCorrect, marksIncorrect, template, questions, compareSubjects }) {
+export function assembleExamRecord({ title, targetClass, targetSection, duration, marksCorrect, marksIncorrect, marking, template, questions, compareSubjects }) {
   const subjects = orderExamSubjects(questions.map(q => q.subject), template, compareSubjects);
   /** @type {Record<string, import('../../../types').QuestionBankItem[]>} */
   const questionsObj = {};
   subjects.forEach(sub => {
-    questionsObj[sub] = questions.filter(q => q.subject === sub);
+    // A paragraph set's questions sit together, where its first question appears.
+    questionsObj[sub] = passageBlocks(questions.filter(q => q.subject === sub)).flat();
   });
+  const perTypeMarking = compactMarking(marking);
 
   return {
     title,
@@ -43,6 +59,7 @@ export function assembleExamRecord({ title, targetClass, targetSection, duration
       duration: Number(duration),
       marksCorrect: Number(marksCorrect),
       marksIncorrect: Number(marksIncorrect),
+      ...(perTypeMarking ? { marking: perTypeMarking } : {}),
       ...(template ? { pattern: { id: template.id, name: template.name } } : {})
     },
     class: targetClass,

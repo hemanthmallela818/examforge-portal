@@ -155,3 +155,69 @@ test('bank rows keep their real type and details instead of collapsing to MCQ', 
   assert.equal(normalizeQuestionBankRow({ id: 'y', type: 'multiple_correct' }).type, 'MULTIPLE_CORRECT');
   assert.equal(normalizeQuestionBankRow({ id: 'z', type: 'NAT' }).details, null);
 });
+
+test('the editor validates every new type', async () => {
+  const { prepareQuestionDraft } = await import('../src/questionContentLogic.js');
+  const base = { docId: 'new', subject: 'Physics', text: 'A question', options: ['A', 'B', 'C', 'D'], optionImageUrls: [null, null, null, null] };
+  const errorsFor = (draft, existing = []) => prepareQuestionDraft({ ...base, ...draft }, existing).errors.join(' ');
+
+  assert.equal(errorsFor({ type: 'MULTIPLE_CORRECT', correctAnswer: '0,2' }), '');
+  assert.match(errorsFor({ type: 'MULTIPLE_CORRECT', correctAnswer: '' }), /Choose at least one correct option/);
+  assert.equal(errorsFor({ type: 'INTEGER', correctAnswer: '-4' }), '');
+  assert.match(errorsFor({ type: 'INTEGER', correctAnswer: '4.5' }), /whole-number answer/);
+  assert.deepEqual(prepareQuestionDraft({ ...base, type: 'INTEGER', correctAnswer: '4' }).question.options, []);
+  assert.match(errorsFor({ type: 'MATRIX_MATCH', correctAnswer: '1' }), /require List-I and List-II/);
+  const lists = { matchLists: { left: [' Force ', 'Power'], right: ['Newton', 'Watt'] } };
+  const matrix = prepareQuestionDraft({ ...base, type: 'MATRIX_MATCH', correctAnswer: '1', details: lists });
+  assert.deepEqual(matrix.errors, []);
+  assert.deepEqual(matrix.question.details.matchLists.left, ['Force', 'Power']);
+  assert.equal(errorsFor({ type: 'ASSERTION_REASON', correctAnswer: '3' }), '');
+  assert.match(errorsFor({ type: '', correctAnswer: '0' }), /supported question type/);
+  assert.equal(prepareQuestionDraft({ ...base, type: 'MCQ', correctAnswer: '0' }).question.details, null);
+
+  const stem = { type: 'MATRIX_MATCH', correctAnswer: '1', text: 'Match the lists' };
+  const bank = [{ id: 'b1', text: 'Match the lists', details: { matchLists: { left: ['a', 'b'], right: ['c', 'd'] } } }];
+  assert.equal(errorsFor({ ...stem, details: lists }, bank), '');
+  assert.match(errorsFor({ ...stem, details: { matchLists: { left: ['a', 'b'], right: ['c', 'd'] } } }, bank), /matching question already exists/);
+});
+
+test('preflight accepts the new types and reports their problems', async () => {
+  const { validateExamPreflight } = await import('../src/examPreflightLogic.js');
+  const options = ['A', 'B', 'C', 'D'];
+  const exam = (questions, extra = {}) => ({
+    title: 'Paper',
+    class: '12',
+    section: 'A',
+    questions_data: { duration: 60, marksCorrect: 4, marksIncorrect: -1, subjects: ['Physics'], questions: { Physics: questions }, ...extra }
+  });
+  const good = validateExamPreflight(exam([
+    { id: 'm', type: 'MULTIPLE_CORRECT', text: 'Q', options, correctAnswer: '0,1' },
+    { id: 'i', type: 'INTEGER', text: 'Q', options: [], correctAnswer: '12' },
+    { id: 'x', type: 'MATRIX_MATCH', text: 'Q', options, correctAnswer: '2', details: { matchLists: { left: ['a', 'b'], right: ['c', 'd'] } } },
+    { id: 'a', type: 'ASSERTION_REASON', text: 'Q', options, correctAnswer: 'D' }
+  ], { marking: { MULTIPLE_CORRECT: { correct: 4, incorrect: -2, partial: true } } }), { knownSubjects: ['Physics'] });
+  assert.deepEqual(good.errors, []);
+
+  const bad = validateExamPreflight(exam([
+    { id: 'm', type: 'MULTIPLE_CORRECT', text: 'Q', options, correctAnswer: '2,0' },
+    { id: 'i', type: 'INTEGER', text: 'Q', options: [], correctAnswer: '1.5' },
+    { id: 'x', type: 'MATRIX_MATCH', text: 'Q', options, correctAnswer: '2' },
+    { id: 'e', type: 'ESSAY', text: 'Q', options: [], correctAnswer: '1' }
+  ], { marking: { MCQ: { partial: true } } }), { knownSubjects: ['Physics'] });
+  const errors = bad.errors.join('\n');
+  assert.match(errors, /Multiple correct question has invalid correct answer "2,0"/);
+  assert.match(errors, /Integer question has invalid answer "1.5"/);
+  assert.match(errors, /Matrix match questions require List-I and List-II/);
+  assert.match(errors, /Unsupported question type "ESSAY"/);
+  assert.match(errors, /only be set for multiple-correct/);
+});
+
+test('exam settings and patterns validate per-type marking', async () => {
+  const { validateExamSettings, validatePatternDraft } = await import('../src/examPatternLogic.js');
+  assert.deepEqual(validateExamSettings({ duration: 60, marksCorrect: 4, marksIncorrect: -1, marking: { INTEGER: { correct: 4, incorrect: 0 } } }), []);
+  assert.match(validateExamSettings({ duration: 60, marksCorrect: 4, marksIncorrect: -1, marking: { INTEGER: { incorrect: 2 } } }).join(' '), /Integer: marks for a wrong answer/);
+  const draft = { name: 'P', description: '', durationMinutes: 60, marksCorrect: 4, marksIncorrect: -1, sections: [{ subject: 'Physics', questionCount: 1 }] };
+  const subjects = [{ name: 'Physics', isActive: true }];
+  assert.deepEqual(validatePatternDraft({ ...draft, marking: { MCQ: { correct: 3 } } }, subjects).errors, []);
+  assert.match(validatePatternDraft({ ...draft, marking: { MCQ: { correct: 0 } } }, subjects).errors.join(' '), /Single correct: marks for a correct answer/);
+});

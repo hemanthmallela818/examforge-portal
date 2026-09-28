@@ -267,13 +267,17 @@ export interface ImportQuestion {
   sourceId: string;
   rowNumber: number;
   text: string;
-  /** Upper-cased source type; only 'MCQ' | 'NUMERICAL' pass validation. */
+  /** Upper-cased source type; only QuestionTypeCode values pass validation. */
   type: string;
   options: string[];
-  /** MCQ: '0'..'3' after normalisation; NUMERICAL: decimal text. */
+  /** Option types: '0'..'3' ("0,2" for multiple correct); value types: the typed number. */
   correctAnswer: string;
   subject: string;
   hasImageOrDiagram: boolean;
+  /** Matrix match lists (import files use match_lists { list_i, list_ii }). */
+  matchLists: MatchLists | null;
+  /** Paragraph with its file-local key; a new UUID is assigned on import. */
+  passage: PassageDetails | null;
   schemaWarnings: string[];
   approved: boolean | undefined;
 }
@@ -297,6 +301,7 @@ export interface QuestionTextLike {
   docId?: string;
   text?: string | null;
   question_text?: string | null;
+  details?: QuestionDetails | null;
 }
 
 export interface ImportFileLike {
@@ -320,6 +325,7 @@ export interface AtomicImportRow {
   category: 'Mains';
   points: number;
   neg_points: number;
+  details?: QuestionDetails;
 }
 
 /** Normalised question produced by the Question Editor. */
@@ -333,6 +339,7 @@ export interface PreparedQuestion {
   questionImageUrl: string | null;
   optionImageUrls: unknown[];
   hasImageOrDiagram: boolean;
+  details: QuestionDetails | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -352,6 +359,7 @@ export interface PatternTemplate {
   durationMinutes?: number | string;
   marksCorrect?: number | string;
   marksIncorrect?: number | string;
+  marking?: ExamMarking | null;
   sections: PatternSection[];
 }
 
@@ -361,6 +369,7 @@ export interface PatternDraft {
   durationMinutes: number | string;
   marksCorrect: number | string;
   marksIncorrect: number | string;
+  marking?: ExamMarking | null;
   sections: PatternSection[];
 }
 

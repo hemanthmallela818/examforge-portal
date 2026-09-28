@@ -63,6 +63,25 @@ export const isOptionBased = type => questionTypeInfo(type)?.optionBased === tru
 export const questionTypeLabel = type => questionTypeInfo(type)?.label || normalizeQuestionType(type);
 
 /**
+ * Splits questions into blocks: a paragraph set (same details.passage.key) is
+ * one block in first-appearance order; every other question is its own block.
+ * @template {{ details?: import('./types').QuestionDetails | null } | null | undefined} Q
+ * @param {readonly Q[]} questions
+ * @returns {Q[][]}
+ */
+export function passageBlocks(questions) {
+  /** @type {Map<string, Q[]>} */
+  const blocks = new Map();
+  questions.forEach((question, index) => {
+    const key = question?.details?.passage?.key ? `p:${question.details.passage.key}` : `q:${index}`;
+    const block = blocks.get(key);
+    if (block) block.push(question);
+    else blocks.set(key, [question]);
+  });
+  return [...blocks.values()];
+}
+
+/**
  * Canonical multiple-correct value ("0,2"), or null when nothing is chosen.
  * @param {Iterable<number>} indices
  * @returns {string | null}

@@ -1,3 +1,4 @@
+import { isValidAuthorAnswer, questionTypeInfo, validateMarking, validateQuestionDetails } from './questionTypes.js';
 import { resolveAllowedSubjects } from './importLogic.js';
 
 /** @import { LatexCheck, PreflightResult, UntrustedInput } from './types' */
@@ -91,6 +92,7 @@ export const validateExamPreflight = (exam, options = {}) => {
   if (isNaN(marksIncorrect) || marksIncorrect < -100 || marksIncorrect > 0) {
     errors.push('Negative marks must be between -100 and 0.');
   }
+  errors.push(...validateMarking(qdata.marking));
 
   /** @type {UntrustedInput[]} */
   const subjects = Array.isArray(qdata.subjects) ? qdata.subjects : [];
@@ -185,10 +187,12 @@ export const validateExamPreflight = (exam, options = {}) => {
         }
 
         // Validate type-specific constraints
-        if (type === 'MCQ') {
+        const typeInfo = questionTypeInfo(type);
+        const typeLabel = typeInfo?.code === 'MCQ' ? 'MCQ' : typeInfo?.label || type;
+        if (typeInfo?.optionBased) {
           const options = Array.isArray(q.options) ? q.options : [];
           if (options.length !== 4) {
-            errors.push(`[${sub} Q${qNum}] MCQ question must have exactly 4 options (found ${options.length}).`);
+            errors.push(`[${sub} Q${qNum}] ${typeLabel} question must have exactly 4 options (found ${options.length}).`);
           }
 
           const optionImages = Array.isArray(q.optionImageUrls) ? q.optionImageUrls : [];
@@ -226,19 +230,36 @@ export const validateExamPreflight = (exam, options = {}) => {
           });
 
           const ans = String(q.correctAnswer ?? q.correct_answer ?? '').trim();
-          if (!/^[0-3]$/.test(ans) && !/^[A-D]$/i.test(ans)) {
-            errors.push(`[${sub} Q${qNum}] MCQ question has invalid correct answer "${ans}". Must be 0-3 or A-D.`);
+          if (typeInfo.code === 'MULTIPLE_CORRECT') {
+            if (!isValidAuthorAnswer(typeInfo.code, ans)) {
+              errors.push(`[${sub} Q${qNum}] Multiple correct question has invalid correct answer "${ans}". List option numbers 0-3 in increasing order, for example 0,2.`);
+            }
+          } else if (!/^[0-3]$/.test(ans) && !/^[A-D]$/i.test(ans)) {
+            errors.push(`[${sub} Q${qNum}] ${typeLabel} question has invalid correct answer "${ans}". Must be 0-3 or A-D.`);
           }
-        } else if (type === 'NUMERICAL' || type === 'NAT') {
+        } else if (typeInfo) {
           if (Array.isArray(q.options) && q.options.length > 0) {
-            errors.push(`[${sub} Q${qNum}] Numerical question must have an empty options array.`);
+            errors.push(`[${sub} Q${qNum}] ${typeLabel} question must have an empty options array.`);
           }
           const ans = String(q.correctAnswer ?? q.correct_answer ?? '').trim();
-          if (!ans || !/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(ans) || ans.length > 100) {
-            errors.push(`[${sub} Q${qNum}] Numerical question has invalid answer "${ans}". Must be a valid number.`);
+          if (!isValidAuthorAnswer(typeInfo.code, ans)) {
+            errors.push(typeInfo.code === 'INTEGER'
+              ? `[${sub} Q${qNum}] Integer question has invalid answer "${ans}". Must be a whole number.`
+              : `[${sub} Q${qNum}] Numerical question has invalid answer "${ans}". Must be a valid number.`);
           }
         } else {
           errors.push(`[${sub} Q${qNum}] Unsupported question type "${type}".`);
+        }
+
+        if (typeInfo) {
+          const detailsError = validateQuestionDetails(typeInfo.code, q.details ?? null);
+          if (detailsError) errors.push(`[${sub} Q${qNum}] ${detailsError}.`);
+          const passageLatex = checkLatexDelimiters(String(q.details?.passage?.text || ''));
+          if (!passageLatex.balanced) warnings.push(`[${sub} Q${qNum}] ${passageLatex.reason} in the paragraph.`);
+          [...(q.details?.matchLists?.left || []), ...(q.details?.matchLists?.right || [])].forEach((/** @type {unknown} */ item) => {
+            const itemLatex = checkLatexDelimiters(String(item || ''));
+            if (!itemLatex.balanced) warnings.push(`[${sub} Q${qNum}] ${itemLatex.reason} in List-I or List-II.`);
+          });
         }
       });
     }
