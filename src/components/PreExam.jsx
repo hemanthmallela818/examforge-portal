@@ -3,6 +3,7 @@ import { supabase } from '../supabase';
 import { checkBrowserCompatibility, isNarrowViewport } from '../runtimeConfig';
 import { AlertTriangle, BookOpen, CheckCircle2, ClipboardList, Clock, Hourglass, ListChecks, Lock, MinusCircle, Play, ShieldCheck, Smartphone, XCircle } from 'lucide-react';
 import { Alert, Badge, Button, Checkbox, cn } from './ui';
+import { questionTypeLabel, resolveMarking } from '../questionTypes';
 
 /**
  * @param {{
@@ -11,10 +12,11 @@ import { Alert, Badge, Button, Checkbox, cn } from './ui';
  *   duration?: number,
  *   marksCorrect?: number,
  *   marksIncorrect?: number,
+ *   marking?: import('../types').ExamMarking | null,
  *   subjects?: string[]
  * }} props
  */
-const PreExam = ({ startExam, activeExamId, duration = 180, marksCorrect = 4, marksIncorrect = -1, subjects = [] }) => {
+const PreExam = ({ startExam, activeExamId, duration = 180, marksCorrect = 4, marksIncorrect = -1, marking = null, subjects = [] }) => {
   const [checked, setChecked] = useState(false);
   const [examStatus, setExamStatus] = useState('PENDING');
   const [statusError, setStatusError] = useState('');
@@ -76,6 +78,7 @@ const PreExam = ({ startExam, activeExamId, duration = 180, marksCorrect = 4, ma
 
   const canStart = checked && isExamActive && compatCheck.compatible;
   const penalty = Math.abs(marksIncorrect);
+  const typeMarking = Object.keys(marking || {}).map(code => ({ code, label: questionTypeLabel(code), ...resolveMarking({ marksCorrect, marksIncorrect, marking }, code) }));
 
   return (
     <div className="pre-exam-page flex min-h-dvh items-center justify-center bg-slate-50 px-4 py-8">
@@ -172,7 +175,25 @@ const PreExam = ({ startExam, activeExamId, duration = 180, marksCorrect = 4, ma
             <ol className="flex flex-col gap-3 px-4 py-4 text-sm leading-relaxed text-slate-600">
               <li className="flex gap-3"><span className="grid size-6 shrink-0 place-items-center rounded-full bg-slate-100 text-xs font-semibold text-slate-700">1</span><p>The exam duration is {duration} minutes.</p></li>
               <li className="flex gap-3"><span className="grid size-6 shrink-0 place-items-center rounded-full bg-slate-100 text-xs font-semibold text-slate-700">2</span><p>The exam sections are: {subjects.join(', ') || 'as listed in your exam'}.</p></li>
-              <li className="flex gap-3"><span className="grid size-6 shrink-0 place-items-center rounded-full bg-slate-100 text-xs font-semibold text-slate-700">3</span><p>Each correct answer awards +{marksCorrect} marks. Each incorrect answer deducts {Math.abs(marksIncorrect)} mark{Math.abs(marksIncorrect) === 1 ? '' : 's'}.</p></li>
+              <li className="flex gap-3"><span className="grid size-6 shrink-0 place-items-center rounded-full bg-slate-100 text-xs font-semibold text-slate-700">3</span><div>
+                <p>Each correct answer awards +{marksCorrect} marks. Each incorrect answer deducts {Math.abs(marksIncorrect)} mark{Math.abs(marksIncorrect) === 1 ? '' : 's'}.</p>
+                {typeMarking.length > 0 && (
+                  <>
+                    <p className="mt-2">These question types are marked differently:</p>
+                    <ul aria-label="Marks by question type" className="mt-1 flex flex-col gap-1">
+                      {typeMarking.map(entry => (
+                        <li key={entry.code}>
+                          <strong className="font-semibold text-slate-800">{entry.label}:</strong>{' '}
+                          <span className="tabular-nums">+{entry.correct} correct, {entry.incorrect} wrong</span>
+                          {entry.code === 'MULTIPLE_CORRECT' && (entry.partial
+                            ? '; partial marks when only correct options are chosen'
+                            : '; no partial marks')}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div></li>
               <li className="flex gap-3 rounded-lg bg-amber-50 p-3 text-amber-900 ring-1 ring-amber-200">
                 <span className="grid size-6 shrink-0 place-items-center rounded-full bg-amber-100 text-xs font-semibold text-amber-800">4</span>
                 <p><strong className="font-semibold">Security Warning:</strong> This exam requires fullscreen mode. Do not exit fullscreen, switch tabs, or use prohibited shortcuts. Repeated verified violations can terminate and finalize the attempt using your last server-confirmed answers.</p>

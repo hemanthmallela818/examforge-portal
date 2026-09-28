@@ -275,3 +275,79 @@ describe('QuestionPanel numerical answers', () => {
     expect(screen.getByRole('button', { name: 'Clear All' }).disabled).toBe(true);
   });
 });
+
+describe('QuestionPanel new question types', () => {
+  const multi = { id: 'q-multi', type: 'MULTIPLE_CORRECT', text: 'Pick every correct option', options: ['First', 'Second', 'Third', 'Fourth'] };
+
+  it('multiple correct uses checkboxes and saves the canonical "0,2"', async () => {
+    const onSelect = vi.fn();
+    render(<Harness {...makeProps({ question: multi })} onSelect={onSelect} />);
+    expect(screen.getByText('MULTIPLE CORRECT')).toBeTruthy();
+    expect(screen.getByText('One or more options may be correct.')).toBeTruthy();
+    const group = screen.getByRole('group', { name: 'Pick every correct option' });
+    expect(document.getElementById(group.getAttribute('aria-describedby')).textContent).toMatch('One or more options may be correct.');
+    expect(screen.queryAllByRole('radio')).toHaveLength(0);
+
+    await user.click(screen.getByRole('checkbox', { name: /C\. Third/ }));
+    await user.click(screen.getByRole('checkbox', { name: /A\. First/ }));
+    expect(onSelect).toHaveBeenLastCalledWith('0,2');
+    expect(screen.getByRole('checkbox', { name: /A\. First/ }).checked).toBe(true);
+    expect(screen.getByRole('checkbox', { name: /C\. Third/ }).checked).toBe(true);
+  });
+
+  it('unticking the last option clears the answer to null, not an empty string', async () => {
+    const onSelect = vi.fn();
+    render(<Harness {...makeProps({ question: multi })} initial="1" onSelect={onSelect} />);
+    const second = screen.getByRole('checkbox', { name: /B\. Second/ });
+    expect(second.checked).toBe(true);
+    await user.click(second);
+    expect(onSelect).toHaveBeenLastCalledWith(null);
+    expect(second.checked).toBe(false);
+  });
+
+  it('integer questions use a keypad without a decimal point and keep only whole numbers', async () => {
+    const onSelect = vi.fn();
+    render(<Harness {...makeProps({ question: { id: 'q-int', type: 'INTEGER', text: 'How many?', options: [] } })} onSelect={onSelect} />);
+    expect(screen.getByText('INTEGER TYPE')).toBeTruthy();
+    const input = screen.getByLabelText('Your Integer Answer:');
+    expect(input.getAttribute('inputmode')).toBe('numeric');
+    expect(screen.queryByRole('button', { name: '.' })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: '-' }));
+    await user.click(screen.getByRole('button', { name: '1' }));
+    await user.click(screen.getByRole('button', { name: '2' }));
+    expect(onSelect).toHaveBeenLastCalledWith('-12');
+
+    await user.clear(input);
+    await user.type(input, '2.5');
+    expect(onSelect).toHaveBeenLastCalledWith('2');
+    expect(screen.getByRole('alert').textContent).toMatch(/whole number/);
+  });
+
+  it('matrix match shows List-I and List-II with their labels above the options', () => {
+    const matrix = {
+      id: 'q-mat', type: 'MATRIX_MATCH', text: 'Match the lists', options: ['P-1, Q-2', 'P-2, Q-1', 'P-1, Q-3', 'P-3, Q-2'],
+      details: { matchLists: { left: ['Force', 'Power'], right: ['Newton', 'Watt', 'Joule'] } }
+    };
+    render(<QuestionPanel {...makeProps({ question: matrix })} />);
+    expect(screen.getByText('MATRIX MATCH')).toBeTruthy();
+    const table = screen.getByRole('table', { name: 'List-I and List-II' });
+    expect(table.textContent).toMatch('P.Force');
+    expect(table.textContent).toMatch('Q.Power');
+    expect(table.textContent).toMatch('3.Joule');
+    expect(screen.getAllByRole('radio')).toHaveLength(4);
+  });
+
+  it('assertion-reason renders as a single-correct question with its badge', () => {
+    const assertion = { id: 'q-ar', type: 'ASSERTION_REASON', text: 'Assertion (A): x\n\nReason (R): y', options: ['a', 'b', 'c', 'd'] };
+    render(<QuestionPanel {...makeProps({ question: assertion })} />);
+    expect(screen.getByText('ASSERTION–REASON')).toBeTruthy();
+    expect(screen.getAllByRole('radio')).toHaveLength(4);
+  });
+
+  it('shows the paragraph above a question in a paragraph set', () => {
+    const para = { ...mcq, details: { passage: { key: 'k', text: 'A block slides down a smooth incline.' } } };
+    render(<QuestionPanel {...makeProps({ question: para })} />);
+    expect(screen.getByRole('region', { name: 'Paragraph' }).textContent).toMatch('A block slides down a smooth incline.');
+  });
+});

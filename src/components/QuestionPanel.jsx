@@ -6,8 +6,14 @@ import { Badge, Button, Input, cn } from './ui';
 import {
   CANDIDATE_NUMERICAL_MAX_LENGTH,
   NUMERICAL_ABSOLUTE_TOLERANCE,
+  validateIntegerAnswer,
   validateNumericalAnswer
 } from '../numericalAnswerPolicy';
+import { decodeOptionSet, encodeOptionSet, questionTypeInfo } from '../questionTypes';
+import MatchListsTable from './MatchListsTable';
+
+const DECIMAL_KEYS = [1, 2, 3, 4, 5, 6, 7, 8, 9, '.', 0, '-'];
+const INTEGER_KEYS = [1, 2, 3, 4, 5, 6, 7, 8, 9, '-', 0];
 
 /**
  * @param {{
@@ -40,7 +46,12 @@ const QuestionPanel = ({
   isLastQuestionOfExam,
   disabled = false
 }) => {
-  const isNumericalQuestion = question?.type === 'NUMERICAL' || !question?.options || question.options.length === 0;
+  const typeInfo = questionTypeInfo(question?.type);
+  // Value questions take a typed answer. A question without options is treated
+  // as numerical, as older papers were.
+  const valueKind = typeInfo?.valueKind || (question?.options?.length ? null : 'decimal');
+  const isNumericalQuestion = valueKind !== null;
+  const validateValue = valueKind === 'integer' ? validateIntegerAnswer : validateNumericalAnswer;
   const [numericalDraft, setNumericalDraft] = useState(() => selectedOption == null ? '' : String(selectedOption));
   const [numericalError, setNumericalError] = useState('');
   const draftQuestionIdRef = useRef(question?.id);
@@ -55,18 +66,18 @@ const QuestionPanel = ({
     }
     // Preserve a local transient draft such as "-" or ".", but accept server
     // reconciliation and external clearing whenever the current draft is valid.
-    const currentDraft = validateNumericalAnswer(numericalDraft);
+    const currentDraft = validateValue(numericalDraft);
     if ((numericalDraft === '' || currentDraft.valid) && externalValue !== numericalDraft) {
       setNumericalDraft(externalValue);
       setNumericalError('');
     }
-  }, [question?.id, selectedOption, numericalDraft]);
+  }, [question?.id, selectedOption, numericalDraft, validateValue]);
 
   /** @param {unknown} value */
   const applyNumericalDraft = (value) => {
     if (disabled) return;
     const next = String(value);
-    const validation = validateNumericalAnswer(next);
+    const validation = validateValue(next);
     setNumericalDraft(next);
     setNumericalError(validation.error);
     // Incomplete or invalid drafts never replace the last valid autosave.
@@ -85,13 +96,13 @@ const QuestionPanel = ({
 
   const numericalDraftIsReady = useCallback(() => {
     if (!isNumericalQuestion || numericalDraft === '') return true;
-    const validation = validateNumericalAnswer(numericalDraft);
+    const validation = validateValue(numericalDraft);
     if (!validation.valid) {
       setNumericalError(validation.error || 'Finish entering the numerical value.');
       return false;
     }
     return true;
-  }, [isNumericalQuestion, numericalDraft]);
+  }, [isNumericalQuestion, numericalDraft, validateValue]);
 
   const performAction = useCallback((/** @type {import('../features/exam/useExamNavigation').ExamActionType} */ action) => {
     if (numericalDraftIsReady()) handleAction(action);
@@ -152,7 +163,13 @@ const QuestionPanel = ({
 
   if (!question) return null;
 
-  const isNumericalView = question.type === 'NUMERICAL' || !question.options || question.options.length === 0;
+  const isNumericalView = isNumericalQuestion;
+  const isIntegerView = valueKind === 'integer';
+  const isMultipleCorrect = typeInfo?.code === 'MULTIPLE_CORRECT';
+  const chosenOptions = isMultipleCorrect ? decodeOptionSet(selectedOption) : [];
+  const badgeText = typeInfo?.badge || (isNumericalView ? 'NUMERICAL VALUE TYPE' : 'MULTIPLE CHOICE');
+  const matchLists = question.details?.matchLists;
+  const passage = question.details?.passage;
   // Question text, options, numerical input and keypad scale with the
   // candidate's text-size choice via --exam-text-scale (set by ActiveExamView).
   const keypadKey = 'h-12 rounded-lg border border-slate-200 bg-white p-0 text-[length:calc(var(--exam-text-scale,1)*1.125rem)] font-semibold text-slate-800 shadow-sm tabular-nums transition-colors hover:border-brand-300 hover:bg-brand-50 active:bg-brand-100 disabled:hover:bg-white';
@@ -172,13 +189,19 @@ const QuestionPanel = ({
           <h3 className="text-base font-semibold text-slate-900">Question {questionIndex + 1}</h3>
           <Badge variant={isNumericalView ? 'warning' : 'brand'} className="uppercase tracking-wide">
             {isNumericalView ? <Hash aria-hidden="true" /> : <ListChecks aria-hidden="true" />}
-            {isNumericalView ? 'NUMERICAL VALUE TYPE' : 'MULTIPLE CHOICE'}
+            {badgeText}
           </Badge>
         </div>
       </div>
 
       {/* Question Content */}
       <div className="exam-question-content flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+        {passage && (
+          <section aria-label="Paragraph" className="mb-5 max-h-80 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Paragraph</p>
+            <p className="whitespace-pre-wrap break-words text-[length:calc(var(--exam-text-scale,1)*1rem)] leading-relaxed text-slate-900"><MathRenderer text={passage.text} /></p>
+          </section>
+        )}
         <p id="question-prompt-text" tabIndex={-1} className="mb-5 whitespace-pre-wrap break-words text-[length:calc(var(--exam-text-scale,1)*1rem)] leading-relaxed text-slate-900 sm:text-[length:calc(var(--exam-text-scale,1)*1.05rem)]"><MathRenderer text={question.text} /></p>
 
         {question.questionImageUrl && (
@@ -187,22 +210,29 @@ const QuestionPanel = ({
           </div>
         )}
 
+        {matchLists && (
+          <MatchListsTable lists={matchLists} className="mb-6 max-w-3xl text-[length:calc(var(--exam-text-scale,1)*0.95rem)]" />
+        )}
+
         {isNumericalView ? (
           <div className="mt-2 flex max-w-lg flex-col gap-5">
             <div className="flex gap-3 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-[length:calc(var(--exam-text-scale,1)*0.875rem)] leading-relaxed text-brand-900">
               <Info className="mt-0.5 size-4 shrink-0 text-brand-600" aria-hidden="true" />
               <p>
-                <strong className="font-semibold">Instructions:</strong> Enter an integer or decimal value (for example 5, -3.14, or 0.5). Scientific notation and spaces are not accepted. Values within {NUMERICAL_ABSOLUTE_TOLERANCE} of the answer are graded as correct.
+                <strong className="font-semibold">Instructions:</strong>{' '}
+                {isIntegerView
+                  ? 'Enter a whole number (for example 42 or -7). Decimals, scientific notation and spaces are not accepted.'
+                  : <>Enter an integer or decimal value (for example 5, -3.14, or 0.5). Scientific notation and spaces are not accepted. Values within {NUMERICAL_ABSOLUTE_TOLERANCE} of the answer are graded as correct.</>}
               </p>
             </div>
 
             <div className="flex flex-col gap-2">
-              <label htmlFor="numerical-answer" className="text-[length:calc(var(--exam-text-scale,1)*0.875rem)] font-semibold text-slate-800">Your Numerical Answer:</label>
+              <label htmlFor="numerical-answer" className="text-[length:calc(var(--exam-text-scale,1)*0.875rem)] font-semibold text-slate-800">{isIntegerView ? 'Your Integer Answer:' : 'Your Numerical Answer:'}</label>
               <Input
                 id="numerical-answer"
                 type="text"
-                inputMode="decimal"
-                placeholder="Enter numerical value..."
+                inputMode={isIntegerView ? 'numeric' : 'decimal'}
+                placeholder={isIntegerView ? 'Enter a whole number...' : 'Enter numerical value...'}
                 disabled={disabled}
                 maxLength={CANDIDATE_NUMERICAL_MAX_LENGTH}
                 value={numericalDraft}
@@ -214,7 +244,7 @@ const QuestionPanel = ({
                 className="h-auto min-h-14 border-2 border-brand-500 px-4 py-2 text-[length:calc(var(--exam-text-scale,1)*1.25rem)] font-semibold tabular-nums"
               />
               <span id="numerical-answer-help" className="text-xs text-slate-500">
-                Maximum {CANDIDATE_NUMERICAL_MAX_LENGTH} characters; decimal notation only. An unfinished edit does not replace your last valid saved answer.
+                Maximum {CANDIDATE_NUMERICAL_MAX_LENGTH} characters; {isIntegerView ? 'whole numbers only' : 'decimal notation only'}. An unfinished edit does not replace your last valid saved answer.
               </span>
               {numericalError && (
                 <span id="numerical-answer-error" role="alert" className="flex items-center gap-1.5 text-sm font-semibold text-red-700">
@@ -231,7 +261,7 @@ const QuestionPanel = ({
                 <span className="font-normal italic text-slate-500">Click or type directly</span>
               </div>
               <div className="grid grid-cols-3 gap-2">
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9, '.', 0, '-'].map((key) => (
+                {(isIntegerView ? INTEGER_KEYS : DECIMAL_KEYS).map((key) => (
                   <button
                     key={key}
                     type="button"
@@ -282,12 +312,19 @@ const QuestionPanel = ({
           </div>
         ) : (
           <div
-            role="radiogroup"
+            role={isMultipleCorrect ? 'group' : 'radiogroup'}
             aria-labelledby="question-prompt-text"
+            aria-describedby={isMultipleCorrect ? 'multiple-correct-hint' : undefined}
             className={cn('flex flex-col gap-3', disabled && 'opacity-60')}
           >
+            {isMultipleCorrect && (
+              <p id="multiple-correct-hint" className="flex items-center gap-2 text-[length:calc(var(--exam-text-scale,1)*0.875rem)] font-medium text-brand-900">
+                <Info className="size-4 shrink-0 text-brand-600" aria-hidden="true" />
+                One or more options may be correct.
+              </p>
+            )}
             {/** @type {string[]} */ (question.options).map((opt, idx) => {
-              const isSelected = selectedOption === idx;
+              const isSelected = isMultipleCorrect ? chosenOptions.includes(idx) : selectedOption === idx;
               return (
                 <label
                   key={idx}
@@ -300,13 +337,18 @@ const QuestionPanel = ({
                   )}
                 >
                   <input
-                    type="radio"
+                    type={isMultipleCorrect ? 'checkbox' : 'radio'}
                     name={`q-${question.id}`}
                     checked={isSelected}
                     disabled={disabled}
-                    onChange={() => !disabled && setSelectedOption(idx)}
-                    onKeyDown={(e) => {
+                    onChange={() => {
                       if (disabled) return;
+                      if (!isMultipleCorrect) setSelectedOption(idx);
+                      // Nothing ticked is "no answer" (null), never an empty string.
+                      else setSelectedOption(encodeOptionSet(isSelected ? chosenOptions.filter(i => i !== idx) : [...chosenOptions, idx]));
+                    }}
+                    onKeyDown={(e) => {
+                      if (disabled || isMultipleCorrect) return;
                       if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
                         e.preventDefault();
                         const next = (idx + 1) % /** @type {string[]} */ (question.options).length;

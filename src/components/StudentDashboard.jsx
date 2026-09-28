@@ -311,7 +311,7 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
       // 1. Fetch completed exam results for this student
       const resultsData = await fetchAllRows((from, to) => supabase
         .from('student_results')
-        .select('exam_id, total_score, max_score, correct, incorrect, unattempted, subject_scores')
+        .select('exam_id, total_score, max_score, correct, partial, incorrect, unattempted, subject_scores')
         .eq('student_id', student.id)
         .order('exam_id', { ascending: true })
         .range(from, to));
@@ -323,6 +323,7 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
           totalScore: r.total_score,
           maxScore: r.max_score,
           correct: r.correct,
+          partial: r.partial ?? 0,
           incorrect: r.incorrect,
           unattempted: r.unattempted,
           subjectScores: r.subject_scores

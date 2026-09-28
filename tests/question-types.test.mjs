@@ -156,6 +156,17 @@ test('bank rows keep their real type and details instead of collapsing to MCQ', 
   assert.equal(normalizeQuestionBankRow({ id: 'z', type: 'NAT' }).details, null);
 });
 
+test('offline recovery and submission keep multiple-correct answers as strings', async () => {
+  const { buildSubmissionResponses, mergeOfflineResponses } = await import('../src/examLogic.js');
+  const paper = { subjects: ['Physics'], questions: { Physics: [{ id: 'm', type: 'MULTIPLE_CORRECT' }, { id: 'n', type: 'MULTIPLE_CORRECT' }] } };
+  const server = { Physics: [{ selectedOption: null, status: 'NOT_ANSWERED' }, { selectedOption: '1', status: 'ANSWERED' }] };
+  const local = { Physics: [{ selectedOption: '0,2', status: 'ANSWERED' }, { selectedOption: null, status: 'NOT_ANSWERED' }] };
+  const merged = mergeOfflineResponses(paper, server, local);
+  assert.deepEqual(merged.Physics[0], { selectedOption: '0,2', status: 'ANSWERED' });
+  assert.deepEqual(merged.Physics[1], { selectedOption: null, status: 'NOT_ANSWERED' }, 'a local clear wins over the older server answer');
+  assert.deepEqual(buildSubmissionResponses(paper, merged)[0], { question_id: 'm', selected_option: '0,2', status: 'ANSWERED' });
+});
+
 test('the editor validates every new type', async () => {
   const { prepareQuestionDraft } = await import('../src/questionContentLogic.js');
   const base = { docId: 'new', subject: 'Physics', text: 'A question', options: ['A', 'B', 'C', 'D'], optionImageUrls: [null, null, null, null] };

@@ -1,5 +1,5 @@
-import { ArrowLeft, BarChart3, CheckCircle2, CircleSlash, Trophy, XCircle } from 'lucide-react';
-import { Button, StatCard } from './ui';
+import { ArrowLeft, BarChart3, CheckCircle2, CircleDot, CircleSlash, Trophy, XCircle } from 'lucide-react';
+import { Button, StatCard, cn } from './ui';
 
 /**
  * @param {{
@@ -9,7 +9,7 @@ import { Button, StatCard } from './ui';
  */
 const Result = ({ results, onBackToDashboard }) => {
   if (!results) return null;
-  const { totalScore = 0, maxScore = 0, correct = 0, incorrect = 0, unattempted = 0, subjectScores = {} } = results;
+  const { totalScore = 0, maxScore = 0, correct = 0, partial = 0, incorrect = 0, unattempted = 0, subjectScores = {} } = results;
   const scorePercent = maxScore > 0 ? Math.max(0, Math.min(100, (Number(totalScore) / Number(maxScore)) * 100)) : 0;
   const subjectEntries = Object.entries(subjectScores || {});
   const maxSubjectMagnitude = Math.max(1, ...subjectEntries.map(([, score]) => Math.abs(Number(score) || 0)));
@@ -43,8 +43,9 @@ const Result = ({ results, onBackToDashboard }) => {
 
         {/* Overall Stats Grid */}
         <div className="result-stats">
-          <div className="mb-8 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className={cn('mb-8 grid grid-cols-1 gap-3', partial > 0 ? 'sm:grid-cols-2 lg:grid-cols-4' : 'sm:grid-cols-3')}>
             <StatCard icon={CheckCircle2} tone="success" label="Correct Answers" value={correct} />
+            {partial > 0 && <StatCard icon={CircleDot} tone="warning" label="Partially Correct" value={partial} />}
             <StatCard icon={XCircle} tone="danger" label="Incorrect Answers" value={incorrect} />
             <StatCard icon={CircleSlash} tone="neutral" label="Unattempted" value={unattempted} />
           </div>

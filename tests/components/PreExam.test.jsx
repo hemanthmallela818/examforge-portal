@@ -105,6 +105,24 @@ describe('PreExam', () => {
     expect(screen.getByRole('button', { name: 'Waiting for Admin to Start...' }).disabled).toBe(true);
   });
 
+  it('lists per-type marking when the exam sets it', async () => {
+    const marking = { MULTIPLE_CORRECT: { correct: 4, incorrect: -2 }, INTEGER: { incorrect: 0 } };
+    render(<PreExam startExam={vi.fn()} activeExamId="exam-1" marksCorrect={3} marksIncorrect={-1} marking={marking} />);
+    const list = screen.getByRole('list', { name: 'Marks by question type' });
+    const items = [...list.querySelectorAll('li')].map(item => item.textContent);
+    expect(items).toEqual([
+      'Multiple correct: +4 correct, -2 wrong; partial marks when only correct options are chosen',
+      'Integer: +3 correct, 0 wrong'
+    ]);
+    await screen.findByRole('button', { name: 'Start Exam' });
+  });
+
+  it('shows no per-type list for an exam without per-type marking', async () => {
+    render(<PreExam startExam={vi.fn()} activeExamId="exam-1" />);
+    expect(screen.queryByRole('list', { name: 'Marks by question type' })).toBeNull();
+    await screen.findByRole('button', { name: 'Start Exam' });
+  });
+
   it('unsubscribes from realtime on unmount', async () => {
     const { unmount } = render(<PreExam startExam={vi.fn()} activeExamId="exam-1" />);
     await screen.findByRole('button', { name: 'Start Exam' });
