@@ -1,9 +1,10 @@
+import { stableStringify } from './examLogic.js';
 import { AUTHOR_NUMERICAL_MAX_LENGTH, isValidNumericalAnswer } from './numericalAnswerPolicy.js';
 
 /**
  * @import {
  *   AtomicImportRow, ImportFileLike, ImportFileValidation, ImportOptions, ImportQuestion,
- *   ImportRowError, QuestionTextLike, UntrustedInput, ValidatedImportQuestion
+ *   ImportRowError, QuestionDetails, QuestionTextLike, UntrustedInput, ValidatedImportQuestion
  * } from './types'
  */
 
@@ -202,6 +203,16 @@ export const canonicalQuestionText = value => String(value ?? '')
   .trim()
   .replace(/\s+/gu, ' ')
   .toLocaleLowerCase('en-US');
+
+/**
+ * Duplicate-detection key: canonical text plus structured details (match
+ * lists, paragraph), so two matrix-match questions sharing a stem are not
+ * duplicates. Mirrors the database's question_identity_key.
+ * @param {unknown} text
+ * @param {QuestionDetails | null | undefined} details
+ * @returns {string}
+ */
+export const questionIdentityKey = (text, details) => `${canonicalQuestionText(text)}|${details ? stableStringify(details) : ''}`;
 
 /**
  * @param {UntrustedInput} option String or `{ label, text }`.

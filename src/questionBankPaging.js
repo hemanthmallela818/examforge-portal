@@ -1,10 +1,6 @@
-/** @import { QuestionBankItem, UntrustedInput } from './types' */
+import { normalizeQuestionType } from './questionTypes.js';
 
-/**
- * @param {unknown} value
- * @returns {'MCQ' | 'NUMERICAL'}
- */
-const normalizeType = value => ['NAT', 'NUMERICAL'].includes(String(value || '').toUpperCase()) ? 'NUMERICAL' : 'MCQ';
+/** @import { QuestionBankItem, UntrustedInput } from './types' */
 
 /**
  * @param {UntrustedInput} row Raw `questions` table row.
@@ -14,7 +10,7 @@ export const normalizeQuestionBankRow = row => ({
   docId: row.id,
   id: row.id,
   subject: row.subject,
-  type: normalizeType(row.type),
+  type: normalizeQuestionType(row.type),
   questionNumber: Number(row.question_number),
   text: row.question_text || '',
   options: row.options,
@@ -22,6 +18,7 @@ export const normalizeQuestionBankRow = row => ({
   questionImageUrl: row.question_image_url,
   optionImageUrls: row.option_image_urls,
   hasImageOrDiagram: row.has_image_or_diagram,
+  details: row.details && typeof row.details === 'object' ? row.details : null,
   createdAt: row.created_at
 });
 
