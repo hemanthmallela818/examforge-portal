@@ -4,6 +4,7 @@ import { supabase } from '../../../supabase';
 import { parsePagedCollectionResponse } from '../../../paginatedQuery';
 import { normalizeQuestionBankRow } from '../../../questionBankPaging';
 import { prepareQuestionDraft } from '../../../questionContentLogic';
+import { ASSERTION_REASON_OPTIONS, ASSERTION_REASON_TEMPLATE, questionTypeInfo } from '../../../questionTypes';
 import { useAdminContext } from '../adminContext';
 import { QUESTION_BANK_PAGE_SIZE } from '../adminConstants';
 
@@ -20,6 +21,8 @@ import { QUESTION_BANK_PAGE_SIZE } from '../adminConstants';
  * @property {string | null} questionImageUrl
  * @property {Array<string | null> | null} optionImageUrls
  * @property {boolean} [hasImageOrDiagram]
+ * @property {import('../../../types').QuestionDetails | null} [details]
+ * @property {boolean} [isNewPassage] The paragraph is being created with this question, so it is editable.
  */
 
 /** @typedef {{ page: number, search: string, subject: string, type: string }} QuestionBankQuery */
@@ -121,6 +124,7 @@ export function useQuestionBank({ enabled }) {
         question_image_url: normalizedQuestion.questionImageUrl,
         option_image_urls: normalizedQuestion.optionImageUrls,
         has_image_or_diagram: normalizedQuestion.hasImageOrDiagram,
+        details: normalizedQuestion.details,
       };
 
       if (normalizedQuestion.docId === 'new') {
@@ -153,19 +157,63 @@ export function useQuestionBank({ enabled }) {
     }
   };
 
-  /** @param {'MCQ' | 'NUMERICAL'} [qType] */
-  const handleAddBlankQuestion = (qType = 'MCQ') => {
-    const isNumerical = qType === 'NUMERICAL';
+  /**
+   * Opens the editor on a blank question of any type, optionally inside a
+   * paragraph set (a new set when `isNewPassage`, otherwise an existing one).
+   * @param {string} [qType]
+   * @param {{ passage?: import('../../../types').PassageDetails, subject?: string, isNewPassage?: boolean }} [set]
+   */
+  const handleAddBlankQuestion = (qType = 'MCQ', set = {}) => {
+    const info = questionTypeInfo(qType) || /** @type {import('../../../types').QuestionTypeInfo} */ (questionTypeInfo('MCQ'));
+    const isAssertionReason = info.code === 'ASSERTION_REASON';
+    /** @type {import('../../../types').QuestionDetails} */
+    const details = {};
+    if (info.code === 'MATRIX_MATCH') details.matchLists = { left: ['', ''], right: ['', ''] };
+    if (set.passage) details.passage = set.passage;
     setEditingQuestion({
       docId: 'new',
-      subject: activeSubjectNames[0] || '',
-      type: isNumerical ? 'NUMERICAL' : 'MCQ',
-      text: '',
-      options: isNumerical ? [] : ['', '', '', ''],
-      correctAnswer: isNumerical ? '' : 0,
+      subject: set.subject || activeSubjectNames[0] || '',
+      type: info.code,
+      text: isAssertionReason ? ASSERTION_REASON_TEMPLATE : '',
+      options: isAssertionReason ? [...ASSERTION_REASON_OPTIONS] : info.optionBased ? ['', '', '', ''] : [],
+      correctAnswer: info.optionBased && info.code !== 'MULTIPLE_CORRECT' ? 0 : '',
       questionImageUrl: null,
-      optionImageUrls: [null, null, null, null]
+      optionImageUrls: info.optionBased ? [null, null, null, null] : [],
+      details: Object.keys(details).length ? details : null,
+      isNewPassage: Boolean(set.passage && set.isNewPassage)
     });
+  };
+
+  /** Starts a new paragraph set: the editor opens with an empty, editable paragraph. */
+  const handleNewParagraphSet = () => {
+    handleAddBlankQuestion('MCQ', { passage: { key: crypto.randomUUID(), text: '' }, isNewPassage: true });
+  };
+
+  /**
+   * Adds another question to an existing paragraph set.
+   * @param {import('../../../types').QuestionBankItem} sibling A question already in the set.
+   */
+  const handleAddQuestionToPassage = (sibling) => {
+    const passage = sibling.details?.passage;
+    if (!passage) return;
+    handleAddBlankQuestion('MCQ', { passage: { key: passage.key, text: passage.text }, subject: sibling.subject });
+  };
+
+  /**
+   * Rewrites a paragraph on every question of its set (one database statement).
+   * @param {string} passageKey
+   * @param {string} text
+   * @returns {Promise<boolean>}
+   */
+  const handleUpdatePassage = async (passageKey, text) => {
+    const { data, error } = await supabase.rpc('admin_update_passage', { passage_key_param: passageKey, passage_text_param: text });
+    if (error) {
+      await customAlert(`The paragraph was not updated: ${error.message}`);
+      return false;
+    }
+    showToast(`Paragraph updated on ${Number(data) || 0} question(s).`, 'success');
+    await fetchQuestionBank();
+    return true;
   };
 
   return {
@@ -190,6 +238,9 @@ export function useQuestionBank({ enabled }) {
     questionBankSnapshot,
     handleSaveQuestion,
     handleDeleteQuestion,
-    handleAddBlankQuestion
+    handleAddBlankQuestion,
+    handleNewParagraphSet,
+    handleAddQuestionToPassage,
+    handleUpdatePassage
   };
 }

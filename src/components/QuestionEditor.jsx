@@ -4,11 +4,45 @@ import { customAlert, customConfirm } from '../utils';
 import MathRenderer from './MathRenderer';
 import { supabase } from '../supabase';
 import StorageImage from './StorageImage';
+import MatchListsTable from './MatchListsTable';
 import { prepareQuestionDraft } from '../questionContentLogic';
 import { validateImageUpload } from '../imageValidation';
 import { useDialogFocusTrap } from '../dialogFocus';
+import {
+  ASSERTION_REASON_OPTIONS, ASSERTION_REASON_TEMPLATE, MATCH_LEFT_LABELS, MATCH_RIGHT_LABELS,
+  QUESTION_TYPES, decodeOptionSet, encodeOptionSet, questionTypeInfo
+} from '../questionTypes';
 import { AlertCircle, CheckCircle2, Eye, Hash, ImagePlus, Keyboard, ListChecks, Loader2, PencilLine, Save, Trash2, UploadCloud, X } from 'lucide-react';
 import { Badge, Button, Field, Input, Label, Select, Textarea, cn } from './ui';
+
+/** Question Type select labels (MCQ and NAT keep their established names). */
+/** @type {Record<string, string>} */
+const TYPE_OPTION_LABELS = {
+  MCQ: 'Multiple Choice Question (MCQ)',
+  MULTIPLE_CORRECT: 'Multiple Correct (one or more)',
+  INTEGER: 'Integer Type',
+  NUMERICAL: 'Numerical Answer Type (NAT)',
+  MATRIX_MATCH: 'Matrix Match (List-I / List-II)',
+  ASSERTION_REASON: 'Assertion–Reason'
+};
+
+const MATCH_LIST_SIDES = /** @type {const} */ ([
+  { side: 'left', title: 'List-I', labels: MATCH_LEFT_LABELS, max: 6 },
+  { side: 'right', title: 'List-II', labels: MATCH_RIGHT_LABELS, max: 8 }
+]);
+
+/**
+ * Option indices marked correct: one for single-answer types, a set for
+ * multiple correct.
+ * @param {{ type?: string, correctAnswer?: string | number | null }} question
+ * @returns {number[]}
+ */
+const correctOptionIndices = (question) => (
+  questionTypeInfo(question.type)?.code === 'MULTIPLE_CORRECT'
+    ? decodeOptionSet(question.correctAnswer)
+    : [Number(question.correctAnswer)]
+);
+
 
 /** @type {Record<string, string[]>} */
 const JEE_SYMBOLS = {
@@ -28,6 +62,8 @@ const JEE_SYMBOLS = {
  * @property {Array<string | null>} optionImageUrls
  * @property {string | null} [questionImageUrl]
  * @property {string | number | null} [correctAnswer]
+ * @property {import('../types').QuestionDetails | null} [details]
+ * @property {boolean} [isNewPassage] True while creating a new paragraph set: its paragraph is editable here.
  */
 
 /**
@@ -164,10 +200,13 @@ function ImageDropZone({ inputId, label, buttonLabel, onFile, onDropError, disab
  * @param {{ question: EditorQuestion, headingId: string }} props
  */
 function QuestionPreview({ question, headingId }) {
-  const isNumerical = question.type === 'NUMERICAL';
+  const typeInfo = questionTypeInfo(question.type);
+  const isNumerical = typeInfo ? !typeInfo.optionBased : false;
   const options = question.options || [];
-  const correctIndex = Number(question.correctAnswer);
+  const correctIndices = correctOptionIndices(question);
   const hasNumericalAnswer = question.correctAnswer !== '' && question.correctAnswer !== null && question.correctAnswer !== undefined;
+  const passage = question.details?.passage;
+  const matchLists = question.details?.matchLists;
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -182,11 +221,19 @@ function QuestionPreview({ question, headingId }) {
           <span className="text-sm font-semibold text-slate-900">Question</span>
           <Badge variant={isNumerical ? 'warning' : 'brand'} className="uppercase tracking-wide">
             {isNumerical ? <Hash aria-hidden="true" /> : <ListChecks aria-hidden="true" />}
-            {isNumerical ? 'NUMERICAL VALUE TYPE' : 'MULTIPLE CHOICE'}
+            {typeInfo?.badge || 'MULTIPLE CHOICE'}
           </Badge>
           {question.subject && <Badge variant="neutral">{question.subject}</Badge>}
         </div>
         <div className="flex flex-col gap-4 px-4 py-4">
+          {passage && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Paragraph</p>
+              {passage.text?.trim()
+                ? <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-900"><MathRenderer text={passage.text} /></p>
+                : <p className="text-sm italic text-slate-400">The paragraph will appear here.</p>}
+            </div>
+          )}
           {question.text?.trim() ? (
             <p className="whitespace-pre-wrap text-base leading-relaxed text-slate-900"><MathRenderer text={question.text} /></p>
           ) : (
@@ -195,10 +242,11 @@ function QuestionPreview({ question, headingId }) {
           {question.questionImageUrl && (
             <StorageImage src={question.questionImageUrl} alt="Question context" className="max-h-[320px] max-w-full self-start rounded-lg border border-slate-200 shadow-sm" />
           )}
+          {matchLists && <MatchListsTable lists={matchLists} className="text-sm" />}
           {isNumerical ? (
             <div className="flex max-w-sm flex-col gap-2">
-              <span className="text-sm font-semibold text-slate-800">Your Numerical Answer:</span>
-              <div aria-hidden="true" className="flex h-12 items-center rounded-lg border-2 border-brand-500 px-3 text-slate-400">Enter numerical value...</div>
+              <span className="text-sm font-semibold text-slate-800">{typeInfo?.code === 'INTEGER' ? 'Your Integer Answer:' : 'Your Numerical Answer:'}</span>
+              <div aria-hidden="true" className="flex h-12 items-center rounded-lg border-2 border-brand-500 px-3 text-slate-400">{typeInfo?.code === 'INTEGER' ? 'Enter a whole number...' : 'Enter numerical value...'}</div>
               <p className="text-xs text-slate-600">
                 Answer key: <span className="font-semibold tabular-nums text-slate-900">{hasNumericalAnswer ? String(question.correctAnswer) : 'not set'}</span>
               </p>
@@ -207,7 +255,7 @@ function QuestionPreview({ question, headingId }) {
             <ol aria-label="Answer options" className="flex flex-col gap-2.5">
               {options.map((option, idx) => {
                 const letter = String.fromCharCode(65 + idx);
-                const isCorrect = correctIndex === idx;
+                const isCorrect = correctIndices.includes(idx);
                 return (
                   <li
                     key={idx}
@@ -262,7 +310,14 @@ const QuestionEditor = ({ question, onSave, onCancel, existingQuestions, subject
     ...question,
     options: question.options || ['', '', '', ''],
     optionImageUrls: question.optionImageUrls || [null, null, null, null],
+    details: question.details || null
   }));
+  const typeInfo = questionTypeInfo(editedQ.type);
+  const isValueType = typeInfo ? !typeInfo.optionBased : false;
+  const isMultipleCorrect = typeInfo?.code === 'MULTIPLE_CORRECT';
+  const correctIndices = correctOptionIndices(editedQ);
+  const matchLists = editedQ.details?.matchLists;
+  const passage = editedQ.details?.passage;
   
   const [focusedField, setFocusedField] = useState(/** @type {EditorField} */ ('text')); // 'text' or 0,1,2,3
   const [uploading, setUploading] = useState(false);
@@ -308,6 +363,56 @@ const QuestionEditor = ({ question, onSave, onCancel, existingQuestions, subject
       setEditedQ({ ...editedQ, options: newOptions });
     }
   };
+
+  /**
+   * Switches the question type. Options are kept between option types; the
+   * Assertion–Reason template fills the prompt and the standard options (after
+   * asking, when something is already written).
+   * @param {string} newType
+   */
+  const changeType = async (newType) => {
+    const nextInfo = questionTypeInfo(newType);
+    if (!nextInfo) return;
+    const keepOptions = nextInfo.optionBased && Boolean(typeInfo?.optionBased);
+    let text = editedQ.text || '';
+    let options = nextInfo.optionBased ? (keepOptions ? editedQ.options : ['', '', '', '']) : [];
+    let optionImageUrls = nextInfo.optionBased ? (keepOptions ? editedQ.optionImageUrls : [null, null, null, null]) : [];
+    if (nextInfo.code === 'ASSERTION_REASON') {
+      const hasContent = text.trim() || options.some(option => option.trim());
+      if (!hasContent || await customConfirm('Replace the question prompt and options with the Assertion–Reason template?')) {
+        text = ASSERTION_REASON_TEMPLATE;
+        options = [...ASSERTION_REASON_OPTIONS];
+        optionImageUrls = [null, null, null, null];
+      }
+    }
+    const { matchLists: previousLists, ...otherDetails } = editedQ.details || {};
+    /** @type {import('../types').QuestionDetails} */
+    const details = nextInfo.code === 'MATRIX_MATCH'
+      ? { ...otherDetails, matchLists: previousLists || { left: ['', ''], right: ['', ''] } }
+      : otherDetails;
+    setEditedQ(prev => ({
+      ...prev,
+      type: nextInfo.code,
+      text,
+      options,
+      optionImageUrls,
+      correctAnswer: nextInfo.code === 'MULTIPLE_CORRECT' || !nextInfo.optionBased ? '' : 0,
+      details: Object.keys(details).length ? details : null
+    }));
+  };
+
+  /** @param {(lists: import('../types').MatchLists) => import('../types').MatchLists} update */
+  const updateMatchLists = (update) => setEditedQ(prev => ({
+    ...prev,
+    details: { ...(prev.details || {}), matchLists: update(prev.details?.matchLists || { left: ['', ''], right: ['', ''] }) }
+  }));
+
+  /** @param {number} index */
+  const toggleCorrectOption = (index) => setEditedQ(prev => {
+    const current = correctOptionIndices(prev);
+    const next = current.includes(index) ? current.filter(i => i !== index) : [...current, index];
+    return { ...prev, correctAnswer: encodeOptionSet(next) ?? '' };
+  });
 
   /** @param {string} symbol */
   const insertSymbol = (symbol) => {
@@ -466,7 +571,10 @@ const QuestionEditor = ({ question, onSave, onCancel, existingQuestions, subject
   const cancelEditor = async () => {
     const hasChanges = editedQ.text !== (question.text || '') ||
       JSON.stringify(editedQ.options) !== JSON.stringify(question.options || ['', '', '', '']) ||
-      editedQ.questionImageUrl !== (question.questionImageUrl || null);
+      editedQ.questionImageUrl !== (question.questionImageUrl || null) ||
+      (editedQ.type || 'MCQ') !== (question.type || 'MCQ') ||
+      String(editedQ.correctAnswer ?? '') !== String(question.correctAnswer ?? '') ||
+      JSON.stringify(editedQ.details || null) !== JSON.stringify(question.details || null);
     
     if (hasChanges) {
       const confirmed = await customConfirm('Discard unsaved changes to this question?');
@@ -557,20 +665,12 @@ const QuestionEditor = ({ question, onSave, onCancel, existingQuestions, subject
             <Field label="Question Type" htmlFor={`${fieldId}-type`}>
               <Select
                 id={`${fieldId}-type`}
-                value={editedQ.type || 'MCQ'}
-                onChange={(e) => {
-                  const newType = e.target.value;
-                  setEditedQ({
-                    ...editedQ,
-                    type: newType,
-                    correctAnswer: newType === 'NUMERICAL' ? '' : 0,
-                    options: newType === 'NUMERICAL' ? [] : ['', '', '', ''],
-                    optionImageUrls: newType === 'NUMERICAL' ? [] : [null, null, null, null]
-                  });
-                }}
+                value={typeInfo?.code || 'MCQ'}
+                onChange={(e) => { changeType(e.target.value); }}
               >
-                <option value="MCQ">Multiple Choice Question (MCQ)</option>
-                <option value="NUMERICAL">Numerical Answer Type (NAT)</option>
+                {QUESTION_TYPES.map(entry => (
+                  <option key={entry.code} value={entry.code}>{TYPE_OPTION_LABELS[entry.code]}</option>
+                ))}
               </Select>
             </Field>
             <Field label="Subject" htmlFor={`${fieldId}-subject`}>
@@ -589,7 +689,32 @@ const QuestionEditor = ({ question, onSave, onCancel, existingQuestions, subject
             </Field>
           </div>
 
+          {/* Paragraph shared by a question set */}
+          {passage && (editedQ.isNewPassage ? (
+            <Field label="Paragraph (shared by every question in this set)" htmlFor={`${fieldId}-passage`}>
+              <Textarea
+                id={`${fieldId}-passage`}
+                value={passage.text}
+                onChange={(e) => setEditedQ(prev => ({ ...prev, details: { ...(prev.details || {}), passage: { ...passage, text: e.target.value } } }))}
+                className="min-h-28 resize-y"
+              />
+            </Field>
+          ) : (
+            <section aria-labelledby={`${fieldId}-passage-title`} className="flex flex-col gap-1.5">
+              <h4 id={`${fieldId}-passage-title`} className="text-sm font-medium text-slate-700">Paragraph (shared by every question in this set)</h4>
+              <div className="max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800">
+                <MathRenderer text={passage.text} />
+              </div>
+              <p className="text-xs text-slate-500">To change the paragraph for every question in the set, use “Edit paragraph” in the question bank.</p>
+            </section>
+          ))}
+
           {/* Question Text & Image */}
+          {typeInfo?.code === 'ASSERTION_REASON' && (
+            <p className="rounded-lg border border-brand-100 bg-brand-50/60 px-3 py-2 text-sm text-slate-700">
+              Write the assertion after “Assertion (A):” and the reason after “Reason (R):”. The four standard options are filled in for you.
+            </p>
+          )}
           <Field label="Question Prompt" htmlFor={`${fieldId}-text`}>
             <Textarea
               id={`${fieldId}-text`}
@@ -632,8 +757,65 @@ const QuestionEditor = ({ question, onSave, onCancel, existingQuestions, subject
             </div>
           </Field>
 
+          {/* List-I / List-II for matrix match */}
+          {matchLists && (
+            <section aria-labelledby={`${fieldId}-lists-title`} className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+              <h4 id={`${fieldId}-lists-title`} className="mb-1 text-sm font-semibold text-slate-900">List-I and List-II</h4>
+              <p className="mb-3 text-xs text-slate-500">Write each option below as a complete matching, for example “P→2, Q→1, R→4, S→3”.</p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {MATCH_LIST_SIDES.map(({ side, title, labels, max }) => (
+                  <div key={side} className="flex flex-col gap-2">
+                    <span className="text-sm font-semibold text-slate-700">{title}</span>
+                    {matchLists[side].map((item, index) => (
+                      <div key={index} className="flex items-center gap-2">
+                        <span aria-hidden="true" className="w-5 text-sm font-semibold text-slate-600">{labels[index]}.</span>
+                        <Input
+                          aria-label={`${title} item ${labels[index]}`}
+                          value={item}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            updateMatchLists(lists => ({ ...lists, [side]: lists[side].map((existing, i) => (i === index ? value : existing)) }));
+                          }}
+                        />
+                      </div>
+                    ))}
+                    <div className="flex flex-wrap gap-2">
+                      <Button variant="secondary" size="sm" disabled={matchLists[side].length >= max} onClick={() => updateMatchLists(lists => ({ ...lists, [side]: [...lists[side], ''] }))}>
+                        Add {title} item
+                      </Button>
+                      <Button variant="ghost" size="sm" disabled={matchLists[side].length <= 2} onClick={() => updateMatchLists(lists => ({ ...lists, [side]: lists[side].slice(0, -1) }))}>
+                        Remove last {title} item
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
           {/* Options / Numerical Answer */}
-          {editedQ.type === 'NUMERICAL' ? (
+          {typeInfo?.code === 'INTEGER' ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-5">
+              <h4 className="mb-1 flex items-center gap-2 text-sm font-semibold text-amber-900">
+                <Hash className="size-4 text-amber-600" aria-hidden="true" />
+                Integer Type
+              </h4>
+              <p className="mb-4 text-sm text-slate-600">
+                The student enters a whole number (no decimal point) with the keypad or keyboard.
+              </p>
+              <Field label="Exact Correct Answer (Whole Number):" htmlFor={`${fieldId}-integer`}>
+                <Input
+                  id={`${fieldId}-integer`}
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="e.g. 42, 0, -7"
+                  value={editedQ.correctAnswer !== null && editedQ.correctAnswer !== undefined ? String(editedQ.correctAnswer) : ''}
+                  onChange={(e) => setEditedQ({ ...editedQ, correctAnswer: e.target.value.trim() })}
+                  className="h-11 max-w-xs text-base font-semibold tabular-nums"
+                />
+              </Field>
+            </div>
+          ) : isValueType ? (
             <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-5">
               <h4 className="mb-1 flex items-center gap-2 text-sm font-semibold text-amber-900">
                 <Hash className="size-4 text-amber-600" aria-hidden="true" />
@@ -658,7 +840,7 @@ const QuestionEditor = ({ question, onSave, onCancel, existingQuestions, subject
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
               {[0, 1, 2, 3].map(i => {
                 const letter = String.fromCharCode(65 + i);
-                const isCorrect = Number(editedQ.correctAnswer) === i;
+                const isCorrect = correctIndices.includes(i);
                 return (
                   <div
                     key={i}
@@ -739,7 +921,23 @@ const QuestionEditor = ({ question, onSave, onCancel, existingQuestions, subject
         {/* Correct Answer & Save */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/60 px-6 py-4">
           <div>
-            {editedQ.type !== 'NUMERICAL' && (
+            {isMultipleCorrect && (
+              <fieldset className="flex flex-wrap items-center gap-3">
+                <legend className="float-left mr-1 text-sm font-medium text-slate-700">Correct Options:</legend>
+                {[0, 1, 2, 3].map(i => (
+                  <label key={i} className="inline-flex items-center gap-1.5 text-sm text-slate-800">
+                    <input
+                      type="checkbox"
+                      checked={correctIndices.includes(i)}
+                      onChange={() => toggleCorrectOption(i)}
+                      className="size-4 accent-brand-600"
+                    />
+                    Option {String.fromCharCode(65 + i)}
+                  </label>
+                ))}
+              </fieldset>
+            )}
+            {!isValueType && !isMultipleCorrect && (
               <div className="flex items-center gap-3">
                 <Label htmlFor={`${fieldId}-correct`} className="whitespace-nowrap">Correct Answer:</Label>
                 <Select
