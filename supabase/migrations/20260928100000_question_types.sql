@@ -1,6 +1,5 @@
 -- More question types: multiple correct (with partial marks), integer, matrix
 -- match, assertion-reason, and paragraph sets.
--- Design: docs/superpowers/specs/2026-09-28-question-types-design.md
 --
 -- 1. Shared helpers hold each rule once: supported types, author answer
 --    grammar, question details (match lists / paragraph), candidate answer
