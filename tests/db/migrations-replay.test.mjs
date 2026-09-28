@@ -50,7 +50,7 @@ test('latest schema objects exist after replay', async () => {
     'public.admin_clear_question_bank(text)',
     'public.root_reset_application_data_for_actor(uuid,text)',
     'public.admin_save_subject(uuid,text,boolean)',
-    'public.admin_save_exam_template(uuid,text,text,integer,numeric,numeric,jsonb,boolean)',
+    'public.admin_save_exam_template(uuid,text,text,integer,numeric,numeric,jsonb,boolean,jsonb)',
     'public.preflight_validate_exam(uuid)'
   ];
   for (const signature of functions) {

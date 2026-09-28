@@ -646,4 +646,761 @@ $function$;
 REVOKE ALL ON FUNCTION public.admin_update_passage(pg_catalog.uuid, pg_catalog.text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.admin_update_passage(pg_catalog.uuid, pg_catalog.text) TO authenticated;
 
+-- ---------------------------------------------------------------------------
+-- Marking and exam papers
+-- ---------------------------------------------------------------------------
+
+-- Validates an optional per-type marking object:
+--   { "<TYPE>": { "correct": n, "incorrect": n, "partial": bool }, ... }
+-- Every field is optional; see resolve_question_marking for the fallbacks.
+CREATE OR REPLACE FUNCTION public.normalize_exam_marking(marking pg_catalog.jsonb)
+RETURNS pg_catalog.jsonb
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path = ''
+AS $function$
+DECLARE
+  entry pg_catalog.record;
+  amount pg_catalog.numeric;
+BEGIN
+  IF marking IS NULL OR pg_catalog.jsonb_typeof(marking) = 'null' THEN
+    RETURN NULL;
+  END IF;
+  IF pg_catalog.jsonb_typeof(marking) <> 'object' THEN
+    RAISE EXCEPTION 'Marking must be an object keyed by question type';
+  END IF;
+  FOR entry IN SELECT item.key, item.value FROM pg_catalog.jsonb_each(marking) AS item LOOP
+    IF entry.key <> pg_catalog.upper(entry.key) OR entry.key = 'NAT'
+      OR NOT public.question_type_is_supported(entry.key)
+    THEN
+      RAISE EXCEPTION 'Marking has an unsupported question type "%"', entry.key;
+    END IF;
+    IF pg_catalog.jsonb_typeof(entry.value) <> 'object'
+      OR (entry.value - ARRAY['correct', 'incorrect', 'partial']::pg_catalog.text[]) <> '{}'::pg_catalog.jsonb
+    THEN
+      RAISE EXCEPTION 'Marking for % is invalid', entry.key;
+    END IF;
+    IF entry.value ? 'correct' THEN
+      IF pg_catalog.jsonb_typeof(entry.value -> 'correct') <> 'number' THEN
+        RAISE EXCEPTION 'Marks for a correct % answer must be greater than 0 and at most 100, with at most two decimal places', entry.key;
+      END IF;
+      amount := (entry.value ->> 'correct')::pg_catalog.numeric;
+      IF amount <= 0 OR amount > 100 OR pg_catalog.round(amount, 2) <> amount THEN
+        RAISE EXCEPTION 'Marks for a correct % answer must be greater than 0 and at most 100, with at most two decimal places', entry.key;
+      END IF;
+    END IF;
+    IF entry.value ? 'incorrect' THEN
+      IF pg_catalog.jsonb_typeof(entry.value -> 'incorrect') <> 'number' THEN
+        RAISE EXCEPTION 'Marks for a wrong % answer must be between -100 and 0, with at most two decimal places', entry.key;
+      END IF;
+      amount := (entry.value ->> 'incorrect')::pg_catalog.numeric;
+      IF amount < -100 OR amount > 0 OR pg_catalog.round(amount, 2) <> amount THEN
+        RAISE EXCEPTION 'Marks for a wrong % answer must be between -100 and 0, with at most two decimal places', entry.key;
+      END IF;
+    END IF;
+    IF entry.value ? 'partial' THEN
+      IF entry.key <> 'MULTIPLE_CORRECT' THEN
+        RAISE EXCEPTION 'Partial marks can only be set for multiple-correct questions';
+      END IF;
+      IF pg_catalog.jsonb_typeof(entry.value -> 'partial') <> 'boolean' THEN
+        RAISE EXCEPTION 'Partial marks must be true or false';
+      END IF;
+    END IF;
+  END LOOP;
+  RETURN marking;
+END;
+$function$;
+
+-- Marks for one question type: its marking entry, else the exam-wide marks.
+-- NAT questions use the NUMERICAL entry.
+CREATE OR REPLACE FUNCTION public.resolve_question_marking(paper pg_catalog.jsonb, question_type pg_catalog.text)
+RETURNS pg_catalog.jsonb
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+SET search_path = ''
+AS $function$
+  SELECT pg_catalog.jsonb_build_object(
+    'correct', COALESCE(
+      (paper -> 'marking' -> key.type_key ->> 'correct')::pg_catalog.numeric,
+      (paper ->> 'marksCorrect')::pg_catalog.numeric,
+      4
+    ),
+    'incorrect', COALESCE(
+      (paper -> 'marking' -> key.type_key ->> 'incorrect')::pg_catalog.numeric,
+      (paper ->> 'marksIncorrect')::pg_catalog.numeric,
+      -1
+    ),
+    'partial', COALESCE((paper -> 'marking' -> key.type_key ->> 'partial')::pg_catalog.bool, true)
+  )
+  FROM (
+    SELECT CASE
+      WHEN pg_catalog.upper(COALESCE(question_type, 'MCQ')) IN ('NAT', 'NUMERICAL') THEN 'NUMERICAL'
+      ELSE pg_catalog.upper(COALESCE(question_type, 'MCQ'))
+    END AS type_key
+  ) AS key
+$function$;
+
+-- Structure of one exam-paper question: type, options, answer (when present
+-- or required) and details. NULL when valid, otherwise the reason.
+CREATE OR REPLACE FUNCTION public.paper_question_error(question pg_catalog.jsonb, require_answer pg_catalog.bool)
+RETURNS pg_catalog.text
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path = ''
+AS $function$
+DECLARE
+  qid pg_catalog.text := pg_catalog.btrim(COALESCE(question ->> 'id', ''));
+  qtype pg_catalog.text := pg_catalog.upper(COALESCE(question ->> 'type', 'MCQ'));
+  label pg_catalog.text;
+  options pg_catalog.jsonb := question -> 'options';
+  answer pg_catalog.text := pg_catalog.btrim(COALESCE(question ->> 'correctAnswer', question ->> 'correct_answer', ''));
+  check_answer pg_catalog.bool := require_answer OR question ? 'correctAnswer' OR question ? 'correct_answer';
+  seen pg_catalog.text[] := ARRAY[]::pg_catalog.text[];
+  option_text pg_catalog.text;
+  option_image pg_catalog.text;
+  option_key pg_catalog.text;
+  option_index pg_catalog.int4 := 0;
+  details_error pg_catalog.text;
+BEGIN
+  IF NOT public.question_type_is_supported(qtype) THEN
+    RETURN pg_catalog.format('question "%s" has unsupported type "%s"', qid, qtype);
+  END IF;
+  label := CASE qtype
+    WHEN 'INTEGER' THEN 'Integer'
+    WHEN 'NUMERICAL' THEN 'Numerical'
+    WHEN 'NAT' THEN 'Numerical'
+    ELSE qtype
+  END;
+
+  IF public.question_type_is_option_based(qtype) THEN
+    IF options IS NULL OR pg_catalog.jsonb_typeof(options) <> 'array' OR pg_catalog.jsonb_array_length(options) <> 4 THEN
+      RETURN pg_catalog.format('%s question "%s" must have exactly 4 options', label, qid);
+    END IF;
+    FOR option_text IN SELECT pg_catalog.jsonb_array_elements_text(options) LOOP
+      option_text := pg_catalog.btrim(COALESCE(option_text, ''));
+      option_image := '';
+      IF pg_catalog.jsonb_typeof(question -> 'optionImageUrls') = 'array' THEN
+        option_image := pg_catalog.btrim(COALESCE(question -> 'optionImageUrls' ->> option_index, ''));
+      ELSIF pg_catalog.jsonb_typeof(question -> 'option_image_urls') = 'array' THEN
+        option_image := pg_catalog.btrim(COALESCE(question -> 'option_image_urls' ->> option_index, ''));
+      END IF;
+      IF pg_catalog.lower(option_image) = 'null' THEN
+        option_image := '';
+      END IF;
+      IF option_text = '' AND option_image = '' THEN
+        RETURN pg_catalog.format('%s question "%s" option %s is missing both text and image', label, qid, option_index + 1);
+      END IF;
+      option_key := CASE
+        WHEN option_text <> '' AND option_image <> '' THEN 'mixed:' || pg_catalog.lower(option_text) || '|img:' || option_image
+        WHEN option_image <> '' THEN 'img:' || option_image
+        ELSE 'text:' || pg_catalog.lower(option_text)
+      END;
+      IF option_key = ANY(seen) THEN
+        RETURN pg_catalog.format('%s question "%s" contains duplicate options (option %s)', label, qid, option_index + 1);
+      END IF;
+      seen := pg_catalog.array_append(seen, option_key);
+      option_index := option_index + 1;
+    END LOOP;
+
+    IF check_answer THEN
+      IF qtype <> 'MULTIPLE_CORRECT' AND pg_catalog.upper(answer) IN ('A', 'B', 'C', 'D') THEN
+        answer := (pg_catalog.ascii(pg_catalog.upper(answer)) - 65)::pg_catalog.text;
+      END IF;
+      IF NOT public.is_valid_correct_answer(qtype, answer) THEN
+        RETURN pg_catalog.format(
+          '%s question "%s" has invalid correct answer "%s" %s',
+          label, qid, answer,
+          CASE WHEN qtype = 'MULTIPLE_CORRECT'
+            THEN '(must list option numbers 0-3 in increasing order, e.g. "0,2")'
+            ELSE '(must be 0, 1, 2, or 3)'
+          END
+        );
+      END IF;
+    END IF;
+  ELSE
+    IF pg_catalog.jsonb_typeof(options) = 'array' AND pg_catalog.jsonb_array_length(options) > 0 THEN
+      RETURN pg_catalog.format('%s question "%s" must not have multiple-choice options', label, qid);
+    END IF;
+    IF check_answer AND NOT public.is_valid_correct_answer(qtype, answer) THEN
+      RETURN pg_catalog.format(
+        '%s question "%s" has invalid %s answer "%s"',
+        label, qid, CASE WHEN qtype = 'INTEGER' THEN 'non-integer' ELSE 'non-numeric' END, answer
+      );
+    END IF;
+  END IF;
+
+  details_error := public.question_details_error(qtype, question -> 'details');
+  IF details_error IS NOT NULL THEN
+    RETURN pg_catalog.format('question "%s": %s', qid, details_error);
+  END IF;
+  RETURN NULL;
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION public.normalize_exam_marking(pg_catalog.jsonb) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.resolve_question_marking(pg_catalog.jsonb, pg_catalog.text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.paper_question_error(pg_catalog.jsonb, pg_catalog.bool) FROM PUBLIC, anon, authenticated;
+
+-- Full paper validation (with answers). Same checks as before; the
+-- per-question structure now lives in paper_question_error.
+CREATE OR REPLACE FUNCTION public.validate_full_exam_paper_internal(p_title pg_catalog.text, p_questions_data pg_catalog.jsonb)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+DECLARE
+  v_duration integer;
+  v_marks_correct numeric;
+  v_marks_incorrect numeric;
+  v_subjects_array jsonb;
+  v_questions_obj jsonb;
+  v_sub_text text;
+  v_seen_subjects text[] := ARRAY[]::text[];
+  v_seen_qids text[] := ARRAY[]::text[];
+  v_total_questions integer := 0;
+  v_q jsonb;
+  v_qid text;
+  v_qtext text;
+  v_error text;
+BEGIN
+  IF p_title IS NULL OR length(btrim(p_title)) NOT BETWEEN 1 AND 200 THEN
+    RAISE EXCEPTION 'Exam validation failed: title must be between 1 and 200 characters';
+  END IF;
+  IF p_questions_data IS NULL OR jsonb_typeof(p_questions_data) <> 'object' THEN
+    RAISE EXCEPTION 'Exam validation failed: questions_data must be a valid JSON object';
+  END IF;
+
+  IF (p_questions_data->>'duration') IS NULL OR (p_questions_data->>'duration') !~ '^[0-9]+$' THEN
+    RAISE EXCEPTION 'Exam validation failed: duration must be an integer';
+  END IF;
+  v_duration := (p_questions_data->>'duration')::integer;
+  IF v_duration NOT BETWEEN 1 AND 600 THEN
+    RAISE EXCEPTION 'Exam validation failed: duration must be between 1 and 600 minutes';
+  END IF;
+
+  IF (p_questions_data->>'marksCorrect') IS NULL OR (p_questions_data->>'marksCorrect') !~ '^[+]?[0-9]+([.][0-9]+)?$' THEN
+    RAISE EXCEPTION 'Exam validation failed: marksCorrect must be a positive number';
+  END IF;
+  v_marks_correct := (p_questions_data->>'marksCorrect')::numeric;
+  IF v_marks_correct NOT BETWEEN 0 AND 100 THEN
+    RAISE EXCEPTION 'Exam validation failed: marksCorrect must be between 0 and 100';
+  END IF;
+  IF (p_questions_data->>'marksIncorrect') IS NULL OR (p_questions_data->>'marksIncorrect') !~ '^-?[0-9]+([.][0-9]+)?$' THEN
+    RAISE EXCEPTION 'Exam validation failed: marksIncorrect must be a number';
+  END IF;
+  v_marks_incorrect := (p_questions_data->>'marksIncorrect')::numeric;
+  IF v_marks_incorrect NOT BETWEEN -100 AND 0 THEN
+    RAISE EXCEPTION 'Exam validation failed: marksIncorrect must be between -100 and 0';
+  END IF;
+  PERFORM public.normalize_exam_marking(p_questions_data->'marking');
+
+  v_subjects_array := p_questions_data->'subjects';
+  IF v_subjects_array IS NULL OR jsonb_typeof(v_subjects_array) <> 'array' OR jsonb_array_length(v_subjects_array) = 0 THEN
+    RAISE EXCEPTION 'Exam validation failed: subjects must be a non-empty array';
+  END IF;
+  FOR v_sub_text IN SELECT jsonb_array_elements_text(v_subjects_array) LOOP
+    IF v_sub_text IS NULL OR length(btrim(v_sub_text)) = 0 THEN
+      RAISE EXCEPTION 'Exam validation failed: subject names cannot be empty';
+    END IF;
+    IF lower(btrim(v_sub_text)) = ANY(v_seen_subjects) THEN
+      RAISE EXCEPTION 'Exam validation failed: duplicate subject name "%"', v_sub_text;
+    END IF;
+    v_seen_subjects := array_append(v_seen_subjects, lower(btrim(v_sub_text)));
+  END LOOP;
+
+  v_questions_obj := p_questions_data->'questions';
+  IF v_questions_obj IS NULL OR jsonb_typeof(v_questions_obj) <> 'object' THEN
+    RAISE EXCEPTION 'Exam validation failed: questions must be an object mapping subjects to question lists';
+  END IF;
+  FOR v_sub_text IN SELECT jsonb_array_elements_text(v_subjects_array) LOOP
+    IF NOT (v_questions_obj ? v_sub_text) THEN
+      RAISE EXCEPTION 'Exam validation failed: declared subject "%" is missing from questions object', v_sub_text;
+    END IF;
+    IF jsonb_typeof(v_questions_obj->v_sub_text) <> 'array' THEN
+      RAISE EXCEPTION 'Exam validation failed: questions for subject "%" must be a JSON array', v_sub_text;
+    END IF;
+  END LOOP;
+  FOR v_sub_text IN SELECT jsonb_object_keys(v_questions_obj) LOOP
+    IF NOT (lower(btrim(v_sub_text)) = ANY(v_seen_subjects)) THEN
+      RAISE EXCEPTION 'Exam validation failed: questions contains undeclared subject "%"', v_sub_text;
+    END IF;
+  END LOOP;
+
+  FOR v_sub_text IN SELECT jsonb_array_elements_text(v_subjects_array) LOOP
+    FOR v_q IN SELECT jsonb_array_elements(v_questions_obj->v_sub_text) LOOP
+      v_total_questions := v_total_questions + 1;
+      IF jsonb_typeof(v_q) <> 'object' THEN
+        RAISE EXCEPTION 'Exam validation failed: question item in subject "%" must be an object', v_sub_text;
+      END IF;
+
+      v_qid := btrim(COALESCE(v_q->>'id', ''));
+      IF length(v_qid) NOT BETWEEN 1 AND 120 THEN
+        RAISE EXCEPTION 'Exam validation failed: question in subject "%" is missing a valid id (must be 1-120 chars)', v_sub_text;
+      END IF;
+      IF v_qid = ANY(v_seen_qids) THEN
+        RAISE EXCEPTION 'Exam validation failed: duplicate question id "%" detected', v_qid;
+      END IF;
+      v_seen_qids := array_append(v_seen_qids, v_qid);
+
+      v_qtext := btrim(COALESCE(v_q->>'text', v_q->>'question_text', ''));
+      IF length(v_qtext) = 0
+         AND length(btrim(COALESCE(v_q->>'questionImageUrl', v_q->>'imageUrl', ''))) = 0 THEN
+        RAISE EXCEPTION 'Exam validation failed: question "%" must have question text or a question image', v_qid;
+      END IF;
+
+      v_error := public.paper_question_error(v_q, true);
+      IF v_error IS NOT NULL THEN
+        RAISE EXCEPTION 'Exam validation failed: %', v_error;
+      END IF;
+    END LOOP;
+  END LOOP;
+
+  IF v_total_questions = 0 THEN
+    RAISE EXCEPTION 'Exam validation failed: exam must contain at least one question';
+  END IF;
+END;
+$function$;
+
+REVOKE EXECUTE ON FUNCTION public.validate_full_exam_paper_internal(pg_catalog.text, pg_catalog.jsonb)
+  FROM PUBLIC, anon, authenticated;
+
+-- Stripped-paper validation on cbt_exams_raw (no answers present).
+CREATE OR REPLACE FUNCTION public.validate_cbt_exams_raw_record()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+DECLARE
+  v_duration integer;
+  v_marks_correct numeric;
+  v_marks_incorrect numeric;
+  v_subjects_array jsonb;
+  v_questions_obj jsonb;
+  v_sub_text text;
+  v_seen_subjects text[] := ARRAY[]::text[];
+  v_seen_qids text[] := ARRAY[]::text[];
+  v_total_questions integer := 0;
+  v_q jsonb;
+  v_qid text;
+  v_error text;
+BEGIN
+  IF NEW.title IS NULL OR length(btrim(NEW.title)) NOT BETWEEN 1 AND 200 THEN
+    RAISE EXCEPTION 'Exam validation failed: title must be between 1 and 200 characters';
+  END IF;
+  IF NEW.questions_data IS NULL OR jsonb_typeof(NEW.questions_data) <> 'object' THEN
+    RAISE EXCEPTION 'Exam validation failed: questions_data must be a valid JSON object';
+  END IF;
+
+  IF (NEW.questions_data->>'duration') IS NULL OR (NEW.questions_data->>'duration') !~ '^[0-9]+$' THEN
+    RAISE EXCEPTION 'Exam validation failed: duration must be an integer';
+  END IF;
+  v_duration := (NEW.questions_data->>'duration')::integer;
+  IF v_duration NOT BETWEEN 1 AND 600 THEN
+    RAISE EXCEPTION 'Exam validation failed: duration must be between 1 and 600 minutes';
+  END IF;
+
+  v_marks_correct := (NEW.questions_data->>'marksCorrect')::numeric;
+  IF v_marks_correct IS NULL OR v_marks_correct NOT BETWEEN 0 AND 100 THEN
+    RAISE EXCEPTION 'Exam validation failed: marksCorrect must be between 0 and 100';
+  END IF;
+  v_marks_incorrect := (NEW.questions_data->>'marksIncorrect')::numeric;
+  IF v_marks_incorrect IS NULL OR v_marks_incorrect NOT BETWEEN -100 AND 0 THEN
+    RAISE EXCEPTION 'Exam validation failed: marksIncorrect must be between -100 and 0';
+  END IF;
+  PERFORM public.normalize_exam_marking(NEW.questions_data->'marking');
+
+  v_subjects_array := NEW.questions_data->'subjects';
+  IF v_subjects_array IS NULL OR jsonb_typeof(v_subjects_array) <> 'array' OR jsonb_array_length(v_subjects_array) = 0 THEN
+    RAISE EXCEPTION 'Exam validation failed: subjects must be a non-empty array';
+  END IF;
+  FOR v_sub_text IN SELECT jsonb_array_elements_text(v_subjects_array) LOOP
+    IF v_sub_text IS NULL OR length(btrim(v_sub_text)) = 0 THEN
+      RAISE EXCEPTION 'Exam validation failed: subject names cannot be empty';
+    END IF;
+    IF lower(btrim(v_sub_text)) = ANY(v_seen_subjects) THEN
+      RAISE EXCEPTION 'Exam validation failed: duplicate subject "%"', v_sub_text;
+    END IF;
+    v_seen_subjects := array_append(v_seen_subjects, lower(btrim(v_sub_text)));
+  END LOOP;
+
+  v_questions_obj := NEW.questions_data->'questions';
+  IF v_questions_obj IS NULL OR jsonb_typeof(v_questions_obj) <> 'object' THEN
+    RAISE EXCEPTION 'Exam validation failed: questions must be an object';
+  END IF;
+  FOR v_sub_text IN SELECT jsonb_array_elements_text(v_subjects_array) LOOP
+    IF NOT (v_questions_obj ? v_sub_text) OR jsonb_typeof(v_questions_obj->v_sub_text) <> 'array' THEN
+      RAISE EXCEPTION 'Exam validation failed: missing questions array for subject "%"', v_sub_text;
+    END IF;
+  END LOOP;
+  FOR v_sub_text IN SELECT jsonb_object_keys(v_questions_obj) LOOP
+    IF NOT (lower(btrim(v_sub_text)) = ANY(v_seen_subjects)) THEN
+      RAISE EXCEPTION 'Exam validation failed: undeclared subject "%" in questions', v_sub_text;
+    END IF;
+  END LOOP;
+
+  FOR v_sub_text IN SELECT jsonb_array_elements_text(v_subjects_array) LOOP
+    FOR v_q IN SELECT jsonb_array_elements(v_questions_obj->v_sub_text) LOOP
+      v_total_questions := v_total_questions + 1;
+      v_qid := btrim(COALESCE(v_q->>'id', ''));
+      IF length(v_qid) = 0 THEN
+        RAISE EXCEPTION 'Exam validation failed: missing question id';
+      END IF;
+      IF v_qid = ANY(v_seen_qids) THEN
+        RAISE EXCEPTION 'Exam validation failed: duplicate question id "%"', v_qid;
+      END IF;
+      v_seen_qids := array_append(v_seen_qids, v_qid);
+
+      v_error := public.paper_question_error(v_q, false);
+      IF v_error IS NOT NULL THEN
+        RAISE EXCEPTION 'Exam validation failed: %', v_error;
+      END IF;
+    END LOOP;
+  END LOOP;
+
+  IF v_total_questions = 0 THEN
+    RAISE EXCEPTION 'Exam validation failed: exam must contain at least one question';
+  END IF;
+
+  RETURN NEW;
+END;
+$function$;
+
+-- ---------------------------------------------------------------------------
+-- Exam patterns carry the same optional per-type marking
+-- ---------------------------------------------------------------------------
+
+ALTER TABLE public.exam_templates ADD COLUMN IF NOT EXISTS marking pg_catalog.jsonb;
+
+DROP FUNCTION public.admin_save_exam_template(uuid, text, text, integer, numeric, numeric, jsonb, boolean);
+
+CREATE FUNCTION public.admin_save_exam_template(
+  template_id_param uuid,
+  name_param text,
+  description_param text,
+  duration_minutes_param integer,
+  marks_correct_param numeric,
+  marks_incorrect_param numeric,
+  sections_param jsonb,
+  is_active_param boolean DEFAULT true,
+  marking_param jsonb DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+DECLARE
+  cleaned_name text := regexp_replace(btrim(COALESCE(name_param, '')), '\s+', ' ', 'g');
+  cleaned_description text := btrim(COALESCE(description_param, ''));
+  normalized_sections jsonb;
+  normalized_marking jsonb;
+  saved public.exam_templates%ROWTYPE;
+BEGIN
+  IF NOT public.is_admin_aal2() THEN RAISE EXCEPTION 'Administrator access is required'; END IF;
+  IF length(cleaned_name) NOT BETWEEN 1 AND 80 THEN RAISE EXCEPTION 'Pattern name must be between 1 and 80 characters'; END IF;
+  IF length(cleaned_description) > 500 THEN RAISE EXCEPTION 'Description can be at most 500 characters'; END IF;
+  IF duration_minutes_param IS NULL OR duration_minutes_param NOT BETWEEN 1 AND 600 THEN
+    RAISE EXCEPTION 'Duration must be between 1 and 600 minutes';
+  END IF;
+  IF marks_correct_param IS NULL OR marks_correct_param <= 0 OR marks_correct_param > 100 THEN
+    RAISE EXCEPTION 'Marks for a correct answer must be greater than 0 and at most 100';
+  END IF;
+  IF marks_incorrect_param IS NULL OR marks_incorrect_param NOT BETWEEN -100 AND 0 THEN
+    RAISE EXCEPTION 'Marks for a wrong answer must be between -100 and 0';
+  END IF;
+  IF round(marks_correct_param, 2) <> marks_correct_param OR round(marks_incorrect_param, 2) <> marks_incorrect_param THEN
+    RAISE EXCEPTION 'Marks can have at most two decimal places';
+  END IF;
+
+  PERFORM pg_advisory_xact_lock(hashtextextended('examforge:subjects', 0));
+  normalized_sections := public.normalize_exam_template_sections(sections_param);
+  normalized_marking := public.normalize_exam_marking(marking_param);
+
+  IF EXISTS (SELECT 1 FROM public.exam_templates AS t
+             WHERE lower(t.name) = lower(cleaned_name) AND t.id IS DISTINCT FROM template_id_param) THEN
+    RAISE EXCEPTION 'A pattern named "%" already exists', cleaned_name;
+  END IF;
+
+  IF template_id_param IS NULL THEN
+    INSERT INTO public.exam_templates (name, description, duration_minutes, marks_correct, marks_incorrect, sections, is_active, marking)
+    VALUES (cleaned_name, cleaned_description, duration_minutes_param, marks_correct_param, marks_incorrect_param,
+            normalized_sections, COALESCE(is_active_param, true), normalized_marking)
+    RETURNING * INTO saved;
+  ELSE
+    UPDATE public.exam_templates AS t
+    SET name = cleaned_name, description = cleaned_description, duration_minutes = duration_minutes_param,
+        marks_correct = marks_correct_param, marks_incorrect = marks_incorrect_param,
+        sections = normalized_sections, is_active = COALESCE(is_active_param, true), marking = normalized_marking,
+        updated_at = now()
+    WHERE t.id = template_id_param
+    RETURNING * INTO saved;
+    IF NOT FOUND THEN RAISE EXCEPTION 'Pattern not found'; END IF;
+  END IF;
+
+  INSERT INTO public.admin_audit_events (actor_user_id, action, target_type, target_id, metadata)
+  VALUES (auth.uid(), CASE WHEN template_id_param IS NULL THEN 'CREATE_EXAM_TEMPLATE' ELSE 'UPDATE_EXAM_TEMPLATE' END,
+          'exam_template', saved.id::text,
+          jsonb_build_object('name', saved.name, 'sections', jsonb_array_length(saved.sections), 'is_active', saved.is_active));
+  RETURN jsonb_build_object('id', saved.id, 'name', saved.name);
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION public.admin_save_exam_template(uuid, text, text, integer, numeric, numeric, jsonb, boolean, jsonb) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.admin_save_exam_template(uuid, text, text, integer, numeric, numeric, jsonb, boolean, jsonb) TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.admin_list_exam_templates()
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+BEGIN
+  IF NOT public.is_admin_aal2() THEN RAISE EXCEPTION 'Administrator access is required'; END IF;
+  RETURN COALESCE((
+    SELECT jsonb_agg(jsonb_build_object(
+      'id', t.id, 'name', t.name, 'description', t.description,
+      'durationMinutes', t.duration_minutes,
+      'marksCorrect', t.marks_correct, 'marksIncorrect', t.marks_incorrect,
+      'sections', t.sections, 'isActive', t.is_active, 'marking', t.marking,
+      'totalQuestions', (SELECT COALESCE(sum((s->>'questionCount')::integer), 0) FROM jsonb_array_elements(t.sections) AS s),
+      'inactiveSubjects', (
+        SELECT COALESCE(jsonb_agg(s->>'subject'), '[]'::jsonb)
+        FROM jsonb_array_elements(t.sections) AS s
+        WHERE NOT EXISTS (SELECT 1 FROM public.subjects AS sub
+                          WHERE lower(sub.name) = lower(s->>'subject') AND sub.is_active)
+      ),
+      'updatedAt', t.updated_at
+    ) ORDER BY lower(t.name))
+    FROM public.exam_templates AS t
+  ), '[]'::jsonb);
+END;
+$function$;
+
+-- ---------------------------------------------------------------------------
+-- Passage-safe shuffle at exam start
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.start_exam_session_internal(exam_id_param uuid, exam_data_param jsonb, responses_param jsonb)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO ''
+AS $function$
+DECLARE
+  student_row public.students%ROWTYPE;
+  exam_row public.cbt_exams_raw%ROWTYPE;
+  session_row public.active_sessions%ROWTYPE;
+  duration_seconds pg_catalog.int4;
+  remaining_seconds pg_catalog.int4;
+  session_id pg_catalog.text;
+  subject_name pg_catalog.text;
+  shuffled_questions pg_catalog.jsonb := '{}'::pg_catalog.jsonb;
+  shuffled_subject pg_catalog.jsonb;
+  server_exam_data pg_catalog.jsonb;
+  initial_responses pg_catalog.jsonb;
+  start_time pg_catalog.timestamptz;
+  final_result pg_catalog.jsonb;
+BEGIN
+  -- These legacy parameters remain for PostgREST compatibility. The server-owned paper and initial response state intentionally replace their values.
+  PERFORM exam_data_param, responses_param;
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'Authentication is required' USING ERRCODE = 'EX004';
+  END IF;
+
+  SELECT s.*
+  INTO student_row
+  FROM public.students AS s
+  WHERE s.id OPERATOR(pg_catalog.=) auth.uid()
+    AND s.archived_at IS NULL;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Active student profile not found' USING ERRCODE = 'EX002';
+  END IF;
+
+  PERFORM pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(
+      student_row.student_id OPERATOR(pg_catalog.||) ':' OPERATOR(pg_catalog.||) exam_id_param::pg_catalog.text,
+      0
+    )
+  );
+
+  SELECT e.*
+  INTO exam_row
+  FROM public.cbt_exams_raw AS e
+  WHERE e.id OPERATOR(pg_catalog.=) exam_id_param;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'This exam is not available' USING ERRCODE = 'EX007';
+  END IF;
+
+  IF NOT (
+    exam_row.class IS NULL
+    OR exam_row.class OPERATOR(pg_catalog.=) 'All'
+    OR exam_row.class OPERATOR(pg_catalog.=) student_row.class
+  ) OR NOT (
+    exam_row.section IS NULL
+    OR exam_row.section OPERATOR(pg_catalog.=) 'All'
+    OR exam_row.section OPERATOR(pg_catalog.=) student_row.section
+  ) THEN
+    RAISE EXCEPTION 'This exam is not assigned to you' USING ERRCODE = 'EX006';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.student_results AS r
+    WHERE r.student_id OPERATOR(pg_catalog.=) student_row.student_id
+      AND r.exam_id OPERATOR(pg_catalog.=) exam_id_param::pg_catalog.text
+  ) THEN
+    RAISE EXCEPTION 'This exam has already been submitted' USING ERRCODE = 'EX005';
+  END IF;
+
+  session_id := student_row.id::pg_catalog.text
+    OPERATOR(pg_catalog.||) '_'
+    OPERATOR(pg_catalog.||) exam_id_param::pg_catalog.text;
+
+  SELECT s.*
+  INTO session_row
+  FROM public.active_sessions AS s
+  WHERE s.id OPERATOR(pg_catalog.=) session_id;
+
+  IF FOUND THEN
+    IF exam_row.status NOT IN ('ACTIVE', 'ENDED') OR session_row.started_at IS NULL THEN
+      RAISE EXCEPTION 'This exam session is not available' USING ERRCODE = 'EX007';
+    END IF;
+
+    IF session_row.deadline_at IS NULL THEN
+      duration_seconds := GREATEST(
+        COALESCE(((session_row.jumbled_exam_data ->> 'duration')::pg_catalog.int4), 180),
+        1
+      ) OPERATOR(pg_catalog.*) 60;
+      UPDATE public.active_sessions AS s
+      SET deadline_at = session_row.started_at + pg_catalog.make_interval(secs => duration_seconds)
+      WHERE s.id OPERATOR(pg_catalog.=) session_id
+      RETURNING s.* INTO session_row;
+    END IF;
+
+    IF pg_catalog.clock_timestamp() OPERATOR(pg_catalog.>=) session_row.deadline_at THEN
+      final_result := public.submit_exam(exam_id_param, '[]'::pg_catalog.jsonb);
+      RETURN pg_catalog.jsonb_build_object(
+        'expired', true,
+        'time_left', 0,
+        'result', final_result
+      );
+    END IF;
+
+    remaining_seconds := GREATEST(
+      pg_catalog.ceil(
+        EXTRACT(EPOCH FROM (session_row.deadline_at - pg_catalog.clock_timestamp()))
+      )::pg_catalog.int4,
+      0
+    );
+    RETURN pg_catalog.jsonb_build_object(
+      'time_left', remaining_seconds,
+      'started_at', session_row.started_at,
+      'deadline_at', session_row.deadline_at,
+      'jumbled_exam_data', session_row.jumbled_exam_data,
+      'user_responses', session_row.user_responses,
+      'version', session_row.version
+    );
+  END IF;
+
+  IF exam_row.status OPERATOR(pg_catalog.<>) 'ACTIVE' THEN
+    RAISE EXCEPTION 'This exam is not available' USING ERRCODE = 'EX007';
+  END IF;
+  IF pg_catalog.jsonb_typeof(exam_row.questions_data -> 'questions') OPERATOR(pg_catalog.<>) 'object' THEN
+    RAISE EXCEPTION 'Exam question data is invalid' USING ERRCODE = 'EX012';
+  END IF;
+
+  FOR subject_name IN
+    SELECT pg_catalog.jsonb_object_keys(exam_row.questions_data -> 'questions')
+  LOOP
+    -- Shuffle blocks, not questions: a paragraph set (same details.passage.key)
+    -- is one block and keeps its paper order; every other question is its own
+    -- block.
+    WITH items AS (
+      SELECT
+        question.value AS question,
+        question.ordinality AS position,
+        COALESCE(
+          question.value -> 'details' -> 'passage' ->> 'key',
+          'q' OPERATOR(pg_catalog.||) question.ordinality::pg_catalog.text
+        ) AS block
+      FROM pg_catalog.jsonb_array_elements(
+        exam_row.questions_data -> 'questions' -> subject_name
+      ) WITH ORDINALITY AS question
+    ), blocks AS (
+      SELECT items.block, pg_catalog.random() AS draw
+      FROM items
+      GROUP BY items.block
+    )
+    SELECT COALESCE(
+      pg_catalog.jsonb_agg(items.question ORDER BY blocks.draw, items.position),
+      '[]'::pg_catalog.jsonb
+    )
+    INTO shuffled_subject
+    FROM items
+    JOIN blocks ON blocks.block OPERATOR(pg_catalog.=) items.block;
+    shuffled_questions := pg_catalog.jsonb_set(
+      shuffled_questions,
+      ARRAY[subject_name],
+      shuffled_subject,
+      true
+    );
+  END LOOP;
+
+  server_exam_data := pg_catalog.jsonb_set(
+    exam_row.questions_data,
+    '{questions}',
+    shuffled_questions,
+    true
+  );
+  initial_responses := public.sanitize_exam_responses(
+    '{}'::pg_catalog.jsonb,
+    server_exam_data -> 'questions'
+  );
+  duration_seconds := GREATEST(
+    COALESCE(((server_exam_data ->> 'duration')::pg_catalog.int4), 180),
+    1
+  ) OPERATOR(pg_catalog.*) 60;
+  start_time := pg_catalog.clock_timestamp();
+
+  INSERT INTO public.active_sessions (
+    id,
+    student_id,
+    exam_id,
+    user_responses,
+    jumbled_exam_data,
+    time_left,
+    started_at,
+    deadline_at,
+    updated_at,
+    version
+  ) VALUES (
+    session_id,
+    student_row.student_id,
+    exam_id_param::pg_catalog.text,
+    initial_responses,
+    server_exam_data,
+    duration_seconds,
+    start_time,
+    start_time + pg_catalog.make_interval(secs => duration_seconds),
+    start_time,
+    1
+  )
+  RETURNING * INTO session_row;
+
+  RETURN pg_catalog.jsonb_build_object(
+    'time_left', duration_seconds,
+    'started_at', session_row.started_at,
+    'deadline_at', session_row.deadline_at,
+    'jumbled_exam_data', session_row.jumbled_exam_data,
+    'user_responses', session_row.user_responses,
+    'version', session_row.version
+  );
+END;
+$function$;
+
+
 COMMIT;

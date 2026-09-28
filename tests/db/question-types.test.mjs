@@ -147,3 +147,158 @@ test('admin_import_questions accepts the new types and details', async () => {
   const duplicate = [{ ...rows[2], correct_answer: '1' }];
   await assert.rejects(admin.value('SELECT public.admin_import_questions($1, $2, $3::jsonb)', [testUuid('b'), 'dup.json', JSON.stringify(duplicate)]), /A matching question already exists/);
 });
+
+// ---------------------------------------------------------------------------
+// Exam papers, marking, patterns and the passage-safe shuffle
+// ---------------------------------------------------------------------------
+
+const AR_OPTIONS = [
+  'Both (A) and (R) are true and (R) is the correct explanation of (A).',
+  'Both (A) and (R) are true but (R) is not the correct explanation of (A).',
+  '(A) is true but (R) is false.',
+  '(A) is false but (R) is true.'
+];
+const PAPER_PASSAGE = { key: '00000000-0000-4000-8000-00000000cafe', text: 'A ball is thrown vertically upwards.' };
+
+/** One question of every type plus a two-question paragraph set. */
+function typesPaper() {
+  return {
+    Physics: [
+      { id: 'mcq-1', type: 'MCQ', text: 'Single correct', options: OPTIONS, correctAnswer: '1' },
+      { id: 'multi-1', type: 'MULTIPLE_CORRECT', text: 'Multiple correct', options: OPTIONS, correctAnswer: '0,1,2' },
+      { id: 'int-1', type: 'INTEGER', text: 'Integer type', options: [], correctAnswer: '-12' },
+      { id: 'mat-1', type: 'MATRIX_MATCH', text: 'Match the lists', options: OPTIONS, correctAnswer: '2', details: { matchLists: LISTS } },
+      { id: 'ar-1', type: 'ASSERTION_REASON', text: 'Assertion (A): x\n\nReason (R): y', options: AR_OPTIONS, correctAnswer: '0' },
+      { id: 'para-1', type: 'MCQ', text: 'Paragraph first', options: OPTIONS, correctAnswer: '3', details: { passage: PAPER_PASSAGE } },
+      { id: 'para-2', type: 'NUMERICAL', text: 'Paragraph second', options: [], correctAnswer: '2.5', details: { passage: PAPER_PASSAGE } }
+    ]
+  };
+}
+
+const JEE_ADVANCED_MARKING = {
+  MCQ: { correct: 3, incorrect: -1 },
+  MULTIPLE_CORRECT: { correct: 4, incorrect: -2, partial: true },
+  INTEGER: { correct: 4, incorrect: 0 },
+  MATRIX_MATCH: { correct: 3, incorrect: -1 }
+};
+
+async function createPaperExam({ paper = typesPaper(), marking, status = 'ACTIVE', marksCorrect = 4, marksIncorrect = -1 } = {}) {
+  const admin = await h.asAdmin();
+  const questionsData = { duration: 60, marksCorrect, marksIncorrect, subjects: Object.keys(paper), questions: paper };
+  if (marking !== undefined) questionsData.marking = marking;
+  return admin.value(
+    `INSERT INTO public.cbt_exams (title, status, class, section, questions_data)
+     VALUES ($1, $2, '12', 'A', $3::jsonb) RETURNING id`,
+    [`Types exam ${++textCounter}`, status, JSON.stringify(questionsData)]
+  );
+}
+
+test('exam papers accept every new type and a paragraph set, and activate', async () => {
+  const examId = await createPaperExam({ marking: JEE_ADVANCED_MARKING });
+  const su = await h.asSuperuser();
+  const answers = await su.value('SELECT answers FROM public.cbt_exam_answers WHERE exam_id = $1', [examId]);
+  assert.equal(answers['multi-1'].correct_answer, '0,1,2');
+  assert.equal(answers['multi-1'].type, 'MULTIPLE_CORRECT');
+  const stored = await su.value('SELECT questions_data FROM public.cbt_exams_raw WHERE id = $1', [examId]);
+  assert.deepEqual(stored.marking, JEE_ADVANCED_MARKING);
+  assert.deepEqual(stored.questions.Physics[3].details, { matchLists: LISTS });
+  assert.doesNotMatch(JSON.stringify(stored), /correctAnswer/);
+});
+
+test('exam papers reject malformed new-type questions and marking', async () => {
+  const withQuestion = (question) => ({ Physics: [question] });
+  await assert.rejects(
+    createPaperExam({ paper: withQuestion({ id: 'm1', type: 'MATRIX_MATCH', text: 'No lists', options: OPTIONS, correctAnswer: '1' }) }),
+    /Matrix match questions require List-I and List-II/
+  );
+  await assert.rejects(
+    createPaperExam({ paper: withQuestion({ id: 'm2', type: 'MULTIPLE_CORRECT', text: 'Unsorted', options: OPTIONS, correctAnswer: '2,0' }) }),
+    /MULTIPLE_CORRECT question "m2" has invalid correct answer/
+  );
+  await assert.rejects(
+    createPaperExam({ paper: withQuestion({ id: 'm3', type: 'MULTIPLE_CORRECT', text: 'Three options', options: ['a', 'b', 'c'], correctAnswer: '0' }) }),
+    /must have exactly 4 options/
+  );
+  await assert.rejects(
+    createPaperExam({ paper: withQuestion({ id: 'm4', type: 'INTEGER', text: 'Decimal', options: [], correctAnswer: '1.5' }) }),
+    /Integer question "m4" has invalid non-integer answer/
+  );
+  await assert.rejects(
+    createPaperExam({ paper: withQuestion({ id: 'm5', type: 'ESSAY', text: 'Essay', options: [], correctAnswer: '1' }) }),
+    /unsupported type "ESSAY"/
+  );
+  for (const [marking, pattern] of [
+    [{ MULTIPLE_CORRECT: { correct: 0 } }, /Marks for a correct MULTIPLE_CORRECT answer/],
+    [{ MCQ: { correct: 3.555 } }, /Marks for a correct MCQ answer/],
+    [{ MCQ: { correct: '3' } }, /Marks for a correct MCQ answer/],
+    [{ MCQ: { incorrect: 1 } }, /Marks for a wrong MCQ answer/],
+    [{ MCQ: { partial: true } }, /Partial marks can only be set for multiple-correct questions/],
+    [{ MULTIPLE_CORRECT: { partial: 'yes' } }, /Partial marks must be true or false/],
+    [{ ESSAY: { correct: 1 } }, /Marking has an unsupported question type "ESSAY"/],
+    [{ NAT: { correct: 1 } }, /Marking has an unsupported question type "NAT"/],
+    [{ MCQ: { bonus: 1 } }, /Marking for MCQ is invalid/],
+    [[1], /Marking must be an object keyed by question type/]
+  ]) {
+    await assert.rejects(createPaperExam({ marking }), pattern, JSON.stringify(marking));
+  }
+});
+
+test('resolve_question_marking falls back to the exam-wide marks', async () => {
+  const su = await h.asSuperuser();
+  const paper = { marksCorrect: 4, marksIncorrect: -1, marking: { MULTIPLE_CORRECT: { correct: 4, incorrect: -2 }, NUMERICAL: { incorrect: 0 }, MCQ: { correct: 3 } } };
+  const resolve = async (type, data = paper) => {
+    const value = await su.value('SELECT public.resolve_question_marking($1::jsonb, $2)', [JSON.stringify(data), type]);
+    return { correct: Number(value.correct), incorrect: Number(value.incorrect), partial: value.partial };
+  };
+  assert.deepEqual(await resolve('MCQ'), { correct: 3, incorrect: -1, partial: true });
+  assert.deepEqual(await resolve('MULTIPLE_CORRECT'), { correct: 4, incorrect: -2, partial: true });
+  assert.deepEqual(await resolve('NAT'), { correct: 4, incorrect: 0, partial: true });
+  assert.deepEqual(await resolve('numerical'), { correct: 4, incorrect: 0, partial: true });
+  assert.deepEqual(await resolve('INTEGER'), { correct: 4, incorrect: -1, partial: true });
+  assert.deepEqual(await resolve('MULTIPLE_CORRECT', { marksCorrect: 2, marksIncorrect: 0, marking: { MULTIPLE_CORRECT: { partial: false } } }), { correct: 2, incorrect: 0, partial: false });
+  assert.deepEqual(await resolve('MCQ', {}), { correct: 4, incorrect: -1, partial: true });
+});
+
+test('exam patterns store and return per-type marking', async () => {
+  const admin = await h.asAdmin();
+  const sections = JSON.stringify([{ subject: 'Physics', questionCount: 5 }]);
+  const saved = await admin.value(
+    'SELECT public.admin_save_exam_template(NULL, $1, $2, $3, $4, $5, $6::jsonb, true, $7::jsonb)',
+    ['JEE Advanced Paper 1', 'Per-type marks', 180, 3, -1, sections, JSON.stringify(JEE_ADVANCED_MARKING)]
+  );
+  const listed = (await admin.value('SELECT public.admin_list_exam_templates()')).find((t) => t.id === saved.id);
+  assert.deepEqual(listed.marking, JEE_ADVANCED_MARKING);
+
+  const legacy = await admin.value(
+    'SELECT public.admin_save_exam_template(NULL, $1, $2, $3, $4, $5, $6::jsonb, true)',
+    ['Legacy eight-argument pattern', '', 60, 4, -1, sections]
+  );
+  const listedLegacy = (await admin.value('SELECT public.admin_list_exam_templates()')).find((t) => t.id === legacy.id);
+  assert.equal(listedLegacy.marking, null);
+
+  await assert.rejects(
+    admin.value(
+      'SELECT public.admin_save_exam_template(NULL, $1, $2, $3, $4, $5, $6::jsonb, true, $7::jsonb)',
+      ['Broken marking', '', 60, 4, -1, sections, JSON.stringify({ MCQ: { partial: true } })]
+    ),
+    /Partial marks can only be set for multiple-correct questions/
+  );
+});
+
+test('the start-of-exam shuffle keeps a paragraph set together and in order', async () => {
+  const examId = await createPaperExam({ marking: JEE_ADVANCED_MARKING });
+  const expectedIds = typesPaper().Physics.map((q) => q.id).sort();
+  const firstPositions = new Set();
+  for (let i = 0; i < 16; i += 1) {
+    const student = await h.createStudent({ studentId: `QT-SHUFFLE-${i}` });
+    const s = await h.asStudent(student.id, student.sessionId);
+    const started = await s.value('SELECT public.start_exam_session($1, NULL, NULL)', [examId]);
+    const ids = started.jumbled_exam_data.questions.Physics.map((q) => q.id);
+    assert.deepEqual([...ids].sort(), expectedIds, 'no question is dropped or duplicated');
+    const first = ids.indexOf('para-1');
+    assert.equal(ids[first + 1], 'para-2', `paragraph questions stay adjacent and ordered: ${ids.join(',')}`);
+    firstPositions.add(ids[0]);
+    assert.deepEqual(started.jumbled_exam_data.marking, JEE_ADVANCED_MARKING);
+  }
+  assert.ok(firstPositions.size > 1, 'the order is still shuffled');
+});
