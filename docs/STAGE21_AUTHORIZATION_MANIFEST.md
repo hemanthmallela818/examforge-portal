@@ -116,6 +116,7 @@ AAL2 administrator-only operations (each repeats its AAL2 check internally):
 - `get_admin_student_roster_page(integer, integer, text, text, text)`
 - `get_admin_question_bank_page(integer, integer, text, text, text)`
 - `get_admin_questions_by_ids(uuid[])` — 1..500 unique IDs
+- `admin_update_passage(uuid, text)` — `SECURITY INVOKER`; the question bank RLS policy applies, text 1..10,000 characters
 - `get_admin_exam_list_page(integer, integer, text, text)`
 - `get_admin_exam_results_page(uuid, integer, integer, text, integer)`
 - `get_admin_exam_results_export_page(uuid, text, integer, integer)`
@@ -164,6 +165,22 @@ the service role:
 - `validate_question_bank_content`
 - `validate_result_exam_reference`
 - `validate_student_record`
+
+Question types (`20260928100000_question_types.sql`):
+
+- **Internal only.** These have no `anon` or `authenticated` execute privilege and are reached through the exam validators and the grader:
+  - `normalize_exam_marking`
+  - `resolve_question_marking`
+  - `paper_question_error`
+  - `response_value_error`
+  - `score_question_response`
+- **Executable by `authenticated`, but not `anon`.** These pure, data-free helpers are used by the question bank trigger, its `CHECK` constraint and its unique index, which run as the calling administrator:
+  - `question_type_is_option_based`
+  - `question_type_is_supported`
+  - `is_canonical_option_set`
+  - `is_valid_correct_answer`
+  - `question_details_error`
+  - `question_identity_key`
 
 Every public `SECURITY DEFINER` routine has `search_path = ''` in the live
 catalog. Application relations and helper routines used by newly hardened
