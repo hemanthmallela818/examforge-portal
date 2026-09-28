@@ -112,7 +112,7 @@ export function summarizeSelection({ selectedIds, subjectsById, typesById = {}, 
  * questions and the exact record the Create action will insert.
  * @param {{
  *   details: { title: string, targetClass: string, targetSection: string },
- *   settings: { duration: unknown, marksCorrect: unknown, marksIncorrect: unknown },
+ *   settings: { duration: unknown, marksCorrect: unknown, marksIncorrect: unknown, marking?: unknown },
  *   template: import('../../../types').PatternTemplate | null,
  *   verifiedQuestions: import('../../../types').QuestionBankItem[] | null,
  *   verificationError?: string,

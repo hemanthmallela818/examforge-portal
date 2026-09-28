@@ -4,7 +4,8 @@ vi.mock('../../src/supabase', () => ({ supabase: { rpc: vi.fn(), from: vi.fn() }
 vi.mock('../../src/utils', () => ({ showToast: vi.fn(), customAlert: vi.fn(), customConfirm: vi.fn() }));
 
 const { summarizeSelection } = await import('../../src/features/admin/wizard/wizardLogic');
-const { assembleExamRecord, compactMarking } = await import('../../src/features/admin/questions/useExamBuilder');
+const { assembleExamRecord } = await import('../../src/features/admin/questions/useExamBuilder');
+const { compactMarking } = await import('../../src/questionTypes');
 const { shuffleQuestionBlocks, committedResultToScorecard } = await import('../../src/features/exam/examSessionHelpers');
 
 const passage = key => ({ passage: { key, text: `Paragraph ${key}` } });

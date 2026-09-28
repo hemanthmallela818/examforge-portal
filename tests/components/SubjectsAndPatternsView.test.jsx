@@ -289,10 +289,26 @@ describe('pattern editor', () => {
       marks_correct_param: 4,
       marks_incorrect_param: -1,
       sections_param: [{ subject: 'Biology', questionCount: 25 }],
-      is_active_param: true
+      is_active_param: true,
+      marking_param: null
     });
     expect(props.onReload).toHaveBeenCalledTimes(1);
     expect(showToast).toHaveBeenCalledWith('Pattern "NEET Mock" saved.', 'success');
+  });
+
+  it('saves per-type marking with the pattern', async () => {
+    renderView();
+    const dialog = await openNewPattern();
+    await user.type(within(dialog).getByLabelText('Pattern name'), 'JEE Advanced');
+    await user.selectOptions(within(dialog).getByLabelText('Subject'), 'Biology');
+    const table = within(dialog).getByRole('group', { name: 'Marking by question type' });
+    await user.type(within(table).getByLabelText('Single correct: marks for a correct answer'), '3');
+    await user.type(within(table).getByLabelText('Multiple correct: marks for a wrong answer'), '-2');
+    await user.click(within(table).getByLabelText('Partial marks'));
+    await user.click(within(dialog).getByRole('button', { name: 'Save pattern' }));
+    await waitFor(() => expect(supabase.rpc).toHaveBeenCalledWith('admin_save_exam_template', expect.objectContaining({
+      marking_param: { MCQ: { correct: 3 }, MULTIPLE_CORRECT: { incorrect: -2, partial: false } }
+    })));
   });
 
   it('keeps the editor open and shows the server error when saving fails', async () => {

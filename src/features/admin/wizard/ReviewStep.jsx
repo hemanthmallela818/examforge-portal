@@ -4,6 +4,7 @@ import { Alert, Badge, Button, MetaList, cn } from '../../../components/ui';
 import { supabase } from '../../../supabase';
 import { parseSelectedQuestionsResponse } from '../../../questionBankPaging';
 import { assembleExamRecord } from '../questions/useExamBuilder';
+import { compactMarking, questionTypeLabel, resolveMarking } from '../../../questionTypes';
 import { buildReviewChecks, summarizeSelection } from './wizardLogic';
 import { SelectionSummary } from './QuestionsStep';
 import PaperPreview from './PaperPreview';
@@ -56,8 +57,9 @@ function useVerifiedQuestions(selectedQuestions) {
  */
 export default function ReviewStep({ examBuilder, selectedQuestions, catalog, onReadyChange }) {
   const {
-    newExamTitle, examTargetClass, examTargetSection, examDuration, examMarksCorrect, examMarksIncorrect, selectedTemplate
+    newExamTitle, examTargetClass, examTargetSection, examDuration, examMarksCorrect, examMarksIncorrect, examMarking, selectedTemplate
   } = examBuilder;
+  const marking = compactMarking(examMarking);
   const template = /** @type {import('../../../types').PatternTemplate | null} */ (selectedTemplate);
   const verified = useVerifiedQuestions(selectedQuestions);
   const [showPreview, setShowPreview] = useState(false);
@@ -69,14 +71,15 @@ export default function ReviewStep({ examBuilder, selectedQuestions, catalog, on
     duration: examDuration,
     marksCorrect: examMarksCorrect,
     marksIncorrect: examMarksIncorrect,
+    marking,
     template,
     questions: verified.questions,
     compareSubjects: catalog.compareSubjects
-  }) : null), [verified.questions, newExamTitle, examTargetClass, examTargetSection, examDuration, examMarksCorrect, examMarksIncorrect, template, catalog.compareSubjects]);
+  }) : null), [verified.questions, newExamTitle, examTargetClass, examTargetSection, examDuration, examMarksCorrect, examMarksIncorrect, marking, template, catalog.compareSubjects]);
 
   const { checks, ready } = buildReviewChecks({
     details: { title: newExamTitle, targetClass: examTargetClass, targetSection: examTargetSection },
-    settings: { duration: examDuration, marksCorrect: examMarksCorrect, marksIncorrect: examMarksIncorrect },
+    settings: { duration: examDuration, marksCorrect: examMarksCorrect, marksIncorrect: examMarksIncorrect, marking },
     template,
     verifiedQuestions: verified.questions,
     verificationError: verified.error,
@@ -87,9 +90,12 @@ export default function ReviewStep({ examBuilder, selectedQuestions, catalog, on
   useEffect(() => { onReadyChange(ready); }, [ready, onReadyChange]);
 
   const subjectsById = Object.fromEntries((verified.questions || []).map(question => [question.docId, question.subject]));
+  const typesById = Object.fromEntries((verified.questions || []).map(question => [question.docId, question.type]));
   const summary = summarizeSelection({
     selectedIds: verified.questions ? selectedQuestions : [],
     subjectsById,
+    typesById,
+    marking,
     marksCorrect: examMarksCorrect,
     template,
     compareSubjects: catalog.compareSubjects
@@ -107,7 +113,18 @@ export default function ReviewStep({ examBuilder, selectedQuestions, catalog, on
               { label: 'Pattern', value: template ? template.name : 'Custom (no pattern)' },
               { label: 'Questions', value: <span className="tabular-nums">{selectedQuestions.length}</span> },
               { label: 'Duration', value: <span className="tabular-nums">{examDuration} min</span> },
-              { label: 'Marking', value: <span className="tabular-nums">+{examMarksCorrect} / {examMarksIncorrect}</span> }
+              {
+                label: 'Marking',
+                value: (
+                  <span className="tabular-nums">
+                    +{examMarksCorrect} / {examMarksIncorrect}
+                    {Object.keys(marking || {}).map(code => {
+                      const resolved = resolveMarking({ marksCorrect: examMarksCorrect, marksIncorrect: examMarksIncorrect, marking }, code);
+                      return <span key={code} className="block text-xs text-slate-600">{questionTypeLabel(code)}: +{resolved.correct} / {resolved.incorrect}{code === 'MULTIPLE_CORRECT' && !resolved.partial ? ' (no partial marks)' : ''}</span>;
+                    })}
+                  </span>
+                )
+              }
             ]}
           />
 

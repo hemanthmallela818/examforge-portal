@@ -244,6 +244,19 @@ export function validateMarking(marking) {
 }
 
 /**
+ * Per-type marking without empty entries, or undefined when nothing is set.
+ * @param {ExamMarking | null | undefined} marking
+ * @returns {ExamMarking | undefined}
+ */
+export function compactMarking(marking) {
+  if (!marking) return undefined;
+  const entries = Object.entries(marking)
+    .map(([code, entry]) => [code, Object.fromEntries(Object.entries(entry || {}).filter(([, value]) => value !== undefined && value !== null && value !== ''))])
+    .filter(([, entry]) => Object.keys(entry).length > 0);
+  return entries.length ? /** @type {ExamMarking} */ (Object.fromEntries(entries)) : undefined;
+}
+
+/**
  * Human-readable answer for review screens: "B. Beta", "A. Alpha; C. Gamma",
  * or the typed value. Empty string when there is no answer.
  * @param {{ type?: unknown, options?: unknown }} question

@@ -672,6 +672,7 @@ export interface ExamTemplateEntry {
   durationMinutes: number;
   marksCorrect: number;
   marksIncorrect: number;
+  marking?: ExamMarking | null;
   sections: PatternSection[];
   isActive: boolean;
   totalQuestions: number;

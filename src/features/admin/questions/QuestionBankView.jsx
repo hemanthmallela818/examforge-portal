@@ -156,6 +156,7 @@ export default function QuestionBankView({ questionBankState, examBuilder, onDel
   const {
     questionBank,
     knownQuestionSubjects,
+    knownQuestionTypes,
     fetchQuestionBank,
     editingQuestion,
     setEditingQuestion,
@@ -396,7 +397,7 @@ export default function QuestionBankView({ questionBankState, examBuilder, onDel
 
         {/* Create Exam Card (quick path) plus the step-by-step wizard entry point */}
         <div className="flex flex-col gap-3 lg:sticky lg:top-24">
-          <CreateExamCard examBuilder={examBuilder} selectedQuestions={selectedQuestions} knownQuestionSubjects={knownQuestionSubjects} />
+          <CreateExamCard examBuilder={examBuilder} selectedQuestions={selectedQuestions} knownQuestionSubjects={knownQuestionSubjects} knownQuestionTypes={knownQuestionTypes} />
           <Button variant="secondary" className="w-full" onClick={() => setWizardOpen(true)}>
             <ListOrdered aria-hidden="true" /> Step-by-step wizard
           </Button>
@@ -408,6 +409,7 @@ export default function QuestionBankView({ questionBankState, examBuilder, onDel
           selectedQuestions={selectedQuestions}
           setSelectedQuestions={setSelectedQuestions}
           initialSubjectsById={knownQuestionSubjects}
+          initialTypesById={knownQuestionTypes}
           onClose={() => setWizardOpen(false)}
         />
       )}

@@ -1,19 +1,22 @@
 import { Lock } from 'lucide-react';
 import { Alert, Field, Input } from '../../../components/ui';
 import { SelectionSummary } from './QuestionsStep';
+import TypeMarkingTable from '../shared/TypeMarkingTable';
 
 /**
  * Step 3: duration and marking. Pre-filled and locked when a pattern is chosen.
  * @param {{
  *   examBuilder: import('../questions/useExamBuilder').ExamBuilder,
  *   summary: ReturnType<typeof import('./wizardLogic').summarizeSelection>,
+ *   types?: string[],
  *   problems: string[],
  *   showErrors: boolean
  * }} props
  */
-export default function MarkingStep({ examBuilder, summary, problems, showErrors }) {
+export default function MarkingStep({ examBuilder, summary, types = [], problems, showErrors }) {
   const {
-    examDuration, setExamDuration, examMarksCorrect, setExamMarksCorrect, examMarksIncorrect, setExamMarksIncorrect, selectedTemplate
+    examDuration, setExamDuration, examMarksCorrect, setExamMarksCorrect, examMarksIncorrect, setExamMarksIncorrect,
+    examMarking, setExamMarking, selectedTemplate
   } = examBuilder;
   const locked = Boolean(selectedTemplate);
   // Problems are shown live once the admin edits a value, or after Next.
@@ -66,6 +69,13 @@ export default function MarkingStep({ examBuilder, summary, problems, showErrors
             />
           </Field>
         </div>
+        <TypeMarkingTable
+          types={types}
+          marking={examMarking}
+          defaults={{ correct: examMarksCorrect, incorrect: examMarksIncorrect }}
+          onChange={setExamMarking}
+          locked={locked}
+        />
         {visibleProblems.length > 0 && (
           <Alert variant="danger" role="alert" id="wizard-marking-problems">
             <ul className="flex flex-col gap-0.5">

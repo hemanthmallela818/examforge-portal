@@ -12,6 +12,7 @@ import DetailsStep from './DetailsStep';
 import QuestionsStep from './QuestionsStep';
 import MarkingStep from './MarkingStep';
 import ReviewStep from './ReviewStep';
+import { compactMarking } from '../../../questionTypes';
 
 /**
  * @typedef {object} ExamCreationWizardProps
@@ -19,6 +20,7 @@ import ReviewStep from './ReviewStep';
  * @property {string[]} selectedQuestions
  * @property {import('react').Dispatch<import('react').SetStateAction<string[]>>} setSelectedQuestions
  * @property {Record<string, string>} [initialSubjectsById] Subjects of questions already seen (e.g. on the Question Bank screen).
+ * @property {Record<string, string>} [initialTypesById] Types of questions already seen.
  * @property {() => void} onClose
  */
 
@@ -28,13 +30,14 @@ import ReviewStep from './ReviewStep';
  * builder's normal create path (server verification, pattern re-check, insert).
  * @param {ExamCreationWizardProps} props
  */
-export default function ExamCreationWizard({ examBuilder, selectedQuestions, setSelectedQuestions, initialSubjectsById, onClose }) {
+export default function ExamCreationWizard({ examBuilder, selectedQuestions, setSelectedQuestions, initialSubjectsById, initialTypesById, onClose }) {
   const { classBook, catalog, dataLoadState } = useAdminContext();
   useClassesOnDemand(true);
   const [stepIndex, setStepIndex] = useState(0);
   const [attempted, setAttempted] = useState(/** @type {Record<string, boolean>} */ ({}));
   const [reviewReady, setReviewReady] = useState(false);
   const [subjectsById, setSubjectsById] = useState(() => /** @type {Record<string, string>} */ ({ ...(initialSubjectsById || {}) }));
+  const [typesById, setTypesById] = useState(() => /** @type {Record<string, string>} */ ({ ...(initialTypesById || {}) }));
   const headingRef = useRef(/** @type {HTMLHeadingElement | null} */ (null));
   const firstRenderRef = useRef(true);
 
@@ -52,6 +55,11 @@ export default function ExamCreationWizard({ examBuilder, selectedQuestions, set
         rows.forEach(row => { if (row.docId) next[row.docId] = row.subject; });
         return next;
       });
+      setTypesById(previous => {
+        const next = { ...previous };
+        rows.forEach(row => { if (row.docId) next[row.docId] = row.type; });
+        return next;
+      });
     }, [])
   });
 
@@ -59,13 +67,16 @@ export default function ExamCreationWizard({ examBuilder, selectedQuestions, set
   const summary = summarizeSelection({
     selectedIds: selectedQuestions,
     subjectsById,
+    typesById,
     marksCorrect: examBuilder.examMarksCorrect,
+    marking: examBuilder.examMarking,
     template,
     compareSubjects: catalog.compareSubjects
   });
+  const selectedTypes = selectedQuestions.map(id => typesById[id]).filter(Boolean);
   const detailErrors = validateDetailsStep({ title: examBuilder.newExamTitle, targetClass: examBuilder.examTargetClass, targetSection: examBuilder.examTargetSection });
   const questionProblems = validateQuestionsStep({ selectedCount: selectedQuestions.length, patternCheck: summary.patternCheck });
-  const markingProblems = validateMarkingStep({ duration: examBuilder.examDuration, marksCorrect: examBuilder.examMarksCorrect, marksIncorrect: examBuilder.examMarksIncorrect });
+  const markingProblems = validateMarkingStep({ duration: examBuilder.examDuration, marksCorrect: examBuilder.examMarksCorrect, marksIncorrect: examBuilder.examMarksIncorrect, marking: compactMarking(examBuilder.examMarking) });
   const stepValid = [Object.keys(detailErrors).length === 0, questionProblems.length === 0, markingProblems.length === 0, reviewReady];
   // A step can be opened once every step before it is valid.
   const reachable = WIZARD_STEPS.map((_, index) => stepValid.slice(0, index).every(Boolean));
@@ -187,7 +198,7 @@ export default function ExamCreationWizard({ examBuilder, selectedQuestions, set
             />
           )}
           {step.id === 'marking' && (
-            <MarkingStep examBuilder={examBuilder} summary={summary} problems={markingProblems} showErrors={Boolean(attempted.marking) || markingProblems.length > 0} />
+            <MarkingStep examBuilder={examBuilder} summary={summary} types={selectedTypes} problems={markingProblems} showErrors={Boolean(attempted.marking) || markingProblems.length > 0} />
           )}
           {step.id === 'review' && (
             <ReviewStep examBuilder={examBuilder} selectedQuestions={selectedQuestions} catalog={catalog} onReadyChange={setReviewReady} />

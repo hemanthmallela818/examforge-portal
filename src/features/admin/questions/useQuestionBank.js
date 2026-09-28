@@ -41,6 +41,8 @@ export function useQuestionBank({ enabled }) {
   // Subject of every question the admin has seen, so selections from earlier
   // pages can be counted per subject against the chosen pattern.
   const [knownQuestionSubjects, setKnownQuestionSubjects] = useState(/** @type {Record<string, string>} */ ({}));
+  // Type of every question seen, for per-type marks in the exam builder.
+  const [knownQuestionTypes, setKnownQuestionTypes] = useState(/** @type {Record<string, string>} */ ({}));
   const [editingQuestion, setEditingQuestion] = useState(/** @type {EditingQuestion | null} */ (null));
   const [selectedQuestions, setSelectedQuestions] = useState(/** @type {string[]} */ ([]));
   const [questionSearchInput, setQuestionSearchInput] = useState('');
@@ -84,6 +86,11 @@ export function useQuestionBank({ enabled }) {
     setKnownQuestionSubjects(prev => {
       const next = { ...prev };
       normalizedRows.forEach(row => { if (row.docId) next[row.docId] = row.subject; });
+      return next;
+    });
+    setKnownQuestionTypes(prev => {
+      const next = { ...prev };
+      normalizedRows.forEach(row => { if (row.docId) next[row.docId] = row.type; });
       return next;
     });
     setQuestionBankTotal(data.total);
@@ -219,6 +226,7 @@ export function useQuestionBank({ enabled }) {
   return {
     questionBank,
     knownQuestionSubjects,
+    knownQuestionTypes,
     fetchQuestionBank,
     editingQuestion,
     setEditingQuestion,

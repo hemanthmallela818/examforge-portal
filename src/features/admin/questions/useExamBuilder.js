@@ -6,21 +6,9 @@ import { prepareQuestionDraft } from '../../../questionContentLogic';
 import { countBySubject, evaluatePatternSelection, orderExamSubjects, validateExamSettings } from '../../../examPatternLogic';
 import { useAdminContext } from '../adminContext';
 import { MAX_EXAM_QUESTIONS } from '../adminConstants';
-import { passageBlocks } from '../../../questionTypes';
+import { compactMarking, passageBlocks } from '../../../questionTypes';
 
 /** @typedef {ReturnType<typeof useExamBuilder>} ExamBuilder */
-
-/**
- * Per-type marking without empty entries, or undefined when nothing is set.
- * @param {import('../../../types').ExamMarking | null | undefined} marking
- */
-export function compactMarking(marking) {
-  if (!marking) return undefined;
-  const entries = Object.entries(marking)
-    .map(([code, entry]) => [code, Object.fromEntries(Object.entries(entry || {}).filter(([, value]) => value !== undefined && value !== null && value !== ''))])
-    .filter(([, entry]) => Object.keys(entry).length > 0);
-  return entries.length ? /** @type {import('../../../types').ExamMarking} */ (Object.fromEntries(entries)) : undefined;
-}
 
 /**
  * Builds the `cbt_exams` insert payload from server-verified questions. Shared
@@ -87,6 +75,8 @@ export function useExamBuilder({ selectedQuestions, setSelectedQuestions, onExam
   const [examDuration, setExamDuration] = useState(/** @type {number | string} */ (180));
   const [examMarksCorrect, setExamMarksCorrect] = useState(/** @type {number | string} */ (4));
   const [examMarksIncorrect, setExamMarksIncorrect] = useState(/** @type {number | string} */ (-1));
+  // Optional per-type marks; blank entries use the exam-wide marks above.
+  const [examMarking, setExamMarking] = useState(/** @type {import('../../../types').ExamMarking} */ ({}));
   const [examTargetClass, setExamTargetClass] = useState('');
   const [examTargetSection, setExamTargetSection] = useState('');
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
@@ -100,6 +90,7 @@ export function useExamBuilder({ selectedQuestions, setSelectedQuestions, onExam
       setExamDuration(template.durationMinutes);
       setExamMarksCorrect(Number(template.marksCorrect));
       setExamMarksIncorrect(Number(template.marksIncorrect));
+      setExamMarking(template.marking || {});
     }
   };
 
@@ -122,7 +113,7 @@ export function useExamBuilder({ selectedQuestions, setSelectedQuestions, onExam
       await customAlert("Please select a target Class and Section for the exam.");
       return false;
     }
-    const settingsProblems = validateExamSettings({ duration: examDuration, marksCorrect: examMarksCorrect, marksIncorrect: examMarksIncorrect });
+    const settingsProblems = validateExamSettings({ duration: examDuration, marksCorrect: examMarksCorrect, marksIncorrect: examMarksIncorrect, marking: compactMarking(examMarking) });
     if (settingsProblems.length > 0) {
       await customAlert(settingsProblems.join('\n'));
       return false;
@@ -176,6 +167,7 @@ export function useExamBuilder({ selectedQuestions, setSelectedQuestions, onExam
       duration: examDuration,
       marksCorrect: examMarksCorrect,
       marksIncorrect: examMarksIncorrect,
+      marking: examMarking,
       template: /** @type {import('../../../types').PatternTemplate | null} */ (selectedTemplate),
       questions: selectedQData,
       compareSubjects
@@ -191,6 +183,7 @@ export function useExamBuilder({ selectedQuestions, setSelectedQuestions, onExam
       setExamDuration(180);
       setExamMarksCorrect(4);
       setExamMarksIncorrect(-1);
+      setExamMarking({});
       setSelectedTemplateId('');
       onExamCreated();
       showToast("Exam created successfully!", "success");
@@ -214,6 +207,8 @@ export function useExamBuilder({ selectedQuestions, setSelectedQuestions, onExam
     setExamMarksCorrect,
     examMarksIncorrect,
     setExamMarksIncorrect,
+    examMarking,
+    setExamMarking,
     examTargetClass,
     setExamTargetClass,
     examTargetSection,
