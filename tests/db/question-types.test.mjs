@@ -185,7 +185,7 @@ const JEE_ADVANCED_MARKING = {
 async function createPaperExam({ paper = typesPaper(), marking, status = 'ACTIVE', marksCorrect = 4, marksIncorrect = -1 } = {}) {
   const admin = await h.asAdmin();
   const questionsData = { duration: 60, marksCorrect, marksIncorrect, subjects: Object.keys(paper), questions: paper };
-  if (marking !== undefined) questionsData.marking = marking;
+  if (marking !== undefined && marking !== null) questionsData.marking = marking;
   return admin.value(
     `INSERT INTO public.cbt_exams (title, status, class, section, questions_data)
      VALUES ($1, $2, '12', 'A', $3::jsonb) RETURNING id`,
@@ -301,4 +301,139 @@ test('the start-of-exam shuffle keeps a paragraph set together and in order', as
     assert.deepEqual(started.jumbled_exam_data.marking, JEE_ADVANCED_MARKING);
   }
   assert.ok(firstPositions.size > 1, 'the order is still shuffled');
+});
+
+// ---------------------------------------------------------------------------
+// Candidate answers, grading and the answer review
+// ---------------------------------------------------------------------------
+
+async function score(type, correct, selected, marking = { correct: 4, incorrect: -2, partial: true }) {
+  const su = await h.asSuperuser();
+  const result = await su.value(
+    'SELECT public.score_question_response($1, $2, $3, $4::jsonb)',
+    [type, correct, selected, JSON.stringify(marking)]
+  );
+  return [result.outcome, Number(result.marks)];
+}
+
+test('score_question_response applies the JEE Advanced multiple-correct rule', async () => {
+  assert.deepEqual(await score('MULTIPLE_CORRECT', '0,1,2,3', '0,1,2'), ['PARTIAL', 3]);
+  assert.deepEqual(await score('MULTIPLE_CORRECT', '0,1,2,3', '0,1,2,3'), ['CORRECT', 4]);
+  assert.deepEqual(await score('MULTIPLE_CORRECT', '0,1,2', '0,1'), ['PARTIAL', 2]);
+  assert.deepEqual(await score('MULTIPLE_CORRECT', '0,1,2', '0,3'), ['INCORRECT', -2]);
+  assert.deepEqual(await score('MULTIPLE_CORRECT', '1,3', '1'), ['PARTIAL', 1]);
+  assert.deepEqual(await score('MULTIPLE_CORRECT', '2', '2'), ['CORRECT', 4]);
+  assert.deepEqual(await score('MULTIPLE_CORRECT', '2', '1,2'), ['INCORRECT', -2]);
+  assert.deepEqual(await score('MULTIPLE_CORRECT', '0,1,2', null), ['UNATTEMPTED', 0]);
+  assert.deepEqual(await score('MULTIPLE_CORRECT', '0,1,2', '0,1', { correct: 4, incorrect: -2, partial: false }), ['INCORRECT', -2]);
+  assert.deepEqual(await score('MULTIPLE_CORRECT', '0,1,2,3', '0', { correct: 3, incorrect: -1, partial: true }), ['PARTIAL', 0.75]);
+  assert.deepEqual(await score('INTEGER', '-12', '-012'), ['CORRECT', 4]);
+  assert.deepEqual(await score('INTEGER', '7', '8'), ['INCORRECT', -2]);
+  assert.deepEqual(await score('NUMERICAL', '2.5', '2.50'), ['CORRECT', 4]);
+  assert.deepEqual(await score('NAT', '2.5', '2.6'), ['INCORRECT', -2]);
+  assert.deepEqual(await score('MATRIX_MATCH', '2', '2'), ['CORRECT', 4]);
+  assert.deepEqual(await score('ASSERTION_REASON', '0', '1'), ['INCORRECT', -2]);
+  assert.deepEqual(await score('MCQ', '1', '1'), ['CORRECT', 4]);
+});
+
+async function startTypesExam(studentId, marking = JEE_ADVANCED_MARKING) {
+  const examId = await createPaperExam({ marking });
+  const student = await h.createStudent({ studentId });
+  const s = await h.asStudent(student.id, student.sessionId);
+  const started = await s.value('SELECT public.start_exam_session($1, NULL, NULL)', [examId]);
+  return { examId, student, s, started };
+}
+
+function progressFor(jumbled, answersById) {
+  const progress = {};
+  for (const [subject, questions] of Object.entries(jumbled.questions)) {
+    progress[subject] = questions.map((question) => (
+      Object.hasOwn(answersById, question.id)
+        ? { selectedOption: answersById[question.id], status: 'ANSWERED' }
+        : { selectedOption: null, status: 'NOT_VISITED' }
+    ));
+  }
+  return progress;
+}
+
+test('autosave and submit reject malformed answers for the new types', async () => {
+  const { examId, s, started } = await startTypesExam('QT-REJECT');
+  const autosave = (answers) => s.value(
+    'SELECT public.sync_active_session_progress($1, $2::jsonb, $3)',
+    [examId, JSON.stringify(progressFor(started.jumbled_exam_data, answers)), started.version]
+  );
+  for (const bad of ['2,0', '0,0', '0,,2', '4', '0,1,2,3,4', 'A']) {
+    await assert.rejects(autosave({ 'multi-1': bad }), /Invalid multiple-correct response/, bad);
+  }
+  await assert.rejects(autosave({ 'multi-1': ['0', '2'] }), /Invalid selected option type/);
+  await assert.rejects(autosave({ 'int-1': '2.5' }), /Invalid integer response/);
+  await assert.rejects(autosave({ 'mat-1': '4' }), /MCQ option is out of range/);
+  await assert.rejects(autosave({ 'para-2': 'abc' }), /Invalid numerical response/);
+
+  const saved = await autosave({ 'multi-1': '0,2', 'int-1': '-7' });
+  assert.equal(saved.success, true);
+
+  await assert.rejects(
+    s.value('SELECT public.submit_exam($1, $2::jsonb, NULL)', [examId, JSON.stringify([{ question_id: 'multi-1', selected_option: '2,0', status: 'ANSWERED' }])]),
+    /Invalid multiple-correct response/
+  );
+});
+
+test('grading uses per-type marks, partial credit and stores the graded review', async () => {
+  const { examId, student, s, started } = await startTypesExam('QT-GRADE');
+  const answers = {
+    'mcq-1': '1',       // correct  +3
+    'multi-1': '0,1',   // partial  +2 (two of three correct options)
+    'int-1': '-012',    // correct  +4
+    'mat-1': '0',       // wrong    -1
+    'para-1': '3',      // correct  +3
+    'para-2': '2.4'     // wrong    -1 (NUMERICAL falls back to the exam-wide -1)
+  };                    // ar-1 unattempted
+  const saved = await s.value(
+    'SELECT public.sync_active_session_progress($1, $2::jsonb, $3)',
+    [examId, JSON.stringify(progressFor(started.jumbled_exam_data, answers)), started.version]
+  );
+  const result = await s.value('SELECT public.submit_exam($1, $2::jsonb, $3)', [examId, '[]', saved.version]);
+  const expected = {
+    totalScore: 10,
+    maxScore: 25,
+    correct: 3,
+    partial: 1,
+    incorrect: 2,
+    unattempted: 1,
+    subjectScores: { Physics: 10 }
+  };
+  const normalize = (r) => ({ ...r, totalScore: Number(r.totalScore), maxScore: Number(r.maxScore), subjectScores: { Physics: Number(r.subjectScores.Physics) } });
+  assert.deepEqual(normalize(result), expected);
+  assert.deepEqual(normalize(await s.value('SELECT public.get_student_exam_result($1)', [examId])), expected);
+
+  const su = await h.asSuperuser();
+  const resultId = await su.value('SELECT id FROM public.student_results WHERE exam_id = $1 AND student_id = $2', [examId, student.studentId]);
+  const admin = await h.asAdmin();
+  const review = await admin.value('SELECT public.get_admin_student_result_review($1)', [resultId]);
+  assert.equal(review.snapshot_format, 'by_question_id');
+  assert.equal(review.responses['multi-1'].selected_option, '0,1');
+  assert.equal(review.responses['ar-1'].status, 'NOT_VISITED');
+  const outcomes = Object.fromEntries(Object.entries(review.question_scores).map(([id, v]) => [id, [v.outcome, Number(v.marks)]]));
+  assert.deepEqual(outcomes, {
+    'mcq-1': ['CORRECT', 3],
+    'multi-1': ['PARTIAL', 2],
+    'int-1': ['CORRECT', 4],
+    'mat-1': ['INCORRECT', -1],
+    'ar-1': ['UNATTEMPTED', 0],
+    'para-1': ['CORRECT', 3],
+    'para-2': ['INCORRECT', -1]
+  });
+});
+
+test('an exam without per-type marking grades exactly as before', async () => {
+  const { examId, s, started } = await startTypesExam('QT-LEGACY', null);
+  const saved = await s.value(
+    'SELECT public.sync_active_session_progress($1, $2::jsonb, $3)',
+    [examId, JSON.stringify(progressFor(started.jumbled_exam_data, { 'mcq-1': '1', 'multi-1': '0,1,2', 'int-1': '5' })), started.version]
+  );
+  const result = await s.value('SELECT public.submit_exam($1, $2::jsonb, $3)', [examId, '[]', saved.version]);
+  assert.equal(Number(result.maxScore), 28, 'seven questions at the exam-wide +4');
+  assert.equal(Number(result.totalScore), 4 + 4 - 1);
+  assert.equal(result.partial, 0);
 });

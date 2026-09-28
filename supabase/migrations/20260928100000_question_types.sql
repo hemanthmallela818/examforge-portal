@@ -1402,5 +1402,793 @@ BEGIN
 END;
 $function$;
 
+-- ---------------------------------------------------------------------------
+-- Candidate answers, grading and the answer review
+-- ---------------------------------------------------------------------------
+
+-- Candidate answer grammar per type. NULL when valid; otherwise the message
+-- (unchanged for MCQ and numerical answers).
+CREATE OR REPLACE FUNCTION public.response_value_error(
+  question_type pg_catalog.text,
+  option_count pg_catalog.int4,
+  selected pg_catalog.text
+)
+RETURNS pg_catalog.text
+LANGUAGE sql
+IMMUTABLE
+PARALLEL SAFE
+SET search_path = ''
+AS $function$
+  SELECT CASE
+    WHEN selected IS NULL THEN NULL
+    WHEN pg_catalog.upper(COALESCE(question_type, 'MCQ')) IN ('NUMERICAL', 'NAT') THEN
+      CASE WHEN pg_catalog.length(selected) > 64
+        OR selected !~ '^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)$'
+        THEN 'Invalid numerical response' END
+    WHEN pg_catalog.upper(question_type) = 'INTEGER' THEN
+      CASE WHEN pg_catalog.length(selected) > 64 OR selected !~ '^[+-]?[0-9]+$'
+        THEN 'Invalid integer response' END
+    WHEN pg_catalog.upper(question_type) = 'MULTIPLE_CORRECT' THEN
+      CASE WHEN NOT public.is_canonical_option_set(selected, COALESCE(option_count, 0))
+        THEN 'Invalid multiple-correct response' END
+    WHEN selected !~ '^[0-9]+$' THEN 'Invalid MCQ option'
+    WHEN pg_catalog.length(selected) > 9 OR selected::pg_catalog.int4 >= COALESCE(option_count, 0)
+      THEN 'MCQ option is out of range'
+  END
+$function$;
+
+-- Outcome and marks for one answer. selected NULL means unattempted.
+-- Multiple correct (JEE Advanced): exact set = full marks; a strict subset of
+-- the correct options = full x chosen / 4 when partial marking is on; any
+-- wrong option (or a subset with partial marking off) = the wrong-answer marks.
+CREATE OR REPLACE FUNCTION public.score_question_response(
+  question_type pg_catalog.text,
+  correct_answer pg_catalog.text,
+  selected pg_catalog.text,
+  marking pg_catalog.jsonb
+)
+RETURNS pg_catalog.jsonb
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path = ''
+AS $function$
+DECLARE
+  qtype pg_catalog.text := pg_catalog.upper(COALESCE(question_type, 'MCQ'));
+  full_marks pg_catalog.numeric := (marking ->> 'correct')::pg_catalog.numeric;
+  wrong_marks pg_catalog.numeric := (marking ->> 'incorrect')::pg_catalog.numeric;
+  chosen pg_catalog.text[];
+  correct_set pg_catalog.text[];
+BEGIN
+  IF NULLIF(pg_catalog.btrim(COALESCE(selected, '')), '') IS NULL THEN
+    RETURN pg_catalog.jsonb_build_object('outcome', 'UNATTEMPTED', 'marks', 0);
+  END IF;
+
+  IF qtype IN ('NUMERICAL', 'NAT', 'INTEGER') THEN
+    IF pg_catalog.abs(selected::pg_catalog.numeric - correct_answer::pg_catalog.numeric) < 0.00001 THEN
+      RETURN pg_catalog.jsonb_build_object('outcome', 'CORRECT', 'marks', full_marks);
+    END IF;
+  ELSIF qtype = 'MULTIPLE_CORRECT' THEN
+    chosen := pg_catalog.string_to_array(selected, ',');
+    correct_set := pg_catalog.string_to_array(correct_answer, ',');
+    IF chosen = correct_set THEN
+      RETURN pg_catalog.jsonb_build_object('outcome', 'CORRECT', 'marks', full_marks);
+    ELSIF chosen <@ correct_set AND COALESCE((marking ->> 'partial')::pg_catalog.bool, true) THEN
+      RETURN pg_catalog.jsonb_build_object(
+        'outcome', 'PARTIAL',
+        'marks', pg_catalog.round(full_marks * pg_catalog.cardinality(chosen) / 4, 2)
+      );
+    END IF;
+  ELSIF selected = correct_answer THEN
+    RETURN pg_catalog.jsonb_build_object('outcome', 'CORRECT', 'marks', full_marks);
+  END IF;
+  RETURN pg_catalog.jsonb_build_object('outcome', 'INCORRECT', 'marks', wrong_marks);
+END;
+$function$;
+
+REVOKE ALL ON FUNCTION public.response_value_error(pg_catalog.text, pg_catalog.int4, pg_catalog.text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.score_question_response(pg_catalog.text, pg_catalog.text, pg_catalog.text, pg_catalog.jsonb) FROM PUBLIC, anon, authenticated;
+
+ALTER TABLE public.student_results
+  ADD COLUMN IF NOT EXISTS partial pg_catalog.int4 NOT NULL DEFAULT 0;
+ALTER TABLE public.student_results
+  DROP CONSTRAINT IF EXISTS student_results_partial_nonnegative;
+ALTER TABLE public.student_results
+  ADD CONSTRAINT student_results_partial_nonnegative CHECK (partial >= 0);
+
+ALTER TABLE public.student_result_reviews
+  ADD COLUMN IF NOT EXISTS snapshot_format pg_catalog.text NOT NULL DEFAULT 'legacy_position',
+  ADD COLUMN IF NOT EXISTS question_scores pg_catalog.jsonb;
+ALTER TABLE public.student_result_reviews
+  DROP CONSTRAINT IF EXISTS student_result_reviews_snapshot_format_valid;
+ALTER TABLE public.student_result_reviews
+  ADD CONSTRAINT student_result_reviews_snapshot_format_valid
+  CHECK (snapshot_format IN ('legacy_position', 'by_question_id'));
+
+CREATE OR REPLACE FUNCTION public.sanitize_exam_responses(
+  raw_responses jsonb,
+  paper_questions jsonb
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  subject_name text;
+  raw_subject jsonb;
+  cleaned_subject jsonb;
+  cleaned jsonb := '{}'::jsonb;
+  response_item jsonb;
+  question_item jsonb;
+  selected_value jsonb;
+  selected_text text;
+  status_value text;
+  question_type text;
+  paper_length integer;
+  raw_length integer;
+  response_error text;
+  idx integer;
+BEGIN
+  raw_responses := COALESCE(raw_responses, '{}'::jsonb);
+  IF jsonb_typeof(raw_responses) <> 'object' THEN
+    RAISE EXCEPTION 'Invalid progress payload: expected an object';
+  END IF;
+  IF octet_length(raw_responses::text) > 262144 THEN
+    RAISE EXCEPTION 'Progress payload exceeds 256 KiB';
+  END IF;
+  IF paper_questions IS NULL OR jsonb_typeof(paper_questions) <> 'object' THEN
+    RAISE EXCEPTION 'Invalid server exam paper';
+  END IF;
+
+  FOR subject_name IN SELECT jsonb_object_keys(raw_responses) LOOP
+    IF NOT (paper_questions ? subject_name) THEN
+      RAISE EXCEPTION 'Unknown response subject: %', subject_name;
+    END IF;
+  END LOOP;
+
+  FOR subject_name IN SELECT jsonb_object_keys(paper_questions) LOOP
+    IF jsonb_typeof(paper_questions->subject_name) <> 'array' THEN
+      RAISE EXCEPTION 'Invalid server question list for subject %', subject_name;
+    END IF;
+    paper_length := jsonb_array_length(paper_questions->subject_name);
+    raw_subject := raw_responses->subject_name;
+    IF raw_subject IS NULL THEN
+      raw_subject := '[]'::jsonb;
+    ELSIF jsonb_typeof(raw_subject) <> 'array' THEN
+      RAISE EXCEPTION 'Invalid response list for subject %', subject_name;
+    END IF;
+    raw_length := jsonb_array_length(raw_subject);
+    IF raw_length > paper_length THEN
+      RAISE EXCEPTION 'Too many responses for subject %', subject_name;
+    END IF;
+
+    cleaned_subject := '[]'::jsonb;
+    IF paper_length > 0 THEN
+      FOR idx IN 0..paper_length - 1 LOOP
+        question_item := paper_questions->subject_name->idx;
+        response_item := CASE WHEN idx < raw_length THEN raw_subject->idx ELSE NULL END;
+
+        IF response_item IS NULL OR jsonb_typeof(response_item) = 'null' THEN
+          response_item := jsonb_build_object('selectedOption', NULL, 'status', 'NOT_VISITED');
+        ELSIF jsonb_typeof(response_item) <> 'object' THEN
+          RAISE EXCEPTION 'Invalid response at %.%', subject_name, idx;
+        END IF;
+
+        IF EXISTS (
+          SELECT 1 FROM jsonb_object_keys(response_item) AS response_key(key_name)
+          WHERE key_name NOT IN ('selectedOption', 'status')
+        ) THEN
+          RAISE EXCEPTION 'Unexpected response field at %.%', subject_name, idx;
+        END IF;
+
+        status_value := COALESCE(response_item->>'status', 'NOT_VISITED');
+        IF status_value NOT IN ('NOT_VISITED', 'NOT_ANSWERED', 'ANSWERED', 'MARKED', 'ANSWERED_MARKED') THEN
+          RAISE EXCEPTION 'Invalid response status at %.%', subject_name, idx;
+        END IF;
+
+        selected_value := response_item->'selectedOption';
+        IF selected_value IS NULL OR jsonb_typeof(selected_value) = 'null' THEN
+          selected_value := 'null'::jsonb;
+          selected_text := NULL;
+        ELSIF jsonb_typeof(selected_value) NOT IN ('string', 'number') THEN
+          RAISE EXCEPTION 'Invalid selected option type at %.%', subject_name, idx;
+        ELSE
+          selected_text := selected_value #>> '{}';
+        END IF;
+
+        IF status_value IN ('ANSWERED', 'ANSWERED_MARKED') AND selected_text IS NULL THEN
+          RAISE EXCEPTION 'Answered response has no selected option at %.%', subject_name, idx;
+        END IF;
+        IF status_value NOT IN ('ANSWERED', 'ANSWERED_MARKED') AND selected_text IS NOT NULL THEN
+          RAISE EXCEPTION 'Unanswered response contains a selected option at %.%', subject_name, idx;
+        END IF;
+
+        IF selected_text IS NOT NULL THEN
+          question_type := upper(COALESCE(question_item->>'type', 'MCQ'));
+          response_error := public.response_value_error(
+            question_type,
+            CASE WHEN jsonb_typeof(question_item->'options') = 'array'
+              THEN jsonb_array_length(question_item->'options') ELSE 0 END,
+            selected_text
+          );
+          IF response_error IS NOT NULL THEN
+            RAISE EXCEPTION '% at %.%', response_error, subject_name, idx;
+          END IF;
+        END IF;
+
+        cleaned_subject := cleaned_subject || jsonb_build_array(jsonb_build_object(
+          'selectedOption', selected_value,
+          'status', status_value
+        ));
+      END LOOP;
+    END IF;
+    cleaned := jsonb_set(cleaned, ARRAY[subject_name], cleaned_subject, true);
+  END LOOP;
+
+  RETURN cleaned;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.sanitize_exam_responses(jsonb, jsonb) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.normalize_submission_response_map(
+  raw_responses jsonb,
+  paper_questions jsonb
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  valid_questions jsonb := '{}'::jsonb;
+  response_map jsonb := '{}'::jsonb;
+  subject_name text;
+  question_item jsonb;
+  response_item jsonb;
+  selected_value jsonb;
+  selected_text text;
+  status_value text;
+  question_type text;
+  question_id text;
+  question_count integer := 0;
+  response_error text;
+BEGIN
+  raw_responses := COALESCE(raw_responses, '[]'::jsonb);
+  IF jsonb_typeof(raw_responses) <> 'array' THEN
+    RAISE EXCEPTION 'Invalid response payload: expected an array';
+  END IF;
+  IF octet_length(raw_responses::text) > 262144 THEN
+    RAISE EXCEPTION 'Response payload exceeds 256 KiB';
+  END IF;
+  IF paper_questions IS NULL OR jsonb_typeof(paper_questions) <> 'object' THEN
+    RAISE EXCEPTION 'Invalid server exam paper';
+  END IF;
+
+  FOR subject_name IN SELECT jsonb_object_keys(paper_questions) LOOP
+    IF jsonb_typeof(paper_questions->subject_name) <> 'array' THEN
+      RAISE EXCEPTION 'Invalid server question list for subject %', subject_name;
+    END IF;
+    FOR question_item IN SELECT value FROM jsonb_array_elements(paper_questions->subject_name) LOOP
+      question_id := question_item->>'id';
+      IF question_id IS NULL OR question_id = '' OR valid_questions ? question_id THEN
+        RAISE EXCEPTION 'Invalid or duplicate question ID in server paper';
+      END IF;
+      valid_questions := jsonb_set(valid_questions, ARRAY[question_id], question_item, true);
+      question_count := question_count + 1;
+    END LOOP;
+  END LOOP;
+
+  IF jsonb_array_length(raw_responses) > question_count THEN
+    RAISE EXCEPTION 'Response count exceeds exam question count';
+  END IF;
+
+  FOR response_item IN SELECT value FROM jsonb_array_elements(raw_responses) LOOP
+    IF jsonb_typeof(response_item) <> 'object' THEN
+      RAISE EXCEPTION 'Invalid response entry';
+    END IF;
+    IF EXISTS (
+      SELECT 1 FROM jsonb_object_keys(response_item) AS response_key(key_name)
+      WHERE key_name NOT IN ('question_id', 'selected_option', 'status')
+    ) THEN
+      RAISE EXCEPTION 'Unexpected response field';
+    END IF;
+
+    question_id := response_item->>'question_id';
+    IF question_id IS NULL OR question_id = '' OR NOT (valid_questions ? question_id) THEN
+      RAISE EXCEPTION 'Unknown question ID';
+    END IF;
+    IF response_map ? question_id THEN
+      RAISE EXCEPTION 'Duplicate question ID in response payload';
+    END IF;
+
+    status_value := COALESCE(response_item->>'status', 'NOT_VISITED');
+    IF status_value NOT IN ('NOT_VISITED', 'NOT_ANSWERED', 'ANSWERED', 'MARKED', 'ANSWERED_MARKED') THEN
+      RAISE EXCEPTION 'Invalid response status';
+    END IF;
+
+    selected_value := response_item->'selected_option';
+    IF selected_value IS NULL OR jsonb_typeof(selected_value) = 'null' THEN
+      selected_value := 'null'::jsonb;
+      selected_text := NULL;
+    ELSIF jsonb_typeof(selected_value) NOT IN ('string', 'number') THEN
+      RAISE EXCEPTION 'Invalid selected option type';
+    ELSE
+      selected_text := selected_value #>> '{}';
+    END IF;
+
+    IF status_value IN ('ANSWERED', 'ANSWERED_MARKED') AND selected_text IS NULL THEN
+      RAISE EXCEPTION 'Answered response has no selected option';
+    END IF;
+    IF status_value NOT IN ('ANSWERED', 'ANSWERED_MARKED') AND selected_text IS NOT NULL THEN
+      RAISE EXCEPTION 'Unanswered response contains a selected option';
+    END IF;
+
+    question_item := valid_questions->question_id;
+    IF selected_text IS NOT NULL THEN
+      question_type := upper(COALESCE(question_item->>'type', 'MCQ'));
+      response_error := public.response_value_error(
+        question_type,
+        CASE WHEN jsonb_typeof(question_item->'options') = 'array'
+          THEN jsonb_array_length(question_item->'options') ELSE 0 END,
+        selected_text
+      );
+      IF response_error IS NOT NULL THEN
+        RAISE EXCEPTION '%', response_error;
+      END IF;
+    END IF;
+
+    response_map := jsonb_set(response_map, ARRAY[question_id], jsonb_build_object(
+      'question_id', question_id,
+      'selected_option', selected_value,
+      'status', status_value
+    ), true);
+  END LOOP;
+
+  RETURN response_map;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.normalize_submission_response_map(jsonb, jsonb) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.submit_exam_internal(exam_id_param uuid, responses_param jsonb)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO ''
+AS $function$
+DECLARE
+  exam_row public.cbt_exams_raw%ROWTYPE;
+  student_row public.students%ROWTYPE;
+  session_row public.active_sessions%ROWTYPE;
+  result_row public.student_results%ROWTYPE;
+  answers_obj pg_catalog.jsonb;
+  response_map pg_catalog.jsonb;
+  server_submission pg_catalog.jsonb;
+  answer_entry pg_catalog.record;
+  answer_data pg_catalog.jsonb;
+  response_data pg_catalog.jsonb;
+  total_score pg_catalog.numeric := 0;
+  correct_count pg_catalog.int4 := 0;
+  partial_count pg_catalog.int4 := 0;
+  incorrect_count pg_catalog.int4 := 0;
+  unattempted_count pg_catalog.int4 := 0;
+  total_questions pg_catalog.int4 := 0;
+  subject_scores pg_catalog.jsonb := '{}'::pg_catalog.jsonb;
+  subject_name pg_catalog.text;
+  is_attempted pg_catalog.bool;
+  max_score pg_catalog.numeric := 0;
+  question_scores pg_catalog.jsonb := '{}'::pg_catalog.jsonb;
+  question_marking pg_catalog.jsonb;
+  question_score pg_catalog.jsonb;
+  outcome pg_catalog.text;
+  delta pg_catalog.numeric;
+  new_result_id pg_catalog.uuid;
+BEGIN
+  SELECT s.*
+  INTO student_row
+  FROM public.students AS s
+  WHERE s.id OPERATOR(pg_catalog.=) auth.uid()
+    AND s.archived_at IS NULL;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Active student profile not found' USING ERRCODE = 'EX002';
+  END IF;
+
+  PERFORM pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(
+      student_row.student_id OPERATOR(pg_catalog.||) ':' OPERATOR(pg_catalog.||) exam_id_param::pg_catalog.text,
+      0
+    )
+  );
+
+  SELECT r.*
+  INTO result_row
+  FROM public.student_results AS r
+  WHERE r.student_id OPERATOR(pg_catalog.=) student_row.student_id
+    AND r.exam_id OPERATOR(pg_catalog.=) exam_id_param::pg_catalog.text;
+  IF FOUND THEN
+    RETURN pg_catalog.jsonb_build_object(
+      'totalScore', result_row.total_score,
+      'maxScore', result_row.max_score,
+      'correct', result_row.correct,
+      'partial', result_row.partial,
+      'incorrect', result_row.incorrect,
+      'unattempted', result_row.unattempted,
+      'subjectScores', result_row.subject_scores
+    );
+  END IF;
+
+  SELECT e.*
+  INTO exam_row
+  FROM public.cbt_exams_raw AS e
+  WHERE e.id OPERATOR(pg_catalog.=) exam_id_param;
+  IF NOT FOUND OR exam_row.status NOT IN ('ACTIVE', 'ENDED') THEN
+    RAISE EXCEPTION 'This exam is not available for submission' USING ERRCODE = 'EX007';
+  END IF;
+  IF NOT (
+    exam_row.class IS NULL
+    OR exam_row.class OPERATOR(pg_catalog.=) 'All'
+    OR exam_row.class OPERATOR(pg_catalog.=) student_row.class
+  ) OR NOT (
+    exam_row.section IS NULL
+    OR exam_row.section OPERATOR(pg_catalog.=) 'All'
+    OR exam_row.section OPERATOR(pg_catalog.=) student_row.section
+  ) THEN
+    RAISE EXCEPTION 'This exam is not assigned to you' USING ERRCODE = 'EX006';
+  END IF;
+
+  SELECT s.*
+  INTO session_row
+  FROM public.active_sessions AS s
+  WHERE s.id OPERATOR(pg_catalog.=) (
+    student_row.id::pg_catalog.text
+      OPERATOR(pg_catalog.||) '_'
+      OPERATOR(pg_catalog.||) exam_id_param::pg_catalog.text
+  );
+  IF NOT FOUND OR session_row.started_at IS NULL OR session_row.deadline_at IS NULL THEN
+    RAISE EXCEPTION 'Exam session was not started correctly' USING ERRCODE = 'EX009';
+  END IF;
+
+  IF responses_param IS NOT NULL
+    AND pg_catalog.octet_length(responses_param::pg_catalog.text) OPERATOR(pg_catalog.>) 262144
+  THEN
+    RAISE EXCEPTION 'Response payload exceeds 256 KiB' USING ERRCODE = 'EX012';
+  END IF;
+
+  -- At/after the strict deadline, grade only the last server-confirmed snapshot.
+  -- The 180-second grace period controls delivery, never answer acceptance.
+  IF pg_catalog.clock_timestamp() OPERATOR(pg_catalog.>=) session_row.deadline_at
+    OR responses_param IS NULL
+    OR (
+      pg_catalog.jsonb_typeof(responses_param) OPERATOR(pg_catalog.=) 'array'
+      AND pg_catalog.jsonb_array_length(responses_param) OPERATOR(pg_catalog.=) 0
+    )
+  THEN
+    server_submission := public.exam_progress_to_submission(
+      session_row.user_responses,
+      session_row.jumbled_exam_data -> 'questions'
+    );
+    response_map := public.normalize_submission_response_map(
+      server_submission,
+      session_row.jumbled_exam_data -> 'questions'
+    );
+  ELSE
+    response_map := public.normalize_submission_response_map(
+      responses_param,
+      session_row.jumbled_exam_data -> 'questions'
+    );
+  END IF;
+
+  SELECT a.answers
+  INTO answers_obj
+  FROM public.cbt_exam_answers AS a
+  WHERE a.exam_id OPERATOR(pg_catalog.=) exam_id_param;
+  IF answers_obj IS NULL THEN
+    RAISE EXCEPTION 'Answer key not found' USING ERRCODE = 'EX010';
+  END IF;
+
+  FOR answer_entry IN
+    SELECT item.key, item.value
+    FROM pg_catalog.jsonb_each(answers_obj) AS item
+  LOOP
+    total_questions := total_questions OPERATOR(pg_catalog.+) 1;
+    answer_data := answer_entry.value;
+    response_data := COALESCE(response_map -> answer_entry.key, '{}'::pg_catalog.jsonb);
+    subject_name := COALESCE(NULLIF(answer_data ->> 'subject', ''), 'General');
+    subject_scores := pg_catalog.jsonb_set(
+      subject_scores,
+      ARRAY[subject_name],
+      COALESCE(subject_scores -> subject_name, '0'::pg_catalog.jsonb),
+      true
+    );
+    is_attempted := COALESCE(
+      (response_data ->> 'status') IN ('ANSWERED', 'ANSWERED_MARKED')
+        AND NULLIF(pg_catalog.btrim(response_data ->> 'selected_option'), '') IS NOT NULL,
+      false
+    );
+    -- Per-type marks (falling back to the exam-wide marks) and the shared
+    -- scorer: CORRECT / PARTIAL / INCORRECT / UNATTEMPTED with its marks.
+    question_marking := public.resolve_question_marking(session_row.jumbled_exam_data, answer_data ->> 'type');
+    max_score := max_score OPERATOR(pg_catalog.+) (question_marking ->> 'correct')::pg_catalog.numeric;
+    question_score := public.score_question_response(
+      answer_data ->> 'type',
+      answer_data ->> 'correct_answer',
+      CASE WHEN is_attempted THEN response_data ->> 'selected_option' END,
+      question_marking
+    );
+    question_scores := pg_catalog.jsonb_set(question_scores, ARRAY[answer_entry.key], question_score, true);
+    outcome := question_score ->> 'outcome';
+    delta := (question_score ->> 'marks')::pg_catalog.numeric;
+
+    IF outcome OPERATOR(pg_catalog.=) 'UNATTEMPTED' THEN
+      unattempted_count := unattempted_count OPERATOR(pg_catalog.+) 1;
+    ELSIF outcome OPERATOR(pg_catalog.=) 'CORRECT' THEN
+      correct_count := correct_count OPERATOR(pg_catalog.+) 1;
+    ELSIF outcome OPERATOR(pg_catalog.=) 'PARTIAL' THEN
+      partial_count := partial_count OPERATOR(pg_catalog.+) 1;
+    ELSE
+      incorrect_count := incorrect_count OPERATOR(pg_catalog.+) 1;
+    END IF;
+    IF outcome OPERATOR(pg_catalog.<>) 'UNATTEMPTED' THEN
+      total_score := total_score OPERATOR(pg_catalog.+) delta;
+      subject_scores := pg_catalog.jsonb_set(
+        subject_scores,
+        ARRAY[subject_name],
+        pg_catalog.to_jsonb(
+          COALESCE((subject_scores ->> subject_name)::pg_catalog.numeric, 0)
+            OPERATOR(pg_catalog.+) delta
+        ),
+        true
+      );
+    END IF;
+  END LOOP;
+
+  INSERT INTO public.student_results (
+    exam_id,
+    student_id,
+    student_name,
+    total_score,
+    max_score,
+    correct,
+    partial,
+    incorrect,
+    unattempted,
+    subject_scores,
+    submitted_at
+  ) VALUES (
+    exam_id_param::pg_catalog.text,
+    student_row.student_id,
+    student_row.name,
+    total_score,
+    max_score,
+    correct_count,
+    partial_count,
+    incorrect_count,
+    unattempted_count,
+    subject_scores,
+    pg_catalog.clock_timestamp()
+  )
+  ON CONFLICT (student_id, exam_id) DO NOTHING
+  RETURNING id INTO new_result_id;
+
+  -- The administrator answer review stores exactly what was graded, keyed by
+  -- question ID (the capture trigger's positional snapshot cannot be matched
+  -- to the shuffled paper).
+  IF new_result_id IS NOT NULL THEN
+    INSERT INTO public.student_result_reviews (
+      result_id,
+      exam_id,
+      student_id,
+      response_snapshot,
+      subject_time_seconds,
+      snapshot_format,
+      question_scores
+    ) VALUES (
+      new_result_id,
+      exam_id_param,
+      student_row.student_id,
+      response_map,
+      COALESCE(session_row.subject_time_seconds, '{}'::pg_catalog.jsonb),
+      'by_question_id',
+      question_scores
+    )
+    ON CONFLICT (result_id) DO UPDATE
+    SET response_snapshot = EXCLUDED.response_snapshot,
+        snapshot_format = EXCLUDED.snapshot_format,
+        question_scores = EXCLUDED.question_scores;
+  END IF;
+
+  DELETE FROM public.active_sessions AS s
+  WHERE s.id OPERATOR(pg_catalog.=) session_row.id;
+
+  SELECT r.*
+  INTO result_row
+  FROM public.student_results AS r
+  WHERE r.student_id OPERATOR(pg_catalog.=) student_row.student_id
+    AND r.exam_id OPERATOR(pg_catalog.=) exam_id_param::pg_catalog.text;
+
+  RETURN pg_catalog.jsonb_build_object(
+    'totalScore', result_row.total_score,
+    'maxScore', result_row.max_score,
+    'correct', result_row.correct,
+      'partial', result_row.partial,
+    'incorrect', result_row.incorrect,
+    'unattempted', result_row.unattempted,
+    'subjectScores', result_row.subject_scores
+  );
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.get_student_exam_result(exam_id_param pg_catalog.text)
+RETURNS pg_catalog.jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+DECLARE
+  student_row public.students%ROWTYPE;
+  result_row public.student_results%ROWTYPE;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'Authentication is required';
+  END IF;
+  IF exam_id_param IS NULL
+    OR pg_catalog.octet_length(exam_id_param) OPERATOR(pg_catalog.<) 1
+    OR pg_catalog.octet_length(exam_id_param) OPERATOR(pg_catalog.>) 128
+  THEN
+    RAISE EXCEPTION 'Invalid exam identifier';
+  END IF;
+
+  SELECT s.*
+  INTO student_row
+  FROM public.students AS s
+  WHERE s.id OPERATOR(pg_catalog.=) auth.uid()
+    AND s.archived_at IS NULL;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Active student profile not found';
+  END IF;
+
+  SELECT r.*
+  INTO result_row
+  FROM public.student_results AS r
+  WHERE r.student_id OPERATOR(pg_catalog.=) student_row.student_id
+    AND r.exam_id OPERATOR(pg_catalog.=) exam_id_param;
+
+  IF NOT FOUND THEN
+    RETURN NULL;
+  END IF;
+
+  RETURN pg_catalog.jsonb_build_object(
+    'totalScore', result_row.total_score,
+    'maxScore', result_row.max_score,
+    'correct', result_row.correct,
+    'partial', result_row.partial,
+    'incorrect', result_row.incorrect,
+    'unattempted', result_row.unattempted,
+    'subjectScores', result_row.subject_scores
+  );
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.get_admin_student_result_review(
+  result_id_param pg_catalog.uuid
+)
+RETURNS pg_catalog.jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $function$
+DECLARE
+  review_row public.student_result_reviews%ROWTYPE;
+  exam_paper pg_catalog.jsonb;
+  answer_keys pg_catalog.jsonb;
+BEGIN
+  IF NOT public.is_admin_aal2() THEN
+    RAISE EXCEPTION 'Active administrator access is required';
+  END IF;
+  IF result_id_param IS NULL THEN RAISE EXCEPTION 'Result ID is required'; END IF;
+
+  SELECT review.* INTO review_row
+  FROM public.student_result_reviews AS review
+  WHERE review.result_id OPERATOR(pg_catalog.=) result_id_param;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Detailed answer review is unavailable for this submission';
+  END IF;
+
+  SELECT exam.questions_data, answer.answers
+  INTO exam_paper, answer_keys
+  FROM public.cbt_exams_raw AS exam
+  JOIN public.cbt_exam_answers AS answer
+    ON answer.exam_id OPERATOR(pg_catalog.=) exam.id
+  WHERE exam.id OPERATOR(pg_catalog.=) review_row.exam_id;
+  IF NOT FOUND OR exam_paper IS NULL OR answer_keys IS NULL THEN
+    RAISE EXCEPTION 'The immutable exam paper or answer key is unavailable';
+  END IF;
+
+  INSERT INTO public.admin_audit_events (
+    actor_user_id,
+    action,
+    target_type,
+    target_id,
+    metadata
+  ) VALUES (
+    auth.uid(),
+    'VIEW_STUDENT_ANSWER_REVIEW',
+    'student_result',
+    result_id_param::pg_catalog.text,
+    pg_catalog.jsonb_build_object('exam_id', review_row.exam_id, 'student_id', review_row.student_id)
+  );
+
+  RETURN pg_catalog.jsonb_build_object(
+    'result_id', review_row.result_id,
+    'exam_id', review_row.exam_id,
+    'student_id', review_row.student_id,
+    'responses', review_row.response_snapshot,
+    'snapshot_format', review_row.snapshot_format,
+    'question_scores', review_row.question_scores,
+    'paper', exam_paper,
+    'answer_key', answer_keys,
+    'subject_time_seconds', review_row.subject_time_seconds,
+    'created_at', review_row.created_at
+  );
+END;
+$function$;
+
+-- A retry after takeover returns the committed result, now with partial.
+CREATE OR REPLACE FUNCTION public.submit_exam(exam_id_param uuid, responses_param jsonb, expected_version_param integer DEFAULT NULL::integer)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO ''
+AS $function$
+DECLARE
+  result_row public.student_results%ROWTYPE;
+BEGIN
+  IF responses_param IS NOT NULL
+    AND pg_catalog.octet_length(responses_param::pg_catalog.text) OPERATOR(pg_catalog.>) 262144
+  THEN
+    RAISE EXCEPTION 'Response payload exceeds 256 KiB';
+  END IF;
+
+  BEGIN
+    PERFORM public.assert_current_student_session();
+  EXCEPTION WHEN OTHERS THEN
+    -- A response may be lost after a successful commit. Even if a newer device
+    -- has since taken over, return the already committed immutable result.
+    -- This branch cannot create, alter, or delete a result or active session.
+    SELECT r.*
+    INTO result_row
+    FROM public.students AS s
+    JOIN public.student_results AS r
+      ON r.student_id OPERATOR(pg_catalog.=) s.student_id
+     AND r.exam_id OPERATOR(pg_catalog.=) exam_id_param::pg_catalog.text
+    WHERE s.id OPERATOR(pg_catalog.=) auth.uid();
+
+    IF FOUND THEN
+      RETURN pg_catalog.jsonb_build_object(
+        'totalScore', result_row.total_score,
+        'maxScore', result_row.max_score,
+        'correct', result_row.correct,
+        'partial', result_row.partial,
+        'incorrect', result_row.incorrect,
+        'unattempted', result_row.unattempted,
+        'subjectScores', result_row.subject_scores
+      );
+    END IF;
+    RAISE;
+  END;
+
+  -- The browser confirmed its final answers with a versioned autosave just
+  -- before submitting. Grade the stored server snapshot so a stale tab cannot
+  -- overwrite newer answers and the admin review matches the grade exactly.
+  IF expected_version_param IS NOT NULL THEN
+    RETURN public.submit_exam_internal(exam_id_param, NULL);
+  END IF;
+
+  -- Legacy clients (no version) keep the previous contract.
+  RETURN public.submit_exam_internal(exam_id_param, responses_param);
+END;
+$function$;
 
 COMMIT;
