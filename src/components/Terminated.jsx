@@ -3,9 +3,11 @@ import { Button } from './ui';
 
 /** @param {import('../features/exam/examSessionHelpers').TerminationReason | null | undefined} reason */
 const terminationReasonText = (reason) => {
-  if (reason === 'tab') return 'You switched to another tab, window or app after the final warning.';
-  if (reason === 'fullscreen') return 'You left fullscreen mode after the final warning.';
-  return 'Your exam was ended before you submitted it.';
+  if (reason === 'tab') return 'You switched to another tab, window or app.';
+  if (reason === 'fullscreen') return 'You left fullscreen mode.';
+  if (reason === 'escape') return 'You pressed the Escape key.';
+  if (reason === 'blur') return 'The exam window lost focus.';
+  return 'Your exam attempt was blocked before you submitted it.';
 };
 
 /**
@@ -27,7 +29,7 @@ const Terminated = ({ reason, onBackToDashboard, onLogout }) => {
           {terminationReasonText(reason)}
         </p>
         <p className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-800">
-          Your attempt will be finalized using the answers confirmed by the server before termination.
+          Your attempt is blocked. Progress, answers, and subject timing are preserved under your original deadline. If an administrator re-grants access, you can resume from your dashboard. Otherwise, your attempt will be finalized using the answers confirmed by the server before termination at your original deadline.
         </p>
         <div className="flex flex-col justify-center gap-3 sm:flex-row">
           {onBackToDashboard && (

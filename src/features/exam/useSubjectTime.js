@@ -10,10 +10,11 @@ import { supabase } from '../../supabase';
  *   activeExamId: string | undefined,
  *   currentStudent: object | null,
  *   lockdownActiveRef: { current: boolean },
- *   initialSubjectTimeSeconds?: Record<string, number>
+ *   initialSubjectTimeSeconds?: Record<string, number>,
+ *   accessGenerationRef?: { current: number | null }
  * }} options
  */
-export function useSubjectTime({ examState, activeSubject, activeExamId, currentStudent, lockdownActiveRef, initialSubjectTimeSeconds }) {
+export function useSubjectTime({ examState, activeSubject, activeExamId, currentStudent, lockdownActiveRef, initialSubjectTimeSeconds, accessGenerationRef }) {
   const subjectTimeRef = useRef(initialSubjectTimeSeconds || {});
   const subjectTickRef = useRef(Date.now());
   const lastSentSubjectTimeRef = useRef('');
@@ -32,16 +33,17 @@ export function useSubjectTime({ examState, activeSubject, activeExamId, current
 
   const syncSubjectTime = useCallback(async ({ onlyIfChanged = false } = {}) => {
     accrueActiveSubjectTime();
-    if (!activeExamId || !currentStudent || navigator.onLine === false) return;
+    if (!activeExamId || !currentStudent || lockdownActiveRef.current || navigator.onLine === false) return;
     const snapshot = JSON.stringify(subjectTimeRef.current);
     if (onlyIfChanged && snapshot === lastSentSubjectTimeRef.current) return;
     const { error } = await supabase.rpc('sync_exam_subject_time', {
       exam_id_param: activeExamId,
-      subject_time_seconds_param: subjectTimeRef.current
+      subject_time_seconds_param: subjectTimeRef.current,
+      access_generation_param: accessGenerationRef?.current ?? null
     });
     if (error) throw error;
     lastSentSubjectTimeRef.current = snapshot;
-  }, [accrueActiveSubjectTime, activeExamId, currentStudent]);
+  }, [accrueActiveSubjectTime, activeExamId, currentStudent, accessGenerationRef, lockdownActiveRef]);
 
   useEffect(() => {
     if (examState !== 'ACTIVE') return;

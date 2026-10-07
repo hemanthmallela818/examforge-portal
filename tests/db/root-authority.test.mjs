@@ -153,7 +153,7 @@ test('session guards raise stable SQLSTATE codes (EX001/EX003)', async () => {
   const stale = await h.asStudent(student.id, '00000000-0000-4000-8000-000000000000');
   // The guard is internal; students reach it through public exam RPCs.
   await assert.rejects(stale.query(
-    "SELECT public.sync_exam_subject_time('00000000-0000-4000-8000-000000000001'::uuid, '{}'::jsonb)"
+    "SELECT public.sync_exam_subject_time('00000000-0000-4000-8000-000000000001'::uuid, '{}'::jsonb, 1)"
   ), error => {
     assert.equal(error.code, 'EX001');
     assert.match(error.message, /replaced or is no longer active/);

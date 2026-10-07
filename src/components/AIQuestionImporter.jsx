@@ -884,7 +884,7 @@ const ReviewedJsonImporter = ({ questionBank, refreshQuestionBank, allowedSubjec
 
           {/* Question List */}
           <CardContent>
-            <div className="flex max-h-[560px] flex-col gap-4 overflow-y-auto pr-1">
+            <div className="flex flex-col gap-4">
               {displayedQuestions.length === 0 ? (
                 <EmptyState icon={Filter} title="No questions match the current filter." className="py-10" />
               ) : (

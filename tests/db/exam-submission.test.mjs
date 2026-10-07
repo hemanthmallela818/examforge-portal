@@ -35,7 +35,7 @@ async function startExam(student, examId) {
 
 async function autosave(student, examId, progress, version) {
   const s = await h.asStudent(student.id, student.sessionId);
-  return s.value('SELECT public.sync_active_session_progress($1, $2, $3)', [examId, progress, version]);
+  return s.value('SELECT public.sync_active_session_progress($1, $2, $3, 1)', [examId, progress, version]);
 }
 
 test('versioned submit grades the server snapshot and ignores the client payload', async () => {
@@ -58,7 +58,7 @@ test('versioned submit grades the server snapshot and ignores the client payload
   // Client claims everything correct; with expected_version the payload is ignored.
   const s = await h.asStudent(student.id, student.sessionId);
   const result = await s.value(
-    'SELECT public.submit_exam($1, $2, $3)',
+    'SELECT public.submit_exam($1, $2, $3, 1)',
     [examId, buildSubmission(DEFAULT_CORRECT), 2]
   );
   assert.deepEqual(result, {
@@ -94,7 +94,7 @@ test('legacy two-argument submit still grades the client payload', async () => {
 
   const s = await h.asStudent(student.id, student.sessionId);
   const result = await s.value(
-    'SELECT public.submit_exam($1, $2)',
+    'SELECT public.submit_exam($1, $2, NULL, 1)',
     [examId, buildSubmission(DEFAULT_CORRECT)]
   );
   assert.equal(result.totalScore, 12);
@@ -110,7 +110,7 @@ test('legacy submit with an empty payload falls back to the server snapshot', as
   await autosave(student, examId, buildProgress(started.jumbled_exam_data, { 'math-1': '2.50' }), 1);
 
   const s = await h.asStudent(student.id, student.sessionId);
-  const result = await s.value(`SELECT public.submit_exam($1, '[]'::jsonb)`, [examId]);
+  const result = await s.value(`SELECT public.submit_exam($1, '[]'::jsonb, NULL, 1)`, [examId]);
   assert.equal(result.correct, 1, 'numerical answers compare numerically');
   assert.equal(result.totalScore, 4);
   assert.equal(result.unattempted, 2);
@@ -123,10 +123,10 @@ test('duplicate submit returns the same result and keeps exactly one result row'
   await autosave(student, examId, buildProgress(started.jumbled_exam_data, { 'phy-2': '2' }), 1);
 
   const s = await h.asStudent(student.id, student.sessionId);
-  const first = await s.value('SELECT public.submit_exam($1, NULL, 2)', [examId]);
-  const second = await s.value('SELECT public.submit_exam($1, NULL, 2)', [examId]);
+  const first = await s.value('SELECT public.submit_exam($1, NULL, 2, 1)', [examId]);
+  const second = await s.value('SELECT public.submit_exam($1, NULL, 2, 1)', [examId]);
   const legacyRetry = await s.value(
-    'SELECT public.submit_exam($1, $2)',
+    'SELECT public.submit_exam($1, $2, NULL, 1)',
     [examId, buildSubmission(DEFAULT_CORRECT)]
   );
   assert.deepEqual(second, first);
@@ -146,7 +146,7 @@ test('takeover after commit still returns the committed result to the old device
   await autosave(student, examId, buildProgress(started.jumbled_exam_data, DEFAULT_CORRECT), 1);
 
   const oldDevice = await h.asStudent(student.id, student.sessionId);
-  const committed = await oldDevice.value('SELECT public.submit_exam($1, NULL, 2)', [examId]);
+  const committed = await oldDevice.value('SELECT public.submit_exam($1, NULL, 2, 1)', [examId]);
   assert.equal(committed.totalScore, 12);
 
   // A second device signs in and takes over the student session.
@@ -157,7 +157,7 @@ test('takeover after commit still returns the committed result to the old device
 
   // The old device's response was lost; its retry must return the committed result.
   const stale = await h.asStudent(student.id, student.sessionId);
-  const recovered = await stale.value('SELECT public.submit_exam($1, NULL, 2)', [examId]);
+  const recovered = await stale.value('SELECT public.submit_exam($1, NULL, 2, 1)', [examId]);
   assert.deepEqual(recovered, committed);
   assert.equal(await resultRowCount(student.studentId, examId), 1);
 });
@@ -172,16 +172,16 @@ test('a replaced session without a committed result is rejected everywhere', asy
 
   const stale = await h.asStudent(student.id, student.sessionId);
   await assert.rejects(
-    stale.query('SELECT public.submit_exam($1, $2, 1)', [examId, buildSubmission(DEFAULT_CORRECT)]),
+    stale.query('SELECT public.submit_exam($1, $2, 1, 1)', [examId, buildSubmission(DEFAULT_CORRECT)]),
     /replaced or is no longer active/
   );
   await assert.rejects(
-    stale.query('SELECT public.submit_exam($1, $2)', [examId, buildSubmission(DEFAULT_CORRECT)]),
+    stale.query('SELECT public.submit_exam($1, $2, NULL, 1)', [examId, buildSubmission(DEFAULT_CORRECT)]),
     /replaced or is no longer active/
   );
   await assert.rejects(
     stale.query(
-      'SELECT public.sync_active_session_progress($1, $2, 1)',
+      'SELECT public.sync_active_session_progress($1, $2, 1, 1)',
       [examId, buildProgress(started.jumbled_exam_data, DEFAULT_CORRECT)]
     ),
     /replaced or is no longer active/
@@ -240,11 +240,11 @@ test('sync_active_session_progress: version conflict returns current responses a
   // Invalid payloads are rejected by the server-side sanitizer.
   const s = await h.asStudent(student.id, student.sessionId);
   await assert.rejects(
-    s.query('SELECT public.sync_active_session_progress($1, $2, 2)', [examId, { Biology: [] }]),
+    s.query('SELECT public.sync_active_session_progress($1, $2, 2, 1)', [examId, { Biology: [] }]),
     /Unknown response subject/
   );
   await assert.rejects(
-    s.query('SELECT public.sync_active_session_progress($1, $2, 0)', [examId, tabA]),
+    s.query('SELECT public.sync_active_session_progress($1, $2, 0, 1)', [examId, tabA]),
     /positive expected session version/
   );
 

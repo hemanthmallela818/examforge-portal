@@ -1,4 +1,4 @@
-import { BarChart3, BookOpen, CalendarClock, CheckCircle2, CircleStop, ClipboardList, Clock, CloudUpload, Hourglass, IdCard, Inbox, LogOut, Play, Radio, RefreshCw, RotateCcw, Timer, TrendingUp, Users, XCircle } from 'lucide-react';
+import { BarChart3, BookOpen, CalendarClock, CheckCircle2, CircleStop, ClipboardList, Clock, CloudUpload, Hourglass, IdCard, Inbox, Lock, LogOut, Play, Radio, RefreshCw, RotateCcw, ShieldAlert, Timer, TrendingUp, Users, XCircle } from 'lucide-react';
 import { APP_ERROR, classifyAppError } from '../appErrors';
 import { Badge, Button, Card, EmptyState, LoadingBlock, cn } from './ui';
 import { useState, useEffect, useMemo, useRef } from 'react';
@@ -216,6 +216,7 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
   const [exams, setExams] = useState(/** @type {DashboardExam[]} */ ([]));
   const [completedExams, setCompletedExams] = useState(/** @type {Set<string>} */ (new Set()));
   const [completedResults, setCompletedResults] = useState(/** @type {Record<string, Scorecard>} */ ({}));
+  const [activeSessions, setActiveSessions] = useState(/** @type {Record<string, { id: string, exam_id: string, status: string, deadline_at: string | null, termination_reason: string | null, access_generation: number | null }>} */ ({}));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [pendingSubmissionExamId, setPendingSubmissionExamId] = useState(() => {
@@ -260,7 +261,8 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
       setIsSyncingPending(true);
       const { data: finalResults, error } = await supabase.rpc('submit_exam', {
         exam_id_param: pendingSubmissionExamId,
-        responses_param: parsed.responses
+        responses_param: parsed.responses,
+        access_generation_param: parsed.accessGeneration ?? null
       });
       if (error) {
         if (classifyAppError(error) === APP_ERROR.ALREADY_SUBMITTED) {
@@ -350,6 +352,19 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
         questionsData: ex.questions_data
       })));
 
+      // 3. Fetch active sessions for this student to reconcile blocked/resumable state
+      const { data: sessionsData, error: sessionsError } = await supabase
+        .from('active_sessions')
+        .select('id, exam_id, status, deadline_at, termination_reason, access_generation')
+        .eq('student_id', student.id);
+      if (sessionsError) throw sessionsError;
+      /** @type {Record<string, { id: string, exam_id: string, status: string, deadline_at: string | null, termination_reason: string | null, access_generation: number | null }>} */
+      const sessionsMap = {};
+      (sessionsData || []).forEach(s => {
+        if (s.exam_id) sessionsMap[s.exam_id] = s;
+      });
+      setActiveSessions(sessionsMap);
+
     } catch (err) {
       console.error("Failed to load dashboard data:", err);
       setError("Failed to fetch exams. Please check your connection.");
@@ -406,6 +421,18 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
       )
       .subscribe();
 
+    // Subscribe to active_sessions to reflect termination and re-grant events immediately
+    const sessionsChannel = supabase
+      .channel(`student-sessions-${student.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'active_sessions', filter: `student_id=eq.${student.id}` },
+        () => {
+          scheduleDashboardRefresh();
+        }
+      )
+      .subscribe();
+
     // Realtime is the fast path; polling is a safety net for school networks
     // that block WebSocket connections. A per-browser random period spreads the
     // polls of a whole class instead of aligning them on the same second.
@@ -416,6 +443,7 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
       clearInterval(refreshInterval);
       supabase.removeChannel(examsChannel);
       supabase.removeChannel(resultsChannel);
+      supabase.removeChannel(sessionsChannel);
     };
   // The subscription lifetime is bound to the authenticated student. Query
   // state is owned inside this component and refreshed by the callbacks.
@@ -554,12 +582,15 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
                     </div>
                     <div className={cn('flex flex-col gap-3 *:flex *:flex-col *:gap-4 *:rounded-xl *:border *:bg-white', group.cardBorder, '*:p-5 *:transition-shadow *:hover:shadow-card sm:*:flex-row sm:*:items-center sm:*:justify-between')}>
                       {groupExams.map(exam => {
+                        const activeSession = activeSessions[exam.id];
+                        const isTerminated = activeSession?.status === 'TERMINATED';
+                        const isServerActive = activeSession?.status === 'IN_PROGRESS';
                         const isCompleted = completedExams.has(exam.id);
                         const isEnding = !isCompleted && exam.id === endingExamId;
                         const isActive = exam.status === 'ACTIVE';
                         const isPending = exam.status === 'PENDING';
                         const isEnded = exam.status === 'ENDED';
-                        const isResumable = activeLocalSession?.activeExam?.id === exam.id;
+                        const isResumable = !isTerminated && (isServerActive || activeLocalSession?.activeExam?.id === exam.id);
                         const result = completedResults[exam.id];
                         const percent = result ? scorePercent(result) : null;
 
@@ -572,6 +603,8 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
                                   <Badge variant="success"><CheckCircle2 aria-hidden="true" /> Completed</Badge>
                                 ) : isEnding ? (
                                   <Badge variant="warning"><CloudUpload aria-hidden="true" /> Ended, result pending</Badge>
+                                ) : isTerminated ? (
+                                  <Badge variant="danger"><ShieldAlert aria-hidden="true" /> Blocked</Badge>
                                 ) : isEnded ? (
                                   <Badge variant="neutral"><CircleStop aria-hidden="true" /> Ended</Badge>
                                 ) : isPending ? (
@@ -596,8 +629,16 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
                                   <CloudUpload className="size-4 shrink-0 text-amber-600" aria-hidden="true" /> This attempt was ended. Your result will appear once it reaches the exam server.
                                 </p>
                               )}
-                              {!isCompleted && !isEnding && isActive && isResumable && (
-                                <AttemptCountdown endTime={/** @type {number} */ (activeLocalSession?.endTime)} />
+                              {isTerminated && (
+                                <p className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-red-700">
+                                  <ShieldAlert className="size-4 shrink-0 text-red-600" aria-hidden="true" /> Attempt blocked due to security violation ({activeSession?.termination_reason || 'SECURITY_VIOLATION'}). Progress is saved under your original deadline. Contact an administrator to request access re-grant.
+                                </p>
+                              )}
+                              {!isCompleted && !isEnding && !isTerminated && isActive && isResumable && (
+                                <AttemptCountdown endTime={activeSession?.deadline_at ? new Date(activeSession.deadline_at).getTime() : /** @type {number} */ (activeLocalSession?.endTime)} />
+                              )}
+                              {isTerminated && activeSession?.deadline_at && (
+                                <AttemptCountdown endTime={new Date(activeSession.deadline_at).getTime()} />
                               )}
                               {!isCompleted && isPending && (
                                 <p className="mt-2 inline-flex items-center gap-1.5 text-sm text-slate-600">
@@ -617,7 +658,15 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
                                     <BarChart3 aria-hidden="true" /> View Scorecard
                                   </Button>
                                 )
-                              ) : isEnding ? null : isEnded ? (
+                              ) : isEnding ? null : isTerminated ? (
+                                <Button
+                                  variant="secondary"
+                                  className="max-lg:min-h-11 cursor-not-allowed opacity-60"
+                                  disabled
+                                >
+                                  <Lock aria-hidden="true" /> Access Blocked
+                                </Button>
+                              ) : isEnded ? (
                                 <span className="text-sm text-slate-500">This exam has ended.</span>
                               ) : isActive ? (
                                 <Button

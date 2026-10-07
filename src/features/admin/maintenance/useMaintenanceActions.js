@@ -20,7 +20,7 @@ import { useAdminContext } from '../adminContext';
 export function useMaintenanceActions({
   fetchExams,
   fetchResults,
-  fetchStudents,
+  fetchStudents: _fetchStudents,
   fetchQuestionBank,
   fetchOperationalOverview,
   onApplicationReset
@@ -30,10 +30,8 @@ export function useMaintenanceActions({
     tableCounts,
     fetchTableCounts,
     loadedCollections,
-    classBook,
     setDestructiveAction
   } = useAdminContext();
-  const { fetchClasses } = classBook;
   const [isResettingApplication, setIsResettingApplication] = useState(false);
 
   /**
@@ -147,28 +145,34 @@ export function useMaintenanceActions({
       const preview = previewResult.data.preview;
       const count = (/** @type {unknown} */ value) => Number(value) || 0;
       setDestructiveAction({
-        title: 'Reset application data',
-        description: 'This operation cannot be undone. All academic data below is permanently removed so the installation can be reused.',
+        title: 'Clear Exam Data',
+        description: 'This operation cannot be undone. All exam schedules, attempts, results, and answer records are permanently removed while preserving students and configuration.',
         impact: [
-          { label: 'Student sign-in accounts', count: count(preview.student_accounts) },
-          { label: 'Results', count: count(preview.results) },
-          { label: 'Exams', count: count(preview.exams) },
+          { label: 'Exams & test papers', count: count(preview.exams) },
+          { label: 'Student results', count: count(preview.results) },
           { label: 'Active sessions', count: count(preview.active_sessions) },
-          { label: 'Reusable questions', count: count(preview.questions) },
-          { label: 'Classes', count: count(preview.classes) },
-          { label: 'Import-history rows', count: count(preview.import_history) },
-          { label: 'Previous audit events', count: count(preview.audit_events) }
+          { label: 'Answer reviews', count: count(preview.reviews) },
+          { label: 'Exam answers & keys', count: count(preview.answers) },
+          { label: 'Exam status events', count: count(preview.status_events) }
         ],
-        preserved: ['your root account', 'managed administrator accounts', 'private Storage files'],
-        phrase: 'RESET APPLICATION DATA',
-        confirmLabel: 'Reset application data',
+        preserved: [
+          'student accounts & auth credentials',
+          'classes & sections',
+          'subjects & marking patterns',
+          'reusable question bank',
+          'import history',
+          'audit logs',
+          'Storage files'
+        ],
+        phrase: 'CLEAR EXAM DATA',
+        confirmLabel: 'Clear Exam Data',
         run: async (confirmation) => {
           setIsResettingApplication(true);
           try {
             const resetResult = await supabase.functions.invoke('manage-student', {
               body: { action: 'reset-application', confirmation }
             });
-            if (resetResult.error || resetResult.data?.reset !== true) {
+            if (resetResult.error || (resetResult.data?.cleared !== true && resetResult.data?.reset !== true)) {
               throw new Error(await readFunctionInvocationError(resetResult, 'Application reset failed'));
             }
 
@@ -177,14 +181,11 @@ export function useMaintenanceActions({
             await Promise.all([
               fetchTableCounts(),
               fetchExams(),
-              fetchStudents(),
-              fetchQuestionBank(),
-              fetchClasses(),
+              fetchResults(),
               fetchOperationalOverview()
             ]);
-            const removed = resetResult.data.deletedAuthUsers || 0;
-            showToast(`Application data reset completed. ${removed} student sign-in account(s) removed.`, 'success');
-            return `Application data reset completed. ${removed} student sign-in account(s) removed. Root and administrator accounts were preserved.`;
+            showToast('Exam data cleared successfully. Student accounts and configuration were preserved.', 'success');
+            return 'Exam data cleared successfully. Student accounts, auth credentials, question bank, classes, and Storage files were preserved.';
           } catch (error) {
             console.error('Application reset failed:', error);
             throw error;
@@ -206,6 +207,7 @@ export function useMaintenanceActions({
     handleRootScopedClear,
     handleDeleteAllQuestions,
     handleClearTable,
-    handleResetApplicationData
+    handleResetApplicationData,
+    handleClearExamData: handleResetApplicationData
   };
 }

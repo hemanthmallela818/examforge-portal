@@ -42,7 +42,7 @@ async function startWithProgress(studentId, examId, answers) {
   const s = await h.asStudent(student.id, student.sessionId);
   const started = await s.value('SELECT public.start_exam_session($1, NULL, NULL)', [examId]);
   const saved = await s.value(
-    'SELECT public.sync_active_session_progress($1, $2, 1)',
+    'SELECT public.sync_active_session_progress($1, $2, 1, 1)',
     [examId, buildProgress(started.jumbled_exam_data, answers)]
   );
   assert.equal(saved.success, true);
@@ -128,7 +128,7 @@ test('scheduler finalizes only sessions past deadline + grace, grading the serve
 
   // The expired student's stale device receives the committed result.
   const stale = await h.asStudent(expired.id, expired.sessionId);
-  const recovered = await stale.value('SELECT public.submit_exam($1, NULL, 2)', [examId]);
+  const recovered = await stale.value('SELECT public.submit_exam($1, NULL, 2, 1)', [examId]);
   assert.equal(recovered.totalScore, 8);
 
   // Clean up remaining sessions for the next test.

@@ -154,10 +154,10 @@ function isValidPendingSubmission(record, student, examId) {
 }
 
 /**
- * @param {StudentExamScope & { responses: SubmissionResponse[] }} input
+ * @param {StudentExamScope & { responses: SubmissionResponse[], accessGeneration?: number | null }} input
  * @returns {StorageWriteResult<{ record: PendingSubmissionRecord }>}
  */
-export function savePendingSubmissionRecord({ student, examId, userUuid, responses, storage }) {
+export function savePendingSubmissionRecord({ student, examId, userUuid, responses, accessGeneration, storage }) {
   const studentKey = studentStorageKey(student, userUuid);
   if (!studentKey || !examId || !Array.isArray(responses)) {
     return { success: false, error: new Error('Student, exam, and responses are required.') };
@@ -168,7 +168,8 @@ export function savePendingSubmissionRecord({ student, examId, userUuid, respons
     studentId: String(student?.id || studentKey),
     userUuid: String(userUuid || student?.docId || ''),
     responses,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    accessGeneration: accessGeneration !== undefined && accessGeneration !== null ? Number(accessGeneration) : null
   };
   const recordKey = formatPendingSubmissionStorageKey(studentKey, examId);
   const pointerKey = formatPendingSubmissionPointerKey(studentKey);
@@ -274,10 +275,10 @@ export function finishPendingSubmissionSync({ student, examId, userUuid }) {
 }
 
 /**
- * @param {StudentExamScope} scope
+ * @param {StudentExamScope & { reason?: string | null, accessGeneration?: number | null }} scope
  * @returns {boolean}
  */
-export function savePendingTerminationRecord({ student, examId, userUuid, storage }) {
+export function savePendingTerminationRecord({ student, examId, userUuid, reason, accessGeneration, storage }) {
   const studentKey = studentStorageKey(student, userUuid);
   if (!studentKey || !examId) return false;
   return storageSet(storage, formatPendingTerminationStorageKey(studentKey), JSON.stringify({
@@ -285,7 +286,9 @@ export function savePendingTerminationRecord({ student, examId, userUuid, storag
     examId: String(examId),
     studentId: String(student?.id || studentKey),
     userUuid: String(userUuid || student?.docId || ''),
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    reason: reason || 'SECURITY_VIOLATION',
+    accessGeneration: accessGeneration !== undefined && accessGeneration !== null ? Number(accessGeneration) : null
   }));
 }
 
@@ -418,6 +421,7 @@ export function saveOfflineRecoveryRecord({
   currentIndices,
   version,
   endTime,
+  accessGeneration,
   storage
 }) {
   if (!student || !examId) {
@@ -439,7 +443,8 @@ export function saveOfflineRecoveryRecord({
       endTime: Number(endTime || 0),
       activeSubject: String(activeSubject || ''),
       currentIndices: currentIndices && typeof currentIndices === 'object' ? currentIndices : {},
-      userResponses: userResponses && typeof userResponses === 'object' ? userResponses : {}
+      userResponses: userResponses && typeof userResponses === 'object' ? userResponses : {},
+      accessGeneration: accessGeneration !== undefined && accessGeneration !== null ? Number(accessGeneration) : null
     };
 
     const target = localStore(storage);
@@ -463,7 +468,8 @@ export function saveOfflineRecoveryRecord({
       currentIndices,
       endTime,
       savedAt: record.savedAt,
-      version: record.version
+      version: record.version,
+      accessGeneration: record.accessGeneration
     }));
     return { success: true, error: null };
   } catch (err) {
@@ -622,6 +628,7 @@ export function reconcileOfflineRecovery({
   examData,
   serverResponses,
   serverVersion,
+  serverAccessGeneration,
   localRecord
 }) {
   const authoritative = serverResponses && typeof serverResponses === 'object' ? serverResponses : {};
@@ -633,7 +640,8 @@ export function reconcileOfflineRecovery({
   const authoritativeVersion = Number(serverVersion);
   if (!Number.isInteger(localVersion) || localVersion < 1
       || !Number.isInteger(authoritativeVersion) || authoritativeVersion < 1
-      || localVersion !== authoritativeVersion) {
+      || localVersion !== authoritativeVersion
+      || (serverAccessGeneration !== undefined && localRecord.accessGeneration !== serverAccessGeneration)) {
     return {
       responses: authoritative,
       conflict: true,

@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { useRef } from 'react';
-import { MAX_EXAM_WARNINGS, useExamLockdown } from '../../src/features/exam/useExamLockdown';
-import { readExamWarningCount } from '../../src/examLogic';
+import { useExamLockdown } from '../../src/features/exam/useExamLockdown';
 
 const student = { id: 'ABC123', docId: 'uuid-abc', name: 'Student' };
 const EXAM_ID = 'exam-1';
@@ -39,11 +38,6 @@ const leaveFullscreen = async () => {
   fullscreenElement = null;
   await act(async () => { document.dispatchEvent(new Event('fullscreenchange')); });
 };
-const returnToExam = async () => {
-  visibility = 'visible';
-  focused = true;
-  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Return to exam' })); });
-};
 
 describe('exam lockdown', () => {
   beforeEach(() => {
@@ -63,7 +57,7 @@ describe('exam lockdown', () => {
     delete (/** @type {any} */ (document)).visibilityState;
   });
 
-  it('blocks right-click, copy and shortcut keys without counting them', async () => {
+  it('blocks right-click, copy and shortcut keys without ending the attempt', async () => {
     const onTerminate = vi.fn();
     const toasts = /** @type {string[]} */ ([]);
     const onToast = (/** @type {Event} */ event) => toasts.push(/** @type {CustomEvent} */ (event).detail.message);
@@ -85,61 +79,62 @@ describe('exam lockdown', () => {
     expect(toasts[0]).toBe('Right-click is disabled during the exam.');
   });
 
-  it('gives a numbered warning each time the student leaves and ends the exam after the last one', async () => {
+  it('immediately blocks interaction and ends exam on first tab switch', async () => {
     const onTerminate = vi.fn();
     render(<Harness onTerminate={onTerminate} />);
 
     await leaveTab();
-    expect(screen.getByTestId('warning').textContent).toBe('1:tab');
     expect(screen.getByTestId('cover').textContent).toBe('covered');
-    await returnToExam();
-    expect(screen.getByTestId('cover').textContent).toBe('open');
-
-    await leaveFullscreen();
-    expect(screen.getByTestId('warning').textContent).toBe(`${MAX_EXAM_WARNINGS}:fullscreen`);
-    await returnToExam();
-    expect(onTerminate).not.toHaveBeenCalled();
-
-    await leaveTab();
+    expect(onTerminate).toHaveBeenCalledTimes(1);
     expect(onTerminate).toHaveBeenCalledWith('tab');
   });
 
-  it('keeps a new warning on screen until the student acts, even if fullscreen and focus come back', async () => {
-    render(<Harness onTerminate={vi.fn()} />);
-    await leaveTab();
-    visibility = 'visible';
-    focused = true;
+  it('immediately blocks interaction and ends exam on fullscreen exit', async () => {
+    const onTerminate = vi.fn();
+    render(<Harness onTerminate={onTerminate} />);
+
+    await leaveFullscreen();
+    expect(screen.getByTestId('cover').textContent).toBe('covered');
+    expect(onTerminate).toHaveBeenCalledTimes(1);
+    expect(onTerminate).toHaveBeenCalledWith('fullscreen');
+  });
+
+  it('immediately blocks interaction and ends exam on Escape key', async () => {
+    const onTerminate = vi.fn();
+    render(<Harness onTerminate={onTerminate} />);
+
     await act(async () => {
-      window.dispatchEvent(new Event('focus'));
-      document.dispatchEvent(new Event('visibilitychange'));
-      document.dispatchEvent(new Event('fullscreenchange'));
+      fireEvent.keyDown(window, { key: 'Escape' });
     });
     expect(screen.getByTestId('cover').textContent).toBe('covered');
-    await returnToExam();
-    expect(screen.getByTestId('cover').textContent).toBe('open');
+    expect(onTerminate).toHaveBeenCalledTimes(1);
+    expect(onTerminate).toHaveBeenCalledWith('escape');
   });
 
-  it('counts one warning while the student is still away, however many events fire', async () => {
+  it('immediately blocks interaction and ends exam on blur', async () => {
     const onTerminate = vi.fn();
     render(<Harness onTerminate={onTerminate} />);
+
+    await act(async () => {
+      window.dispatchEvent(new Event('blur'));
+    });
+    expect(screen.getByTestId('cover').textContent).toBe('covered');
+    expect(onTerminate).toHaveBeenCalledTimes(1);
+    expect(onTerminate).toHaveBeenCalledWith('blur');
+  });
+
+  it('deduplicates overlapping events to a single termination call', async () => {
+    const onTerminate = vi.fn();
+    render(<Harness onTerminate={onTerminate} />);
+
     await leaveTab();
     await leaveFullscreen();
-    await leaveTab();
-    expect(screen.getByTestId('warning').textContent).toBe('1:tab');
-    expect(readExamWarningCount({ student, examId: EXAM_ID })).toBe(1);
-  });
+    await act(async () => {
+      window.dispatchEvent(new Event('blur'));
+      fireEvent.keyDown(window, { key: 'Escape' });
+    });
 
-  it('keeps the count through a page reload', async () => {
-    const onTerminate = vi.fn();
-    const first = render(<Harness onTerminate={onTerminate} />);
-    await leaveTab();
-    await returnToExam();
-    await leaveTab();
-    await returnToExam();
-    first.unmount();
-
-    render(<Harness onTerminate={onTerminate} />);
-    await leaveTab();
+    expect(onTerminate).toHaveBeenCalledTimes(1);
     expect(onTerminate).toHaveBeenCalledWith('tab');
   });
 });

@@ -121,3 +121,22 @@ test('offline storage failure is returned to the UI instead of being reported as
     globalThis.localStorage = originalStorage;
   }
 });
+
+test('re-grant never imports local answers from a previous or missing access generation', () => {
+  const server = createInitialResponses(exam);
+  const local = structuredClone(server);
+  local.Physics[0] = { selectedOption: 2, status: 'ANSWERED' };
+  for (const accessGeneration of [1, undefined]) {
+    const result = reconcileOfflineRecovery({
+      examData: exam, serverResponses: server, serverVersion: 4, serverAccessGeneration: 2,
+      localRecord: { version: 4, accessGeneration, userResponses: local }
+    });
+    assert.equal(result.usedLocal, false);
+    assert.deepEqual(result.responses, server);
+  }
+  const current = reconcileOfflineRecovery({
+    examData: exam, serverResponses: server, serverVersion: 4, serverAccessGeneration: 2,
+    localRecord: { version: 4, accessGeneration: 2, userResponses: local }
+  });
+  assert.equal(current.responses.Physics[0].selectedOption, 2);
+});

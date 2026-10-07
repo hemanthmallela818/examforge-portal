@@ -6,7 +6,6 @@ import { AlertTriangle, CheckCircle2, LayoutGrid, RefreshCw, Send, ShieldCheck, 
 import { Button } from '../../components/ui';
 import OfflineOverlay from '../../components/OfflineOverlay';
 import { useExamTextSize } from './useExamTextSize';
-import { MAX_EXAM_WARNINGS, examLeaveReasonText, examWarningConsequenceText } from './useExamLockdown';
 import { EXAM_NARROW_QUERY, useMediaQuery } from './useMediaQuery';
 
 const ExamNavbar = lazy(() => import('../../components/ExamNavbar'));
@@ -39,9 +38,7 @@ export default function ActiveExamView({ session, currentStudent }) {
     isExamLocked,
     studentSessionLocked,
     lockdownActive,
-    warning,
     isTerminating,
-    handleReturnToExam,
     showSubmitModal,
     setShowSubmitModal,
     submitButtonRef,
@@ -123,47 +120,13 @@ export default function ActiveExamView({ session, currentStudent }) {
           </button>
         </div>
       )}
-      {isTerminating ? (
+      {(isTerminating || lockdownActive) && (
         <div role="alert" aria-live="assertive" className="exam-security-cover">
           <div className="exam-security-spinner" aria-hidden="true" />
           <span className="inline-flex items-center gap-2 text-base font-semibold tracking-tight">
             <ShieldCheck className="size-5 text-brand-300" aria-hidden="true" />
             Ending your exam…
           </span>
-        </div>
-      ) : lockdownActive && (
-        <div
-          role="alert"
-          aria-live="assertive"
-          className="exam-security-cover"
-          onPointerDown={handleReturnToExam}
-        >
-          {warning ? (
-            <div className="mx-4 flex max-w-md flex-col items-center gap-3 text-center">
-              <span className="inline-flex items-center gap-2 rounded-full bg-amber-400 px-3 py-1 text-sm font-bold text-slate-950 tabular-nums">
-                <AlertTriangle className="size-4" aria-hidden="true" />
-                Warning {warning.count} of {MAX_EXAM_WARNINGS}
-              </span>
-              <p className="text-lg font-semibold tracking-tight">{examLeaveReasonText(warning.reason)}</p>
-              <p className="text-sm font-medium text-white/80">Leaving the exam is not allowed. {examWarningConsequenceText(warning.count)}</p>
-              <button
-                type="button"
-                onClick={handleReturnToExam}
-                className="mt-1 inline-flex min-h-11 items-center gap-2 rounded-lg bg-white px-5 text-sm font-semibold text-slate-900 shadow hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
-              >
-                <ShieldCheck className="size-4 text-brand-600" aria-hidden="true" />
-                Return to exam
-              </button>
-            </div>
-          ) : (
-            <>
-              <div className="exam-security-spinner" aria-hidden="true" />
-              <span className="inline-flex items-center gap-2 text-base font-semibold tracking-tight">
-                <ShieldCheck className="size-5 text-brand-300" aria-hidden="true" />
-                Restoring secure examination view…
-              </span>
-            </>
-          )}
         </div>
       )}
       {showSubmitModal && (
@@ -177,7 +140,7 @@ export default function ActiveExamView({ session, currentStudent }) {
             <Button data-modal-autofocus variant="secondary" size="lg" className="flex-1" onClick={() => setShowSubmitModal(false)}>
               Cancel
             </Button>
-            <Button variant="success" size="lg" className="flex-1" onClick={confirmSubmitExam} disabled={isSubmitting || studentSessionLocked}>
+            <Button variant="success" size="lg" className="flex-1" onClick={confirmSubmitExam} disabled={isSubmitting || studentSessionLocked || isTerminating || lockdownActive}>
               {isSubmitting ? 'Submitting…' : <><CheckCircle2 aria-hidden="true" />Yes, Submit</>}
             </Button>
           </div>
@@ -192,7 +155,7 @@ export default function ActiveExamView({ session, currentStudent }) {
           <Button
             variant="danger"
             onClick={confirmSubmitExam}
-            disabled={isSubmitting || studentSessionLocked}
+            disabled={isSubmitting || studentSessionLocked || isTerminating || lockdownActive}
             className="shrink-0"
           >
             {isSubmitting ? 'Submitting...' : <><RefreshCw aria-hidden="true" /> Retry Submit Exam</>}
@@ -269,7 +232,7 @@ export default function ActiveExamView({ session, currentStudent }) {
           submitButtonRef={submitButtonRef}
           isFirstQuestionOfExam={isFirstQuestionOfExam}
           isLastQuestionOfExam={isLastQuestionOfExam}
-          disabled={isExamLocked || studentSessionLocked}
+          disabled={isExamLocked || studentSessionLocked || isTerminating || lockdownActive}
         />
         {!isNarrowLayout && gridPanel}
       </div>

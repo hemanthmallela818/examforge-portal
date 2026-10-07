@@ -42,8 +42,13 @@ test('pg_cron is absent in PGlite, so the scheduler migration takes its document
 test('latest schema objects exist after replay', async () => {
   const su = await h.asSuperuser();
   const functions = [
-    'public.submit_exam(uuid,jsonb,integer)',
-    'public.sync_active_session_progress(uuid,jsonb,integer)',
+    'public.submit_exam(uuid,jsonb,integer,integer)',
+    'public.sync_active_session_progress(uuid,jsonb,integer,integer)',
+    'public.sync_exam_subject_time(uuid,jsonb,integer)',
+    'public.terminate_exam(uuid,text,integer)',
+    'public.admin_delete_exam(uuid,text)',
+    'public.admin_regrant_exam_access(text)',
+    'public.get_admin_terminated_students_page(integer,integer,text)',
     'public.finalize_expired_sessions_internal(integer,integer,uuid,text)',
     'public.run_scheduled_session_finalization()',
     'public.admin_finalize_expired_sessions(integer)',

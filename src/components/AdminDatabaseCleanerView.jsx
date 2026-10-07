@@ -83,7 +83,7 @@ const TABLE_METADATA = [
 /** @param {AdminDatabaseCleanerViewProps} props */
 const AdminDatabaseCleanerView = ({
   dbSize,
-  formatBytes,
+  formatBytes: _formatBytes,
   tableCounts,
   onMaintainTable,
   isRootDeveloper,
@@ -98,17 +98,18 @@ const AdminDatabaseCleanerView = ({
             <ShieldAlert className="size-5" aria-hidden="true" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Danger zone</p>
-            <h3 id="root-reset-title" className="text-base font-semibold text-red-900">Root Developer Reset (Full Installation — Optional)</h3>
+            <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Root developer maintenance</p>
+            <h3 id="root-reset-title" className="text-base font-semibold text-red-900">Clear Exam Data (Root Developer Only)</h3>
           </div>
         </div>
         <CardContent className="space-y-3">
           <p className="text-sm leading-relaxed text-slate-700">
-            This removes all student accounts and application data in one operation. For normal reuse, use the separate root-only buttons below instead.
+            This operation clears all scheduled and completed exams, student results, active sessions, answer keys, reviews, and status events in one audited transaction.
+            Student accounts, authentication credentials, classes, subjects, marking patterns, question bank, imports, audit logs, and Private Storage files are preserved.
             Your root account and administrator accounts are preserved.
           </p>
           <p className="text-sm text-slate-500">
-            This includes results, exams, sessions, students, classes, questions, imports, and previous audit events. Private Storage files are not removed.
+            Private Storage files are not removed. Confirmation phrase: <span className="font-mono font-semibold text-red-800">CLEAR EXAM DATA</span>.
           </p>
           <Button
             variant="danger"
@@ -118,7 +119,7 @@ const AdminDatabaseCleanerView = ({
             disabled={isResetting}
           >
             <AlertTriangle aria-hidden="true" />
-            {isResetting ? 'Resetting Application Data…' : 'Reset Application Data'}
+            {isResetting ? 'Clearing Exam Data…' : 'Clear Exam Data'}
           </Button>
         </CardContent>
       </Card>
@@ -132,22 +133,22 @@ const AdminDatabaseCleanerView = ({
           </div>
           <div className="min-w-0">
             <h3 className="text-base font-semibold text-slate-900">Supabase Database Storage</h3>
-            <CardDescription className="mt-0.5">Current PostgreSQL database size reported by the server.</CardDescription>
+            <CardDescription className="mt-0.5">Current PostgreSQL public-table storage reported by the server.</CardDescription>
           </div>
         </div>
         <div className="text-right">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Database size</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Public-table storage (MB)</p>
           <p className="text-2xl font-semibold tracking-tight text-brand-700 tabular-nums">
-            {Number.isFinite(dbSize) ? formatBytes(/** @type {number} */ (dbSize)) : 'Not loaded'}
+            {Number.isFinite(dbSize) ? (Number(dbSize) / 1048576).toFixed(2) : 'Not loaded'}
           </p>
         </div>
       </CardHeader>
       <CardContent className="space-y-2 text-sm leading-relaxed text-slate-500">
         <p>
-          Storage capacity and remaining quota depend on the configured Supabase plan. Verify quota and alerts in the provider dashboard before an examination window.
+          Storage capacity and remaining quota depend on the configured Supabase plan. The current metric sums public-table storage, including indexes.
         </p>
         <p>
-          After a cleanup, the size shown here may stay similar for a while. PostgreSQL keeps the freed space and reuses it for new data, so row counts below are the reliable proof that data was removed.
+          Retained data and reusable PostgreSQL space keep this number above zero after clearing. PostgreSQL retains freed disk pages for future writes rather than shrinking OS table files immediately, so table row counts below are the reliable proof of data removal.
         </p>
       </CardContent>
     </Card>

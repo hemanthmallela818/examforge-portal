@@ -44,12 +44,10 @@ test('root reset uses the server function for Auth cleanup and never exposes ser
   assert.deepEqual(rootActions.sort(), ['clear-scoped-data', 'create-admin', 'preview-reset', 'reset-application']);
   assert.match(edge, /const isRootOnlyAction = definition\?\.authority === 'root'/);
   assert.match(edge, /if \(!isRootOnlyAction\)/);
-  assert.match(edge, /admin\.rpc\('root_application_reset_preview_for_actor'/);
-  assert.match(edge, /admin\.rpc\('root_reset_application_data_for_actor'/);
+  assert.match(edge, /admin\.rpc\('root_clear_exam_data_preview_for_actor'/);
+  assert.match(edge, /admin\.rpc\('root_clear_exam_data_for_actor'/);
   // Unexpected database errors are logged, not returned verbatim (safeDbMessage).
-  assert.match(edge, /safeDbMessage\(resetError, 'Application data reset failed'\)/);
-  assert.match(edge, /admin\.auth\.admin\.deleteUser\(accountId\)/);
-  assert.match(edge, /offset \+= 10/);
+  assert.match(edge, /safeDbMessage\(clearError, 'Clearing exam data failed'\)/);
   // json() is now bound per request (json({ ... })); cover both call shapes.
   assert.doesNotMatch(edge, /json\((?:request, )?\{[^}]*auth_user_ids/);
   assert.match(authority, /REVOKE ALL ON FUNCTION public\.root_reset_application_data\(text\) FROM authenticated/);
@@ -65,11 +63,11 @@ test('only the root UI exposes the destructive reset with preview and two confir
   ]);
 
   assert.match(cleaner, /isRootDeveloper &&/);
-  assert.match(cleaner, /Root Developer Reset/);
+  assert.match(cleaner, /Clear Exam Data/);
   assert.match(cleaner, /root account and administrator accounts are preserved/i);
   assert.match(cleaner, /Private Storage files are not removed/);
   assert.match(dashboard, /action: 'preview-reset'/);
-  assert.match(dashboard, /phrase: 'RESET APPLICATION DATA'/);
+  assert.match(dashboard, /phrase: 'CLEAR EXAM DATA'/);
   assert.match(dashboard, /This operation cannot be undone/);
   assert.match(dashboard, /action: 'reset-application'/);
   assert.match(dashboard, /readFunctionInvocationError\(resetResult, 'Application reset failed'\)/);

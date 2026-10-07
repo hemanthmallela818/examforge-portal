@@ -439,7 +439,8 @@
   }
 
   .admin-dashboard-topbar {
-    top: 112px !important;
+    position: static !important;
+    top: auto !important;
     padding: 14px 18px !important;
   }
 
@@ -551,7 +552,8 @@
   }
 
   .admin-dashboard-topbar {
-    top: 108px !important;
+    position: static !important;
+    top: auto !important;
     padding: 12px !important;
   }
 
