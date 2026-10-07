@@ -12,7 +12,10 @@ import {
   ScrollText,
   Trash2,
   UserX,
-  CalendarCheck
+  CalendarCheck,
+  ChevronLeft,
+  ChevronRight,
+  ShieldAlert
 } from 'lucide-react';
 import { Alert, Badge, Button, Card, CardContent, CardDescription, CardHeader, EmptyState, StatCard, Table, TBody, TD, TH, THead, TR, cn } from './ui';
 
@@ -46,6 +49,11 @@ const HEALTH_ITEM_META = [
  * @property {() => unknown} onCleanupAssets
  * @property {import('../features/admin/maintenance/useOperations').AuditEvent[]} auditEvents
  * @property {Array<Record<string, any>>} [clientErrors] Recent redacted browser errors (C18).
+ * @property {{ rows: any[], total: number, page: number, pageSize: number }} [terminatedPage]
+ * @property {boolean} [terminatedLoading]
+ * @property {string | null} [regrantingSessionId]
+ * @property {(sessionId: string, studentName: string, examTitle: string) => unknown} [onRegrantAccess]
+ * @property {(page: number) => unknown} [onPageChange]
  */
 
 /** @param {AdminOperationsViewProps} props */
@@ -60,7 +68,12 @@ const AdminOperationsView = ({
   onScanAssets,
   onCleanupAssets,
   auditEvents,
-  clientErrors = []
+  clientErrors = [],
+  terminatedPage = { rows: [], total: 0, page: 1, pageSize: 10 },
+  terminatedLoading = false,
+  regrantingSessionId = null,
+  onRegrantAccess,
+  onPageChange
 }) => {
   const healthItems = operationalHealth ? [
     ['Active exams', operationalHealth.active_exams],
@@ -71,6 +84,12 @@ const AdminOperationsView = ({
     ['Audit events in last 24 hours', operationalHealth.audit_events_last_24_hours]
   ] : [];
   const healthy = operationalHealth?.status === 'HEALTHY';
+
+  const terminatedRows = Array.isArray(terminatedPage?.rows) ? terminatedPage.rows : [];
+  const terminatedTotal = Number(terminatedPage?.total) || 0;
+  const terminatedCurrentPage = Number(terminatedPage?.page) || 1;
+  const terminatedPageSize = Number(terminatedPage?.pageSize) || 10;
+  const terminatedTotalPages = Math.max(1, Math.ceil(terminatedTotal / terminatedPageSize));
 
   return (
     <div className="animate-fade-in flex flex-col gap-6">
@@ -132,6 +151,122 @@ const AdminOperationsView = ({
         </CardContent>
       </Card>
 
+      <Card as="section" aria-labelledby="terminated-students-title">
+        <CardHeader className="items-center">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-amber-50 text-amber-600 ring-1 ring-amber-100">
+              <ShieldAlert className="size-5" aria-hidden="true" />
+            </div>
+            <div className="min-w-0">
+              <h2 id="terminated-students-title" className="text-lg font-semibold tracking-tight text-slate-900">Terminated students</h2>
+              <CardDescription className="mt-0.5">Student attempts blocked by security lockdown. Active attempts can be re-granted access under their original deadline.</CardDescription>
+            </div>
+          </div>
+          {terminatedTotal > 0 && (
+            <Badge variant="warning" className="tabular-nums">
+              {terminatedTotal} terminated {terminatedTotal === 1 ? 'attempt' : 'attempts'}
+            </Badge>
+          )}
+        </CardHeader>
+        <CardContent>
+          {terminatedRows.length === 0 ? (
+            <EmptyState
+              icon={UserX}
+              title="No terminated student attempts"
+              description="Student attempts blocked due to tab switching, window blur, or security exit will appear here."
+            />
+          ) : (
+            <div className="space-y-4">
+              <Table>
+                <THead>
+                  <TR>
+                    <TH>Student</TH>
+                    <TH>Exam</TH>
+                    <TH>Reason</TH>
+                    <TH>Terminated At</TH>
+                    <TH>Deadline</TH>
+                    <TH>Status</TH>
+                    <TH className="text-right">Action</TH>
+                  </TR>
+                </THead>
+                <TBody>
+                  {terminatedRows.map(row => {
+                    const isRegranting = regrantingSessionId === row.session_id;
+                    return (
+                      <TR key={row.session_id || `${row.student_id}_${row.exam_id}`}>
+                        <TD className="text-xs">
+                          <span className="font-semibold text-slate-900">{row.student_name || '—'}</span>
+                          <span className="block font-mono text-[11px] text-slate-500">{row.student_id}</span>
+                        </TD>
+                        <TD className="text-xs font-medium text-slate-800">{row.exam_title || '—'}</TD>
+                        <TD className="text-xs">
+                          <Badge variant="neutral" className="font-mono text-[11px]">
+                            {row.termination_reason || 'UNSPECIFIED'}
+                          </Badge>
+                        </TD>
+                        <TD className="whitespace-nowrap text-xs text-slate-500 tabular-nums">
+                          {row.terminated_at ? new Date(row.terminated_at).toLocaleString() : '—'}
+                        </TD>
+                        <TD className="whitespace-nowrap text-xs text-slate-500 tabular-nums">
+                          {row.deadline_at ? new Date(row.deadline_at).toLocaleString() : '—'}
+                        </TD>
+                        <TD className="whitespace-nowrap text-xs">
+                          {row.eligible ? (
+                            <Badge variant="success">Eligible</Badge>
+                          ) : row.attempt_state === 'FINALIZED' ? (
+                            <Badge variant="neutral">Finalized</Badge>
+                          ) : (
+                            <Badge variant="danger">Expired</Badge>
+                          )}
+                        </TD>
+                        <TD className="text-right">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            disabled={!row.eligible || isRegranting || terminatedLoading}
+                            onClick={() => onRegrantAccess?.(row.session_id, row.student_name, row.exam_title)}
+                          >
+                            {isRegranting ? 'Re-granting…' : 'Re-grant Access'}
+                          </Button>
+                        </TD>
+                      </TR>
+                    );
+                  })}
+                </TBody>
+              </Table>
+
+              {terminatedTotalPages > 1 && (
+                <div className="flex items-center justify-between border-t border-slate-100 pt-3 text-xs text-slate-500">
+                  <span>
+                    Page {terminatedCurrentPage} of {terminatedTotalPages} ({terminatedTotal} total)
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={terminatedCurrentPage <= 1 || terminatedLoading}
+                      onClick={() => onPageChange?.(terminatedCurrentPage - 1)}
+                    >
+                      <ChevronLeft aria-hidden="true" />
+                      Previous
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={terminatedCurrentPage >= terminatedTotalPages || terminatedLoading}
+                      onClick={() => onPageChange?.(terminatedCurrentPage + 1)}
+                    >
+                      Next
+                      <ChevronRight aria-hidden="true" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <Card as="section">
         <CardHeader className="items-center">
           <div className="flex min-w-0 items-start gap-3">
@@ -170,7 +305,7 @@ const AdminOperationsView = ({
               </Alert>
 
               {unreferencedAssets.length > 0 && (
-                <div className="max-h-48 overflow-y-auto rounded-xl border border-slate-200 bg-white">
+                <div className="rounded-xl border border-slate-200 bg-white">
                   <ul className="divide-y divide-slate-100 text-xs text-slate-600">
                     {unreferencedAssets.slice(0, 50).map((/** @type {UntrustedInput} */ file, /** @type {number} */ index) => (
                       <li key={`${file.name || file}-${index}`} className="flex items-start gap-2 px-3 py-2 break-all">

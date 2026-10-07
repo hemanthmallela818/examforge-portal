@@ -20,10 +20,10 @@ before(async () => {
   const a = await h.asStudent(alice.id, alice.sessionId);
   const started = await a.value('SELECT public.start_exam_session($1, NULL, NULL)', [submittedExam]);
   await a.query(
-    'SELECT public.sync_active_session_progress($1, $2, 1)',
+    'SELECT public.sync_active_session_progress($1, $2, 1, 1)',
     [submittedExam, buildProgress(started.jumbled_exam_data, DEFAULT_CORRECT)]
   );
-  await a.query('SELECT public.submit_exam($1, NULL, 2)', [submittedExam]);
+  await a.query('SELECT public.submit_exam($1, NULL, 2, 1)', [submittedExam]);
   await a.query('SELECT public.start_exam_session($1, NULL, NULL)', [runningExam]);
 });
 

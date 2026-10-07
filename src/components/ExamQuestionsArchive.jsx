@@ -175,7 +175,7 @@ const ExamQuestionsArchive = ({ exam }) => {
         {filteredQuestions.length === 0 ? (
           <EmptyState icon={SearchX} title="No questions found matching your filter criteria." />
         ) : (
-          <div className="flex max-h-[700px] flex-col gap-4 overflow-y-auto pr-1">
+          <div className="flex flex-col gap-4">
             {filteredQuestions.map((q, idx) => {
               const { info, isValue, correct } = answerShape(q);
               return (

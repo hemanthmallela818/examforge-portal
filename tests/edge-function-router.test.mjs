@@ -192,13 +192,13 @@ test('authority: AAL2 for admin and unknown actions, root check for root actions
 
   // Root-only actions never ask for AAL2, but still require the admin profile.
   const rootPreview = await call({ action: 'preview-reset' }, { aal2: false, root: true, adminRpc: {
-    root_application_reset_preview_for_actor: () => ({ data: { students: 3 }, error: null }),
+    root_clear_exam_data_preview_for_actor: () => ({ data: { exams: 3 }, error: null }),
   } });
   assert.equal(rootPreview.status, 200);
-  assert.deepEqual(rootPreview.body, { preview: { students: 3 } });
+  assert.deepEqual(rootPreview.body, { preview: { exams: 3 } });
   assert.ok(!callNames(rootPreview.calls).includes('caller.rpc:is_admin_aal2'));
   assert.deepEqual(callNames(rootPreview.calls), [
-    'select:profiles', 'caller.rpc:is_root_developer', 'admin.rpc:root_application_reset_preview_for_actor',
+    'select:profiles', 'caller.rpc:is_root_developer', 'admin.rpc:root_clear_exam_data_preview_for_actor',
   ]);
 
   const studentProfile = await call({ action: 'preview-reset' }, { root: true, tables: {
@@ -243,47 +243,27 @@ test('clear-scoped-data validates its confirmation before the root check', async
   }
 });
 
-test('preview-reset and reset-application: confirmation, batched Auth cleanup and retryable partial failure', async () => {
+test('preview-reset and reset-application: confirmation and clear exam data preserving students', async () => {
   assertError(await call({ action: 'preview-reset' }, { root: true, adminRpc: {
-    root_application_reset_preview_for_actor: () => ({ data: null, error: { code: 'XX000', message: 'internal' } }),
-  } }), 500, 'Unable to preview the application reset', 'UNAVAILABLE');
+    root_clear_exam_data_preview_for_actor: () => ({ data: null, error: { code: 'XX000', message: 'internal' } }),
+  } }), 500, 'Unable to preview clearing exam data', 'UNAVAILABLE');
 
   // Authority is checked before the confirmation for reset-application.
   assertError(await call({ action: 'reset-application', confirmation: 'nope' }), 403, 'Root developer access required', 'FORBIDDEN');
-  assertError(await call({ action: 'reset-application', confirmation: 'reset application data' }, { root: true }), 400, 'Exact reset confirmation is required', 'VALIDATION_FAILED');
-  assertError(await call({ action: 'reset-application', confirmation: 'RESET APPLICATION DATA' }, { root: true, adminRpc: {
-    root_reset_application_data_for_actor: () => ({ data: null, error: { code: '40001', message: 'serialization' } }),
-  } }), 500, 'Application data reset failed', 'UNAVAILABLE');
+  assertError(await call({ action: 'reset-application', confirmation: 'clear exam data' }, { root: true }), 400, 'Exact clear confirmation is required', 'VALIDATION_FAILED');
+  assertError(await call({ action: 'reset-application', confirmation: 'CLEAR EXAM DATA' }, { root: true, adminRpc: {
+    root_clear_exam_data_for_actor: () => ({ data: null, error: { code: '40001', message: 'serialization' } }),
+  } }), 500, 'Clearing exam data failed', 'UNAVAILABLE');
 
-  const ids = Array.from({ length: 23 }, (_, index) => `user-${index}`);
-  let inFlight = 0;
-  let maxInFlight = 0;
-  const reset = { action: 'reset-application', confirmation: 'RESET APPLICATION DATA' };
-  const resetRpc = { root_reset_application_data_for_actor: () => ({ data: { deleted: { students: 23 }, auth_user_ids: ids }, error: null }) };
-  const trackedDelete = failing => async id => {
-    inFlight += 1;
-    maxInFlight = Math.max(maxInFlight, inFlight);
-    await new Promise(resolve => setImmediate(resolve));
-    inFlight -= 1;
-    return { error: failing.has(id) ? new Error('auth down') : null };
-  };
+  const reset = { action: 'reset-application', confirmation: 'CLEAR EXAM DATA' };
+  const resetRpc = { root_clear_exam_data_for_actor: () => ({ data: { cleared: true, deleted: { exams: 5 }, preserved: 'students_and_accounts' }, error: null }) };
 
-  const ok = await call(reset, { root: true, adminRpc: resetRpc, deleteUser: trackedDelete(new Set()) });
+  const ok = await call(reset, { root: true, adminRpc: resetRpc });
   assert.equal(ok.status, 200);
-  assert.deepEqual(ok.body, { reset: true, deleted: { students: 23 }, deletedAuthUsers: 23, preserved: 'root_and_administrator_accounts' });
-  assert.equal(maxInFlight, 10, 'Auth accounts are deleted in batches of 10');
-  assert.deepEqual(ok.calls.find(entry => entry[1] === 'root_reset_application_data_for_actor')[2], {
-    actor_id_param: ADMIN_ID, confirmation_param: 'RESET APPLICATION DATA',
+  assert.deepEqual(ok.body, { reset: true, cleared: true, deleted: { exams: 5 }, preserved: 'students_and_accounts' });
+  assert.deepEqual(ok.calls.find(entry => entry[1] === 'root_clear_exam_data_for_actor')[2], {
+    actor_id_param: ADMIN_ID, confirmation_param: 'CLEAR EXAM DATA',
   });
-
-  const partial = await call(reset, { root: true, adminRpc: resetRpc, deleteUser: trackedDelete(new Set(['user-3', 'user-17'])) });
-  assertError(partial, 500, 'Database reset completed, but some student sign-in accounts require a reset retry', 'UNAVAILABLE');
-  assert.equal(partial.body.deletedAuthUsers, 21);
-  assert.equal(partial.body.failedAuthUsers, 2);
-  assert.deepEqual(partial.body.deleted, { students: 23 });
-  assert.ok(!partial.text.includes('user-3'), 'Auth account IDs are never returned');
-  const incomplete = quiet.lines.map(line => JSON.parse(line)).find(line => line.event === 'reset_auth_cleanup_incomplete');
-  assert.equal(incomplete.correlationId, partial.body.correlationId, 'logged and returned correlation IDs match');
 });
 
 test('create-admin: root check before validation, provisioning, and rollback', async () => {

@@ -22,7 +22,8 @@ import { announcePolite } from '../../components/LiveAnnouncer';
  *   setUserResponses: import('react').Dispatch<import('react').SetStateAction<ExamResponses>>,
  *   offlineSince: number | null,
  *   setAutosaveStatus: (status: 'SAVING' | 'OFFLINE') => void,
- *   studentSessionLockedRef: { current: boolean }
+ *   studentSessionLockedRef: { current: boolean },
+ *   terminatingRef: { current: boolean }
  * }} options
  */
 export function useExamNavigation({
@@ -35,10 +36,11 @@ export function useExamNavigation({
   setUserResponses,
   offlineSince,
   setAutosaveStatus,
-  studentSessionLockedRef
+  studentSessionLockedRef,
+  terminatingRef
 }) {
   const updateResponse = useCallback((/** @type {number} */ index, /** @type {SelectedOption} */ selectedOption, /** @type {ResponseStatus} */ status) => {
-    if (studentSessionLockedRef.current) return;
+    if (studentSessionLockedRef.current || terminatingRef.current) return;
     setAutosaveStatus(navigator.onLine && !offlineSince ? 'SAVING' : 'OFFLINE');
     setUserResponses(prev => {
       if (!prev[activeSubject]) return prev;
@@ -47,10 +49,10 @@ export function useExamNavigation({
       newResponses[activeSubject][index] = { selectedOption, status };
       return newResponses;
     });
-  }, [activeSubject, offlineSince, setAutosaveStatus, setUserResponses, studentSessionLockedRef]);
+  }, [activeSubject, offlineSince, setAutosaveStatus, setUserResponses, studentSessionLockedRef, terminatingRef]);
 
   const selectResponse = useCallback((/** @type {number} */ index, /** @type {SelectedOption} */ selectedOption) => {
-    if (studentSessionLockedRef.current) return;
+    if (studentSessionLockedRef.current || terminatingRef.current) return;
     setAutosaveStatus(navigator.onLine && !offlineSince ? 'SAVING' : 'OFFLINE');
     setUserResponses(prev => {
       if (!prev[activeSubject] || !prev[activeSubject][index]) return prev;
@@ -71,9 +73,10 @@ export function useExamNavigation({
       newResponses[activeSubject][index] = { selectedOption, status };
       return newResponses;
     });
-  }, [activeSubject, offlineSince, setAutosaveStatus, setUserResponses, studentSessionLockedRef]);
+  }, [activeSubject, offlineSince, setAutosaveStatus, setUserResponses, studentSessionLockedRef, terminatingRef]);
 
   const changeSubjectAndIndex = useCallback((/** @type {string} */ newSubject, /** @type {number} */ newIndex) => {
+    if (studentSessionLockedRef.current || terminatingRef.current) return;
     setActiveSubject(newSubject);
     setCurrentIndices(prev => ({ ...prev, [newSubject]: newIndex }));
     announcePolite(`Switched to ${newSubject} section, Question ${newIndex + 1}.`);
@@ -92,9 +95,10 @@ export function useExamNavigation({
       }
       return prev;
     });
-  }, [setActiveSubject, setCurrentIndices, setUserResponses]);
+  }, [setActiveSubject, setCurrentIndices, setUserResponses, studentSessionLockedRef, terminatingRef]);
 
   const changeQuestion = useCallback((/** @type {number} */ newIndex) => {
+    if (studentSessionLockedRef.current || terminatingRef.current) return;
     setCurrentIndices(prev => ({ ...prev, [activeSubject]: newIndex }));
 
     // If the new question is NOT_VISITED, change it to NOT_ANSWERED
@@ -111,7 +115,7 @@ export function useExamNavigation({
       }
       return prev;
     });
-  }, [activeSubject, setCurrentIndices, setUserResponses]);
+  }, [activeSubject, setCurrentIndices, setUserResponses, studentSessionLockedRef, terminatingRef]);
 
   const goNext = useCallback(() => {
     const currentIndex = currentIndices[activeSubject] || 0;
@@ -142,7 +146,7 @@ export function useExamNavigation({
   }, [activeSubject, changeQuestion, changeSubjectAndIndex, currentIndices, examData]);
 
   const handleAction = useCallback((/** @type {ExamActionType} */ actionType) => {
-    if (studentSessionLockedRef.current) return;
+    if (studentSessionLockedRef.current || terminatingRef.current) return;
     const currentIndex = currentIndices[activeSubject] || 0;
     const currentResponse = userResponses?.[activeSubject]?.[currentIndex] || { selectedOption: null, status: /** @type {ResponseStatus} */ ('NOT_VISITED') };
 
@@ -160,9 +164,10 @@ export function useExamNavigation({
 
     updateResponse(currentIndex, currentResponse.selectedOption, newStatus);
     goNext();
-  }, [activeSubject, currentIndices, goNext, studentSessionLockedRef, updateResponse, userResponses]);
+  }, [activeSubject, currentIndices, goNext, studentSessionLockedRef, terminatingRef, updateResponse, userResponses]);
 
   const handleSubjectChange = useCallback((/** @type {string} */ sub) => {
+    if (studentSessionLockedRef.current || terminatingRef.current) return;
     setActiveSubject(sub);
     const firstIndex = currentIndices[sub] || 0;
     setUserResponses(prev => {
@@ -175,7 +180,7 @@ export function useExamNavigation({
       }
       return prev;
     });
-  }, [currentIndices, setActiveSubject, setUserResponses]);
+  }, [currentIndices, setActiveSubject, setUserResponses, studentSessionLockedRef, terminatingRef]);
 
   return {
     selectResponse,

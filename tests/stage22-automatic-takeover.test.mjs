@@ -199,7 +199,7 @@ test('Stage 22 browser and database contracts preserve recovery and lock rejecte
   assert.match(authPortal, /Answers saved only on the other device cannot be recovered here/i);
   assert.match(app, /studentSessionLockedRef\.current = true/);
   assert.match(app, /handleSafeLogout\(\{ preserveAttempt: true \}\)/);
-  assert.match(app, /disabled=\{isExamLocked \|\| studentSessionLocked\}/);
+  assert.match(app, /disabled=\{isExamLocked \|\| studentSessionLocked \|\| isTerminating \|\| lockdownActive\}/);
   assert.doesNotMatch(
     app.slice(app.indexOf('// Session hijacking listener'), app.indexOf('// Bounded, deterministic autosave engine')),
     /handleSafeLogout\(\);/

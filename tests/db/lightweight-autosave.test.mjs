@@ -52,13 +52,13 @@ test('autosave, conflicts and subject time behave the same with the compact sche
   const s = await h.asStudent(student.id, student.sessionId);
   const started = await s.value('SELECT public.start_exam_session($1, NULL, NULL)', [examId]);
 
-  const saved = await s.value('SELECT public.sync_active_session_progress($1, $2, $3)',
+  const saved = await s.value('SELECT public.sync_active_session_progress($1, $2, $3, 1)',
     [examId, buildProgress(started.jumbled_exam_data, { 'phy-1': '1' }), 1]);
   assert.equal(saved.success, true);
   assert.equal(saved.version, 2);
 
   // Stale version: conflict still returns the current server responses.
-  const conflict = await s.value('SELECT public.sync_active_session_progress($1, $2, $3)',
+  const conflict = await s.value('SELECT public.sync_active_session_progress($1, $2, $3, 1)',
     [examId, buildProgress(started.jumbled_exam_data, { 'phy-1': '0' }), 1]);
   assert.equal(conflict.conflict, true);
   assert.equal(conflict.version, 2);
@@ -69,16 +69,16 @@ test('autosave, conflicts and subject time behave the same with the compact sche
   const firstSubject = Object.keys(bad)[0];
   bad[firstSubject][0] = { selectedOption: 99, status: 'ANSWERED' };
   await assert.rejects(
-    s.value('SELECT public.sync_active_session_progress($1, $2, $3)', [examId, bad, 2]),
+    s.value('SELECT public.sync_active_session_progress($1, $2, $3, 1)', [examId, bad, 2]),
     /out of range|Invalid MCQ option/
   );
 
   // Subject time uses the compact subjects/duration.
   const subject = started.jumbled_exam_data.subjects[0];
-  const merged = await s.value('SELECT public.sync_exam_subject_time($1, $2)', [examId, { [subject]: 5 }]);
+  const merged = await s.value('SELECT public.sync_exam_subject_time($1, $2, 1)', [examId, { [subject]: 5 }]);
   assert.equal(merged[subject], 5);
   await assert.rejects(
-    s.value('SELECT public.sync_exam_subject_time($1, $2)', [examId, { NotASubject: 1 }]),
+    s.value('SELECT public.sync_exam_subject_time($1, $2, 1)', [examId, { NotASubject: 1 }]),
     /Unknown examination subject/
   );
 });

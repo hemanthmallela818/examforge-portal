@@ -359,7 +359,7 @@ function progressFor(jumbled, answersById) {
 test('autosave and submit reject malformed answers for the new types', async () => {
   const { examId, s, started } = await startTypesExam('QT-REJECT');
   const autosave = (answers) => s.value(
-    'SELECT public.sync_active_session_progress($1, $2::jsonb, $3)',
+    'SELECT public.sync_active_session_progress($1, $2::jsonb, $3, 1)',
     [examId, JSON.stringify(progressFor(started.jumbled_exam_data, answers)), started.version]
   );
   for (const bad of ['2,0', '0,0', '0,,2', '4', '0,1,2,3,4', 'A']) {
@@ -374,7 +374,7 @@ test('autosave and submit reject malformed answers for the new types', async () 
   assert.equal(saved.success, true);
 
   await assert.rejects(
-    s.value('SELECT public.submit_exam($1, $2::jsonb, NULL)', [examId, JSON.stringify([{ question_id: 'multi-1', selected_option: '2,0', status: 'ANSWERED' }])]),
+    s.value('SELECT public.submit_exam($1, $2::jsonb, NULL, 1)', [examId, JSON.stringify([{ question_id: 'multi-1', selected_option: '2,0', status: 'ANSWERED' }])]),
     /Invalid multiple-correct response/
   );
 });
@@ -390,10 +390,10 @@ test('grading uses per-type marks, partial credit and stores the graded review',
     'para-2': '2.4'     // wrong    -1 (NUMERICAL falls back to the exam-wide -1)
   };                    // ar-1 unattempted
   const saved = await s.value(
-    'SELECT public.sync_active_session_progress($1, $2::jsonb, $3)',
+    'SELECT public.sync_active_session_progress($1, $2::jsonb, $3, 1)',
     [examId, JSON.stringify(progressFor(started.jumbled_exam_data, answers)), started.version]
   );
-  const result = await s.value('SELECT public.submit_exam($1, $2::jsonb, $3)', [examId, '[]', saved.version]);
+  const result = await s.value('SELECT public.submit_exam($1, $2::jsonb, $3, 1)', [examId, '[]', saved.version]);
   const expected = {
     totalScore: 10,
     maxScore: 25,
@@ -429,10 +429,10 @@ test('grading uses per-type marks, partial credit and stores the graded review',
 test('an exam without per-type marking grades exactly as before', async () => {
   const { examId, s, started } = await startTypesExam('QT-LEGACY', null);
   const saved = await s.value(
-    'SELECT public.sync_active_session_progress($1, $2::jsonb, $3)',
+    'SELECT public.sync_active_session_progress($1, $2::jsonb, $3, 1)',
     [examId, JSON.stringify(progressFor(started.jumbled_exam_data, { 'mcq-1': '1', 'multi-1': '0,1,2', 'int-1': '5' })), started.version]
   );
-  const result = await s.value('SELECT public.submit_exam($1, $2::jsonb, $3)', [examId, '[]', saved.version]);
+  const result = await s.value('SELECT public.submit_exam($1, $2::jsonb, $3, 1)', [examId, '[]', saved.version]);
   assert.equal(Number(result.maxScore), 28, 'seven questions at the exam-wide +4');
   assert.equal(Number(result.totalScore), 4 + 4 - 1);
   assert.equal(result.partial, 0);

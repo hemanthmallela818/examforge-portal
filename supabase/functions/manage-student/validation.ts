@@ -48,15 +48,18 @@ export function validateScopedCleanup(body: RequestBody): Validation<ScopedClean
   return ok({ target, confirmation: expectedConfirmation });
 }
 
-export const RESET_APPLICATION_CONFIRMATION = 'RESET APPLICATION DATA';
+export const RESET_APPLICATION_CONFIRMATION = 'CLEAR EXAM DATA';
+export const CLEAR_EXAM_DATA_CONFIRMATION = 'CLEAR EXAM DATA';
 
 export function validateResetApplication(body: RequestBody): Validation<{ confirmation: string }> {
   const confirmation = text(body, 'confirmation');
   if (confirmation !== RESET_APPLICATION_CONFIRMATION) {
-    return fail('Exact reset confirmation is required');
+    return fail('Exact clear confirmation is required');
   }
   return ok({ confirmation });
 }
+
+export const validateClearExamData = validateResetApplication;
 
 export const validateNothing = (_body: RequestBody): Validation<null> => ok(null);
 

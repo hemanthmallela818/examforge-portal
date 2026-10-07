@@ -22,7 +22,7 @@ const DARK_QUERY = '(prefers-color-scheme: dark)';
  * @returns {ThemePreference}
  */
 export function normalizeThemePreference(value) {
-  return THEME_PREFERENCES.includes(/** @type {ThemePreference} */ (value)) ? /** @type {ThemePreference} */ (value) : 'system';
+  return THEME_PREFERENCES.includes(/** @type {ThemePreference} */ (value)) ? /** @type {ThemePreference} */ (value) : 'light';
 }
 
 /**
@@ -58,7 +58,7 @@ export function applyResolvedTheme(resolved, doc = typeof document !== 'undefine
 }
 
 /** @type {{ preference: ThemePreference, resolved: ResolvedTheme }} */
-let state = { preference: 'system', resolved: 'light' };
+let state = { preference: 'light', resolved: 'light' };
 const listeners = new Set();
 let mediaCleanup = /** @type {(() => void) | null} */ (null);
 

@@ -34,8 +34,29 @@ export function useOperations({ enabled }) {
   const [unreferencedAssets, setUnreferencedAssets] = useState(/** @type {UnreferencedAsset[] | null} */ (null));
   const [scanningAssets, setScanningAssets] = useState(false);
   const [cleaningAssets, setCleaningAssets] = useState(false);
+  const [terminatedPage, setTerminatedPage] = useState({ rows: /** @type {any[]} */ ([]), total: 0, page: 1, pageSize: 10 });
+  const [terminatedLoading, setTerminatedLoading] = useState(false);
+  const [regrantingSessionId, setRegrantingSessionId] = useState(/** @type {string | null} */ (null));
   // Guards overlapping refreshes without making the loader identity depend on render state.
   const operationalLoadingRef = useRef(false);
+
+  const fetchTerminatedStudents = useCallback(async (page = 1, pageSize = 10, search = '') => {
+    setTerminatedLoading(true);
+    try {
+      const { data, error } = await supabase.rpc('get_admin_terminated_students_page', {
+        page_number_param: page,
+        page_size_param: pageSize,
+        search_param: search || null
+      });
+      if (error) throw error;
+      setTerminatedPage(data || { rows: [], total: 0, page, pageSize });
+    } catch (err) {
+      console.error('Failed to load terminated students:', err);
+      setOperationalError('Terminated students could not be loaded. Refresh to try again.');
+    } finally {
+      setTerminatedLoading(false);
+    }
+  }, []);
 
   const fetchOperationalOverview = useCallback(async () => {
     if (operationalLoadingRef.current) return;
@@ -48,7 +69,8 @@ export function useOperations({ enabled }) {
         supabase.from('admin_audit_events')
           .select('id, actor_user_id, action, target_type, target_id, metadata, occurred_at')
           .order('occurred_at', { ascending: false })
-          .limit(100)
+          .limit(100),
+        fetchTerminatedStudents(1, 10)
       ]);
       if (healthResult.error) throw healthResult.error;
       if (auditResult.error) throw auditResult.error;
@@ -65,7 +87,33 @@ export function useOperations({ enabled }) {
       operationalLoadingRef.current = false;
       setOperationalLoading(false);
     }
-  }, []);
+  }, [fetchTerminatedStudents]);
+
+  const handleRegrantAccess = useCallback(
+    /**
+     * @param {string} session_id
+     * @param {string} student_name
+     * @param {string} exam_title
+     */
+    async (session_id, student_name, exam_title) => {
+    const confirmed = await customConfirm(`Re-grant exam access to ${student_name} for "${exam_title}"?\n\nThe student will be able to resume their attempt under their original deadline with saved answers intact.`);
+    if (!confirmed) return;
+
+    setRegrantingSessionId(session_id);
+    try {
+      const { error } = await supabase.rpc('admin_regrant_exam_access', {
+        session_id_param: session_id
+      });
+      if (error) throw error;
+      showToast(`Access re-granted to ${student_name} successfully.`, 'success');
+      await fetchOperationalOverview();
+    } catch (err) {
+      console.error('Failed to re-grant access:', err);
+      await customAlert(`Failed to re-grant access: ${/** @type {Error} */ (err).message}`);
+    } finally {
+      setRegrantingSessionId(null);
+    }
+  }, [fetchOperationalOverview]);
 
   useEffect(() => {
     if (enabled) fetchOperationalOverview();
@@ -133,6 +181,11 @@ export function useOperations({ enabled }) {
     scanningAssets,
     cleaningAssets,
     handleScanUnreferencedAssets,
-    handleCleanupUnreferencedAssets
+    handleCleanupUnreferencedAssets,
+    terminatedPage,
+    terminatedLoading,
+    regrantingSessionId,
+    fetchTerminatedStudents,
+    handleRegrantAccess
   };
 }

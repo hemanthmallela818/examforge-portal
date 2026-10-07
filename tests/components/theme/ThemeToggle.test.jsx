@@ -42,16 +42,21 @@ afterEach(() => {
 describe('theme preference', () => {
   it('normalises preferences and resolves System from the OS setting', () => {
     expect(normalizeThemePreference('dark')).toBe('dark');
-    expect(normalizeThemePreference('neon')).toBe('system');
-    expect(normalizeThemePreference(null)).toBe('system');
+    expect(normalizeThemePreference('neon')).toBe('light');
+    expect(normalizeThemePreference(null)).toBe('light');
+    expect(normalizeThemePreference('system')).toBe('system');
     expect(resolveTheme('system', true)).toBe('dark');
     expect(resolveTheme('system', false)).toBe('light');
     expect(resolveTheme('light', true)).toBe('light');
   });
 
-  it('defaults to System, follows prefers-color-scheme live, and applies .dark before render', () => {
+  it('follows prefers-color-scheme live when System is selected, and defaults to light', () => {
     const media = installMatchMedia(true);
     act(() => initTheme());
+    expect(root().classList.contains('dark')).toBe(false);
+    expect(root().dataset.theme).toBe('light');
+
+    act(() => setThemePreference('system'));
     expect(root().classList.contains('dark')).toBe(true);
     expect(root().dataset.theme).toBe('dark');
     expect(root().style.colorScheme).toBe('dark');
@@ -72,7 +77,7 @@ describe('theme preference', () => {
     expect(root().classList.contains('dark')).toBe(false);
 
     act(() => setThemePreference('bogus'));
-    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe('system');
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe('light');
   });
 
   it('works without matchMedia or storage (treats System as light)', () => {
@@ -90,9 +95,9 @@ describe('ThemeToggle', () => {
     expect(group).toBeTruthy();
     const radios = screen.getAllByRole('radio');
     expect(radios.map(radio => radio.getAttribute('aria-label'))).toEqual(['Light', 'Dark', 'System']);
-    expect(screen.getByRole('radio', { name: 'System' }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByRole('radio', { name: 'Light' }).getAttribute('aria-checked')).toBe('true');
     // Roving tab stop on the checked option.
-    expect(radios.map(radio => radio.tabIndex)).toEqual([-1, -1, 0]);
+    expect(radios.map(radio => radio.tabIndex)).toEqual([0, -1, -1]);
 
     await user.click(screen.getByRole('radio', { name: 'Dark' }));
     expect(screen.getByRole('radio', { name: 'Dark' }).getAttribute('aria-checked')).toBe('true');

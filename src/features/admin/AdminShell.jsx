@@ -94,9 +94,9 @@ export default function AdminShell({
 
   return (
     <div className="admin-dashboard-shell">
-      <div className="flex h-dvh overflow-hidden bg-slate-50 max-[900px]:h-auto max-[900px]:min-h-dvh max-[900px]:flex-col max-[900px]:overflow-visible">
+      <div className="flex min-h-dvh bg-slate-50 max-[900px]:h-auto max-[900px]:min-h-dvh max-[900px]:flex-col max-[900px]:overflow-visible">
       {/* Sidebar */}
-      <aside className="admin-dashboard-sidebar theme-island z-20 flex w-[280px] shrink-0 flex-col border-r border-white/5 bg-slate-950 text-white">
+      <aside className="admin-dashboard-sidebar theme-island z-20 flex w-[280px] shrink-0 flex-col border-r border-white/5 bg-slate-950 text-white min-[900px]:sticky min-[900px]:top-0 min-[900px]:h-dvh">
         <div className="admin-sidebar-brand flex items-center gap-3 border-b border-white/10 px-6 py-6">
           <BrandLogo
             imageClassName="size-10 rounded-xl bg-white p-1"
@@ -148,7 +148,7 @@ export default function AdminShell({
       </aside>
 
       {/* Main Content */}
-      <main className="admin-dashboard-main flex min-w-0 flex-1 flex-col overflow-y-auto">
+      <main className="admin-dashboard-main flex min-w-0 flex-1 flex-col">
         {/* Top bar for main content */}
         <header className="admin-dashboard-topbar sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-slate-200 bg-white/95 px-6 py-4 backdrop-blur lg:px-10">
           <h1 className="min-w-0 truncate text-xl font-semibold tracking-tight text-slate-900">

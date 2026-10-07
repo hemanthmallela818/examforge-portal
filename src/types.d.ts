@@ -154,6 +154,7 @@ export interface PendingSubmissionRecord {
   userUuid: string;
   responses: SubmissionResponse[];
   timestamp: number;
+  accessGeneration?: number | null;
 }
 
 export interface PendingTerminationRecord {
@@ -162,6 +163,8 @@ export interface PendingTerminationRecord {
   studentId: string;
   userUuid: string;
   timestamp: number;
+  reason?: string | null;
+  accessGeneration?: number | null;
 }
 
 /** Common arguments for the storage-scoped record helpers. */
@@ -185,6 +188,7 @@ export interface OfflineRecoveryRecord {
   activeSubject: string;
   currentIndices: CurrentIndices;
   userResponses: ExamResponses | LooseExamResponses;
+  accessGeneration?: number | null;
 }
 
 /** Backwards-compatible mirror kept under `cbt_active_exam_session`. */
@@ -201,6 +205,7 @@ export interface ActiveExamSessionMirror {
   endTime?: number;
   savedAt: number;
   version: number;
+  accessGeneration?: number | null;
 }
 
 export interface SaveOfflineRecoveryInput {
@@ -214,6 +219,7 @@ export interface SaveOfflineRecoveryInput {
   currentIndices?: CurrentIndices;
   version?: number;
   endTime?: number;
+  accessGeneration?: number | null;
   /** Defaults to the browser's localStorage. */
   storage?: StorageLike | null;
 }
@@ -227,7 +233,8 @@ export interface ReconcileInput {
   examData?: ExamPaper | null;
   serverResponses?: ExamResponses | LooseExamResponses | null;
   serverVersion?: unknown;
-  localRecord?: { version?: unknown; userResponses?: LooseExamResponses } | null;
+  serverAccessGeneration?: number | null;
+  localRecord?: { version?: unknown; accessGeneration?: number | null; userResponses?: LooseExamResponses } | null;
 }
 
 export interface ReconcileResult {

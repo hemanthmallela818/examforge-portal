@@ -6,11 +6,15 @@ import Terminated from '../../src/components/Terminated';
 describe('Terminated screen', () => {
   it('states why the exam ended', () => {
     const { rerender } = render(<Terminated reason="tab" />);
-    expect(screen.getByText('You switched to another tab, window or app after the final warning.')).toBeTruthy();
+    expect(screen.getByText('You switched to another tab, window or app.')).toBeTruthy();
     rerender(<Terminated reason="fullscreen" />);
-    expect(screen.getByText('You left fullscreen mode after the final warning.')).toBeTruthy();
+    expect(screen.getByText('You left fullscreen mode.')).toBeTruthy();
+    rerender(<Terminated reason="escape" />);
+    expect(screen.getByText('You pressed the Escape key.')).toBeTruthy();
+    rerender(<Terminated reason="blur" />);
+    expect(screen.getByText('The exam window lost focus.')).toBeTruthy();
     rerender(<Terminated reason="ended" />);
-    expect(screen.getByText('Your exam was ended before you submitted it.')).toBeTruthy();
+    expect(screen.getByText('Your exam attempt was blocked before you submitted it.')).toBeTruthy();
   });
 
   it('always offers a way out: back to the dashboard or log out', async () => {

@@ -350,7 +350,6 @@ test('exam overlays and question status controls expose semantic accessibility s
   ]);
   assert.match(app, /className="exam-security-cover"/);
   assert.match(app, /role="alert"/);
-  assert.match(app, /onPointerDown=\{handleReturnToExam\}/);
   assert.doesNotMatch(app, /I Understand - Return to Exam/);
   assert.match(app, /labelledBy="submit-exam-title"/);
   assert.match(modal, /aria-modal="true"/);

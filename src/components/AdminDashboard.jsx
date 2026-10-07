@@ -169,6 +169,11 @@ function AdminWorkspace({ onBackToLogin }) {
             onCleanupAssets={operations.handleCleanupUnreferencedAssets}
             auditEvents={operations.auditEvents}
             clientErrors={operations.clientErrors}
+            terminatedPage={operations.terminatedPage}
+            terminatedLoading={operations.terminatedLoading}
+            regrantingSessionId={operations.regrantingSessionId}
+            onRegrantAccess={operations.handleRegrantAccess}
+            onPageChange={(page) => operations.fetchTerminatedStudents(page, operations.terminatedPage.pageSize)}
           />
         );
       case 'DB_CLEANER':

@@ -4,7 +4,7 @@
 // submit/terminate flows. App.jsx owns only routing state and passes it in.
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { APP_ERROR, classifyAppError } from '../../appErrors';
-import { supabase } from '../../supabase';
+import { supabase, supabaseUrl, supabaseAnonKey } from '../../supabase';
 import { customAlert } from '../../utils';
 import { safeStorageGet, safeStorageSet, safeStorageRemove } from '../../browserStorage';
 import {
@@ -14,7 +14,6 @@ import {
   saveOfflineRecoveryRecord,
   readOfflineRecoveryRecord,
   clearOfflineRecoveryRecord,
-  mergeOfflineResponses,
   reconcileOfflineRecovery,
   savePendingSubmissionRecord,
   readPendingSubmissionRecord,
@@ -119,6 +118,9 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
   const safeLogoutRef = useRef(/** @type {((options?: SafeLogoutOptions) => void) | null} */ (null));
   const studentSessionLockedRef = useRef(false);
   const [studentSessionLocked, setStudentSessionLocked] = useState(false);
+  const [accessGeneration, setAccessGeneration] = useState(/** @type {number | null} */ (initialActiveSession?.accessGeneration ?? null));
+  const accessGenerationRef = useRef(/** @type {number | null} */ (initialActiveSession?.accessGeneration ?? null));
+  const authAccessTokenRef = useRef(/** @type {string | null} */ (null));
   const terminateExamRef = useRef(/** @type {((reason?: TerminationReason) => Promise<void>) | undefined} */ (undefined));
   // Termination waits for the server before the "Exam Terminated" screen, so a
   // quick return to the dashboard never shows the attempt as still open.
@@ -150,9 +152,13 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
     const pending = readPendingTerminationRecord({ student: currentStudent, userUuid: currentStudent.docId });
     if (!pending) return;
     try {
-      const { error } = await supabase.rpc('terminate_exam', { exam_id_param: pending.examId });
+      const { data, error } = await supabase.rpc('terminate_exam', {
+        exam_id_param: pending.examId,
+        reason_param: pending.reason || 'SECURITY_VIOLATION',
+        access_generation_param: pending.accessGeneration ?? null
+      });
       if (error) throw error;
-      clearOfflineRecoveryRecord({ student: currentStudent, examId: pending.examId, userUuid: currentStudent.docId });
+      if (!data?.stale_generation) clearOfflineRecoveryRecord({ student: currentStudent, examId: pending.examId, userUuid: currentStudent.docId });
       clearPendingTerminationRecord({ student: currentStudent, userUuid: currentStudent.docId });
     } catch (err) {
       console.error('Pending termination retry failed:', err);
@@ -180,7 +186,8 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
       setSubmissionError('Submitting previously saved offline responses...');
       const { data: finalResults, error } = await supabase.rpc('submit_exam', {
         exam_id_param: examId,
-        responses_param: parsed.responses
+        responses_param: parsed.responses,
+        access_generation_param: parsed.accessGeneration ?? null
       });
       if (error) {
         if (classifyAppError(error) === APP_ERROR.ALREADY_SUBMITTED) {
@@ -277,6 +284,8 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
       clearTimeout(releaseTimeout);
       supabase.auth.signOut({ scope: 'local' }).catch(console.error);
     });
+    terminatingRef.current = false;
+    setIsTerminating(false);
     warningsRef.current = 0;
     isAlertingRef.current = false;
     submissionStartedRef.current = false;
@@ -311,13 +320,20 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
   useEffect(() => {
     if (!['PRE_EXAM', 'ACTIVE'].includes(examState)) return;
     let active = true;
+    const authListener = supabase.auth.onAuthStateChange?.((_event, session) => {
+      authAccessTokenRef.current = session?.access_token || null;
+    });
     supabase.auth.getSession().then(({ data: { session }, error }) => {
       if (!active) return;
+      authAccessTokenRef.current = session?.access_token || null;
       if (error || !session?.user || !currentStudent?.docId || session.user.id !== currentStudent.docId) {
         handleSafeLogout({ preserveAttempt: true });
       }
     });
-    return () => { active = false; };
+    return () => {
+      active = false;
+      authListener?.data.subscription.unsubscribe();
+    };
   }, [examState, currentStudent?.docId, handleSafeLogout]);
 
   // Session hijacking listener (Supabase Realtime)
@@ -376,7 +392,7 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
   // Bounded, deterministic autosave engine with optimistic concurrency and offline recovery
   useEffect(() => {
     if (examState !== 'ACTIVE' || !currentStudent || !activeExam || !userResponses || !examData) return;
-    if (studentSessionLockedRef.current) return;
+    if (studentSessionLockedRef.current || terminatingRef.current) return;
     const saveGeneration = ++autosaveGenerationRef.current;
 
     // Immediate zero-data-loss local persistence
@@ -390,7 +406,8 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
       activeSubject,
       currentIndices,
       version: sessionVersionRef.current,
-      endTime: /** @type {number | undefined} */ (sessionEndTimeRef.current)
+      endTime: /** @type {number | undefined} */ (sessionEndTimeRef.current),
+      accessGeneration: accessGenerationRef.current
     });
     setLocalRecoveryAvailable(localSave.success);
 
@@ -415,6 +432,7 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
     setAutosaveStatus('SAVING');
 
     const timer = setTimeout(async () => {
+      if (terminatingRef.current) return;
       if (isSavingRef.current) {
         pendingSaveRef.current = { payload: userResponses, generation: saveGeneration };
         return;
@@ -425,11 +443,11 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
        * @param {number} generation
        */
       const executeSave = async (payload, generation) => {
-        if (studentSessionLockedRef.current) return;
+        if (studentSessionLockedRef.current || terminatingRef.current) return;
         isSavingRef.current = true;
         try {
           for (let retry = 0; retry <= 3; retry += 1) {
-            if (studentSessionLockedRef.current) return;
+            if (studentSessionLockedRef.current || terminatingRef.current) return;
             if (sessionEndTimeRef.current && Date.now() >= sessionEndTimeRef.current) {
               setAutosaveStatus('LOCKED');
               return;
@@ -437,15 +455,18 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
             if (retry > 0) {
               if (generation === autosaveGenerationRef.current) setAutosaveStatus('RETRYING');
               await new Promise(resolve => setTimeout(resolve, retryDelayMs(retry, { capMs: 5000 })));
+              if (terminatingRef.current) return;
             }
 
             try {
               const { data: syncData, error: syncError, status: syncStatus } = await supabase.rpc('sync_active_session_progress', {
                 exam_id_param: activeExam.id,
                 responses_param: payload,
-                expected_version_param: sessionVersionRef.current
+                expected_version_param: sessionVersionRef.current,
+                access_generation_param: accessGenerationRef.current
               });
               if (syncError) throw Object.assign(syncError, { httpStatus: syncStatus });
+              if (terminatingRef.current) return;
 
               // A retry after a lost response reports a version conflict even though
               // the server already holds exactly this answer set. Treat it as saved.
@@ -466,7 +487,8 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
                     activeSubject,
                     currentIndices,
                     version: syncData.version,
-                    endTime: /** @type {number | undefined} */ (sessionEndTimeRef.current)
+                    endTime: /** @type {number | undefined} */ (sessionEndTimeRef.current),
+                    accessGeneration: accessGenerationRef.current
                   });
                   setLocalRecoveryAvailable(confirmedLocalSave.success);
                   setAutosaveStatus('SAVED');
@@ -526,18 +548,51 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
   const terminateExam = useCallback(async (/** @type {TerminationReason} */ reason = 'ended') => {
     if (studentSessionLockedRef.current || terminatingRef.current) return;
     terminatingRef.current = true;
+    lockdownActiveRef.current = true;
+    pendingSaveRef.current = null;
+    autosaveGenerationRef.current += 1;
     // No further warnings while the attempt is being ended.
     isAlertingRef.current = true;
     setTerminationReason(reason);
     setIsTerminating(true);
 
     if (currentStudent && activeExam) {
+      // 1. Block locally and persist pending termination before awaiting the network
+      savePendingTerminationRecord({
+        student: currentStudent,
+        examId: activeExam.id,
+        userUuid: currentStudent.docId,
+        reason,
+        accessGeneration: accessGenerationRef.current
+      });
+      // The attempt is over on this device either way: never offer to resume it.
+      clearOfflineRecoveryRecord({ student: currentStudent, examId: activeExam.id, userUuid: currentStudent.docId });
+
       try {
-        const { error } = await withTimeout(
-          supabase.rpc('terminate_exam', { exam_id_param: activeExam.id }),
-          TERMINATE_REQUEST_TIMEOUT_MS
-        );
+        const args = {
+          exam_id_param: activeExam.id,
+          reason_param: reason,
+          access_generation_param: accessGenerationRef.current
+        };
+        // Dispatch before any await: keepalive survives pagehide/tab closure.
+        const request = authAccessTokenRef.current && supabaseUrl && supabaseAnonKey
+          ? fetch(`${supabaseUrl}/rest/v1/rpc/terminate_exam`, {
+              method: 'POST',
+              keepalive: true,
+              headers: {
+                'Content-Type': 'application/json',
+                'apikey': supabaseAnonKey,
+                'Authorization': `Bearer ${authAccessTokenRef.current}`
+              },
+              body: JSON.stringify(args)
+            }).then(async response => {
+              const data = await response.json();
+              return { error: response.ok ? null : data };
+            })
+          : supabase.rpc('terminate_exam', args);
+        const { error } = await withTimeout(request, TERMINATE_REQUEST_TIMEOUT_MS);
         if (error) throw error;
+        clearPendingTerminationRecord({ student: currentStudent, userUuid: currentStudent.docId });
       } catch (err) {
         console.error("Failed to persist termination result:", err);
         if (isStudentSessionReplaced(err)) {
@@ -549,28 +604,16 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
           setTimeout(() => customAlert(examActionErrorMessage(err, 'submit')), 100);
           return;
         }
-        // Retried on the next sign-in or reconnect; terminate_exam is idempotent.
-        if (!savePendingTerminationRecord({
-          student: currentStudent,
-          examId: activeExam.id,
-          userUuid: currentStudent.docId
-        })) {
-          console.error('Failed to cache pending termination: browser storage unavailable.');
-        }
       }
-      // The attempt is over on this device either way: never offer to resume it.
-      clearOfflineRecoveryRecord({ student: currentStudent, examId: activeExam.id, userUuid: currentStudent.docId });
     }
 
-    terminatingRef.current = false;
     setIsTerminating(false);
-    clearLockdown();
     setExamState('TERMINATED');
     if (document.fullscreenElement) {
       document.exitFullscreen().catch(err => console.error(err));
     }
     navigator.keyboard?.unlock?.();
-  }, [currentStudent, activeExam, handleSafeLogout, clearLockdown, setExamState, isAlertingRef]);
+  }, [currentStudent, activeExam, handleSafeLogout, setExamState, isAlertingRef, lockdownActiveRef]);
 
   useEffect(() => {
     terminateExamRef.current = terminateExam;
@@ -582,7 +625,8 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
     activeExamId: activeExam?.id,
     currentStudent,
     lockdownActiveRef,
-    initialSubjectTimeSeconds: initialActiveSession?.subjectTimeSeconds
+    initialSubjectTimeSeconds: initialActiveSession?.subjectTimeSeconds,
+    accessGenerationRef
   });
 
   // Auto-submit once when the fixed deadline passes. The deadline is derived
@@ -595,6 +639,8 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
 
   /** @param {ActiveExam} exam */
   const handleStartExamFlow = async (exam) => {
+    terminatingRef.current = false;
+    setIsTerminating(false);
     warningsRef.current = 0;
     isAlertingRef.current = false;
     clearLockdown();
@@ -615,6 +661,18 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
           .single();
 
         if (!error && sessionData) {
+          if (sessionData.status === 'TERMINATED') {
+            setTerminationReason(sessionData.termination_reason || 'SECURITY_VIOLATION');
+            setExamState('TERMINATED');
+            if (sessionData.deadline_at) {
+              const calculatedEndTime = new Date(sessionData.deadline_at).getTime();
+              sessionEndTimeRef.current = calculatedEndTime;
+              setSessionEndTime(calculatedEndTime);
+            }
+            return;
+          }
+          accessGenerationRef.current = sessionData.access_generation ?? null;
+          setAccessGeneration(accessGenerationRef.current);
           restoredResponses = sessionData.user_responses || null;
           restoredExamData = sessionData.jumbled_exam_data || null;
           subjectTimeRef.current = sessionData.subject_time_seconds || {};
@@ -641,6 +699,7 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
             examData: restoredExamData || data,
             serverResponses: restoredResponses,
             serverVersion,
+            serverAccessGeneration: accessGenerationRef.current,
             localRecord: local
           });
           restoredResponses = reconciliation.responses;
@@ -690,7 +749,7 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
   };
 
   const startExam = async () => {
-    if (studentSessionLockedRef.current) return;
+    if (studentSessionLockedRef.current || terminatingRef.current) return;
     if (!currentStudent || !activeExam) {
       await customAlert('Your exam session could not be started. Please sign in again and retry.');
       return;
@@ -736,6 +795,21 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
         }
         return;
       }
+      if (session?.status === 'TERMINATED') {
+        setTerminationReason(session.reason || 'SECURITY_VIOLATION');
+        setExamState('TERMINATED');
+        if (session.deadline_at) {
+          const calculatedEndTime = new Date(session.deadline_at).getTime();
+          sessionEndTimeRef.current = calculatedEndTime;
+          setSessionEndTime(calculatedEndTime);
+        }
+        return;
+      }
+
+      const localGeneration = accessGenerationRef.current;
+      const gen = session?.access_generation ?? null;
+      accessGenerationRef.current = gen;
+      setAccessGeneration(gen);
 
       const localBaseVersion = Number(sessionVersionRef.current || 1);
       const authoritativeVersion = Number(session?.version || 1);
@@ -743,11 +817,16 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
       const activeData = session?.jumbled_exam_data || examData;
       if (session?.jumbled_exam_data) setExamData(session.jumbled_exam_data);
       if (session?.user_responses) {
-        if (localBaseVersion === authoritativeVersion) {
-          setUserResponses(/** @type {ExamResponses} */ (mergeOfflineResponses(activeData, session.user_responses, userResponses)));
-        } else {
-          setUserResponses(session.user_responses);
-          setRecoveryNotice('The server had newer confirmed progress. This device’s stale copy was not applied. Review your answers before continuing.');
+        const reconciliation = reconcileOfflineRecovery({
+          examData: activeData,
+          serverResponses: session.user_responses,
+          serverVersion: authoritativeVersion,
+          serverAccessGeneration: gen,
+          localRecord: { version: localBaseVersion, accessGeneration: localGeneration, userResponses }
+        });
+        setUserResponses(/** @type {ExamResponses} */ (reconciliation.responses));
+        if (reconciliation.conflict) {
+          setRecoveryNotice('The server had newer confirmed progress or re-granted access. This device’s stale copy was not applied. Review your answers before continuing.');
         }
       }
       const remainingSeconds = session?.time_left !== undefined && session?.time_left !== null
@@ -776,7 +855,7 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
   };
 
   const submitExam = useCallback(() => {
-    if (studentSessionLockedRef.current) return;
+    if (studentSessionLockedRef.current || terminatingRef.current) return;
     setShowSubmitModal(true);
   }, []);
 
@@ -797,7 +876,8 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
       const { data: syncData, error: syncError } = await supabase.rpc('sync_active_session_progress', {
         exam_id_param: activeExam.id,
         responses_param: userResponses,
-        expected_version_param: sessionVersionRef.current
+        expected_version_param: sessionVersionRef.current,
+        access_generation_param: accessGenerationRef.current
       });
       // A successful first submission removes the active session. If its HTTP
       // response is lost, the retry must still reach the idempotent submit RPC
@@ -828,7 +908,8 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
     const submitArgs = {
       exam_id_param: activeExam.id,
       responses_param: responses,
-      ...(confirmedVersion !== null ? { expected_version_param: confirmedVersion } : {})
+      ...(confirmedVersion !== null ? { expected_version_param: confirmedVersion } : {}),
+      access_generation_param: accessGenerationRef.current
     };
     let finalResults;
     for (let attempt = 1; ; attempt += 1) {
@@ -849,7 +930,7 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
   };
 
   const confirmSubmitExam = async () => {
-    if (submissionStartedRef.current || studentSessionLockedRef.current) return;
+    if (submissionStartedRef.current || studentSessionLockedRef.current || terminatingRef.current) return;
     submissionStartedRef.current = true;
     setShowSubmitModal(false);
     setIsSubmitting(true);
@@ -900,7 +981,8 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
           student: currentStudent,
           examId: activeExam.id,
           userUuid: currentStudent.docId,
-          responses
+          responses,
+          accessGeneration: accessGenerationRef.current
         });
         if (!pendingSave.success) {
           console.error('Failed to cache offline submission:', pendingSave.error);
@@ -936,7 +1018,8 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
     setUserResponses,
     offlineSince,
     setAutosaveStatus,
-    studentSessionLockedRef
+    studentSessionLockedRef,
+    terminatingRef
   });
 
   const currentQIndex = currentIndices[activeSubject] || 0;
@@ -971,6 +1054,7 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
     sessionEndTime,
     isExamLocked,
     studentSessionLocked,
+    accessGeneration,
     // Lockdown
     lockdownActive,
     warning,

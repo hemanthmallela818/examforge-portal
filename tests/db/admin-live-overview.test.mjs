@@ -22,8 +22,8 @@ before(async () => {
 
   const s = await h.asStudent(submitter.id, submitter.sessionId);
   const started = await s.value('SELECT public.start_exam_session($1, NULL, NULL)', [liveExam]);
-  await s.query('SELECT public.sync_active_session_progress($1, $2, 1)', [liveExam, buildProgress(started.jumbled_exam_data, DEFAULT_CORRECT)]);
-  await s.query('SELECT public.submit_exam($1, NULL, 2)', [liveExam]);
+  await s.query('SELECT public.sync_active_session_progress($1, $2, 1, 1)', [liveExam, buildProgress(started.jumbled_exam_data, DEFAULT_CORRECT)]);
+  await s.query('SELECT public.submit_exam($1, NULL, 2, 1)', [liveExam]);
 
   const w = await h.asStudent(writer.id, writer.sessionId);
   await w.query('SELECT public.start_exam_session($1, NULL, NULL)', [liveExam]);

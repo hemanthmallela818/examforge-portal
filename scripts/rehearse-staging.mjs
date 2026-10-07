@@ -541,7 +541,8 @@ const autosave = async (candidate, payload, operation = 'autosave') => {
     result = await measure(operation, () => candidate.client.rpc('sync_active_session_progress', {
       exam_id_param: examId,
       responses_param: payload,
-      expected_version_param: candidate.version
+      expected_version_param: candidate.version,
+    access_generation_param: candidate.accessGeneration
     }), { bucket: operation === 'autosave' ? latencyMs.autosave : undefined, validate: autosaveValidation });
     if (!result.error || !isTransientNetworkError(result.error)) break;
   }
@@ -568,7 +569,8 @@ const syncSubjectTime = candidate => {
   accrueSubjectTime(candidate);
   return measure('subject_time', () => candidate.client.rpc('sync_exam_subject_time', {
     exam_id_param: examId,
-    subject_time_seconds_param: { ...candidate.subjectTime }
+    subject_time_seconds_param: { ...candidate.subjectTime },
+    access_generation_param: candidate.accessGeneration
   }));
 };
 
@@ -597,7 +599,8 @@ const staleTabProbe = async candidate => {
   const result = await measure('stale_tab_autosave', () => candidate.client.rpc('sync_active_session_progress', {
     exam_id_param: examId,
     responses_param: stalePayload,
-    expected_version_param: candidate.version - 1
+    expected_version_param: candidate.version - 1,
+    access_generation_param: candidate.accessGeneration
   }));
   if (result.error) return;
   if (result.data?.conflict && Number(result.data.version) === Number(candidate.version)
@@ -672,7 +675,8 @@ const takeoverProbe = async candidate => {
   const staleDevice = await measure('stale_device_autosave', () => oldClient.rpc('sync_active_session_progress', {
     exam_id_param: examId,
     responses_param: candidate.confirmed,
-    expected_version_param: candidate.version
+    expected_version_param: candidate.version,
+    access_generation_param: candidate.accessGeneration
   }), { expectError: isSessionReplaced });
   if (staleDevice.error && isSessionReplaced(staleDevice.error)) realtimeStats.staleDeviceWritesRejected += 1;
   else if (!staleDevice.error) {
@@ -788,6 +792,7 @@ try {
       }), { bucket: latencyMs.start });
       if (sessionError) throw sessionError;
       candidate.version = session.version;
+      candidate.accessGeneration = session.access_generation;
       candidate.responses = clone(session.user_responses);
       candidate.confirmed = clone(session.user_responses);
       candidate.subjectTime = {};
@@ -884,8 +889,6 @@ try {
 
   // Deadline rush: everyone submits at the same instant, exactly like
   // App.jsx calculateResults (final versioned sync, subject time, submit_exam).
-  // submit_exam is called with only exam_id_param + responses_param so the
-  // call works with and without the optional expected_version_param.
   await runPhase('deadline rush', async () => {
     const deadlineAt = Date.now() + rushLeadMs;
     await limit(sessions, workerConcurrency, candidate => runCandidate(candidate, 'submit', async () => {
@@ -896,7 +899,7 @@ try {
       if (subjectTime.error) throw subjectTime.error;
       const { student, correctTarget, submissionResponses } = candidate;
       const { data, error } = await measure('submit', () => candidate.client.rpc('submit_exam', {
-        exam_id_param: examId, responses_param: submissionResponses
+        exam_id_param: examId, responses_param: submissionResponses, access_generation_param: candidate.accessGeneration
       }), { bucket: latencyMs.submit });
       if (error) throw error;
       const expectedIncorrect = questionCount - correctTarget;
@@ -921,13 +924,15 @@ try {
       const retrySync = await measure('submit_retry_sync', () => candidate.client.rpc('sync_active_session_progress', {
         exam_id_param: examId,
         responses_param: candidate.targetGrouped,
-        expected_version_param: candidate.version
+        expected_version_param: candidate.version,
+        access_generation_param: candidate.accessGeneration
       }), { expectError: isAlreadySubmitted });
       if (!retrySync.error) throw new Error('The active session still accepted autosaves after submission.');
       if (!isAlreadySubmitted(retrySync.error)) throw retrySync.error;
       const { data: retryData, error: retryError } = await measure('submit_retry', () => candidate.client.rpc('submit_exam', {
         exam_id_param: examId,
-        responses_param: candidate.submissionResponses
+        responses_param: candidate.submissionResponses,
+        access_generation_param: candidate.accessGeneration
       }), { bucket: latencyMs.retry });
       if (retryError) throw retryError;
       for (const key of ['totalScore', 'maxScore', 'correct', 'incorrect', 'unattempted']) {

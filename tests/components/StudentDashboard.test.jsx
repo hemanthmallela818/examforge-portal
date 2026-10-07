@@ -11,12 +11,13 @@ vi.mock('../../src/supabase', () => ({
   }
 }));
 
-const rows = { results: [], exams: [] };
+const rows = { results: [], exams: [], sessions: [] };
 vi.mock('../../src/paginatedQuery', () => ({
   // The dashboard loads results first, then exams.
   fetchAllRows: vi.fn()
 }));
 
+const { supabase } = await import('../../src/supabase');
 const { fetchAllRows } = await import('../../src/paginatedQuery');
 const { default: StudentDashboard } = await import('../../src/components/StudentDashboard');
 
@@ -35,6 +36,20 @@ const renderDashboard = async () => {
 beforeEach(() => {
   localStorage.clear();
   vi.mocked(fetchAllRows).mockReset();
+  rows.sessions = [];
+  vi.mocked(supabase.from).mockImplementation(() => {
+    const query = {
+      select: vi.fn((fields) => {
+        query.fields = fields;
+        return query;
+      }),
+      eq: vi.fn(() => query),
+      then: (resolve) => resolve(query.fields.includes('end_time')
+        ? { data: null, error: { message: 'column end_time does not exist' } }
+        : { data: rows.sessions, error: null })
+    };
+    return query;
+  });
   rows.exams = [
     exam('live', 'Live Mock', 'ACTIVE', '2026-09-03'),
     exam('pending', 'Pending Mock', 'PENDING', '2026-09-04'),
@@ -118,5 +133,24 @@ describe('StudentDashboard after a termination', () => {
     expect(within(card).getByText('Ended, result pending')).toBeTruthy();
     expect(within(card).queryByRole('button', { name: /Start Exam|Resume Exam/ })).toBeNull();
     expect(screen.queryByRole('region', { name: /Live now/ })).toBeNull();
+  });
+});
+
+
+describe('StudentDashboard server attempt state', () => {
+  it('blocks a terminated attempt using the real database fields', async () => {
+    rows.sessions = [{ id: 'attempt', exam_id: 'live', status: 'TERMINATED', deadline_at: new Date(Date.now() + 60000).toISOString(), termination_reason: 'escape', access_generation: 2 }];
+    await renderDashboard();
+    const card = screen.getByText('Live Mock').closest('.student-exam-card');
+    expect(within(card).getByText('Blocked')).toBeTruthy();
+    expect(within(card).queryByRole('button', { name: /Start Exam|Resume Exam/ })).toBeNull();
+  });
+
+  it('resumes a server IN_PROGRESS attempt with its original countdown', async () => {
+    rows.sessions = [{ id: 'attempt', exam_id: 'live', status: 'IN_PROGRESS', deadline_at: new Date(Date.now() + 90 * 60000).toISOString(), access_generation: 2 }];
+    await renderDashboard();
+    const card = screen.getByText('Live Mock').closest('.student-exam-card');
+    expect(within(card).getByRole('button', { name: /Resume Exam/ })).toBeTruthy();
+    expect(within(card).getByText(/Time remaining in your attempt/).textContent).toMatch(/1:(29:5\d|30:00)/);
   });
 });

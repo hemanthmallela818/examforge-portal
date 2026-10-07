@@ -69,19 +69,16 @@ export function useExamActions({ examList, examDetail, onExamDeleted }) {
   const handleDeleteExam = async (examId) => {
     const exam = activeExamDetail?.id === examId ? activeExamDetail : exams.find(e => e.id === examId);
     if (!exam) return;
-    if (exam.status === 'ACTIVE') {
-      await customAlert("Cannot delete an ACTIVE exam. Please end the exam before attempting deletion.");
-      return;
-    }
-    const confirmation = await customPrompt(`Type the exact exam title to delete this unused exam:\n\n${exam.title}`);
+    const confirmation = await customPrompt(`Type the exact exam title to confirm permanent deletion:\n\n${exam.title}`);
     if (confirmation === null) return;
     if (confirmation !== exam.title) {
       await customAlert('Exam deletion cancelled because the title did not match exactly.');
       return;
     }
-    if (await customConfirm(`Permanently delete the unused exam "${exam.title}"?`)) {
+    if (await customConfirm(`Permanently delete the exam "${exam.title}" and all associated attempts, results, and reviews? This action cannot be undone.`)) {
       try {
-        const { error: examError } = await supabase.rpc('admin_delete_unused_exam', {
+        // Replaces legacy supabase.rpc('admin_delete_unused_exam') with full cascading deletion of pending, active, and ended exams
+        const { error: examError } = await supabase.rpc('admin_delete_exam', {
           exam_id_param: examId,
           expected_title_param: confirmation
         });
@@ -91,7 +88,7 @@ export function useExamActions({ examList, examDetail, onExamDeleted }) {
           onExamDeleted();
           setActiveExamDetail(null);
         }
-        showToast("Exam deleted successfully.", "success");
+        showToast("Exam and associated records deleted successfully.", "success");
         await fetchExams();
       } catch (err) {
         console.error("Failed to delete exam:", err);
