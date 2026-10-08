@@ -1,5 +1,6 @@
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createTestDb, testUuid } from './harness.mjs';
 
 let h;
@@ -32,6 +33,39 @@ async function bankPage(type) {
   const admin = await h.asAdmin();
   return admin.value('SELECT public.get_admin_question_bank_page(0, 200, NULL, NULL, $1)', [type]);
 }
+
+test('upgrading a bank with the legacy type constraint allows atomic imports', async () => {
+  const su = await h.asSuperuser();
+  await su.query(`ALTER TABLE public.question_bank ADD CONSTRAINT question_bank_type_check
+    CHECK (type IN ('MCQ', 'NUMERICAL', 'NAT'))`);
+  const admin = await h.asAdmin();
+  const batchId = testUuid('b');
+  const rows = [
+    { type: 'MCQ', correct_answer: '0', options: OPTIONS },
+    { type: 'NUMERICAL', correct_answer: '2.5', options: [] },
+    { type: 'MULTIPLE_CORRECT', correct_answer: '0,2', options: OPTIONS },
+    { type: 'INTEGER', correct_answer: '-7', options: [] },
+    { type: 'MATRIX_MATCH', correct_answer: '1', options: OPTIONS, details: { matchLists: LISTS } },
+    { type: 'ASSERTION_REASON', correct_answer: '3', options: OPTIONS }
+  ].map(row => ({ subject: 'Physics', question_text: uniqueText('Legacy constraint import'),
+    has_image_or_diagram: false, category: 'Mains', points: 4, neg_points: -1, ...row }));
+  const importRows = () => admin.value('SELECT public.admin_import_questions($1, $2, $3::jsonb)',
+    [batchId, 'legacy-types.json', JSON.stringify(rows)]);
+  try {
+    await assert.rejects(importRows(), /question_bank_type_check/);
+    assert.equal(await su.value('SELECT count(*)::int FROM public.question_bank'), 0, 'rejected batch is rolled back');
+    await h.asSuperuser();
+    await h.db.exec(readFileSync(new URL('../../supabase/migrations/20261008100000_remove_legacy_question_type_constraint.sql', import.meta.url), 'utf8'));
+    assert.equal((await importRows()).imported, 6);
+    assert.equal((await importRows()).idempotent, true, 'retry does not duplicate the batch');
+    assert.equal(await su.value(`SELECT convalidated FROM pg_constraint
+      WHERE conrelid = 'public.question_bank'::regclass AND conname = 'question_bank_data_valid'`), true);
+    await assert.rejects(insertQuestion({ type: 'ESSAY', answer: '0' }), /Question type is invalid/);
+    await assert.rejects(insertQuestion({ type: 'INTEGER', options: [], answer: '2.5' }), /whole-number answer/);
+  } finally {
+    await su.query('ALTER TABLE public.question_bank DROP CONSTRAINT IF EXISTS question_bank_type_check');
+  }
+});
 
 test('the bank stores every new question type', async () => {
   assert.ok(await insertQuestion({ type: 'MULTIPLE_CORRECT', answer: '0,2' }));
