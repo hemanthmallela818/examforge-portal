@@ -1,138 +1,155 @@
-# Load rehearsal (100–300 concurrent candidates)
+# Free-tier capacity rehearsal
 
-`scripts/rehearse-staging.mjs` is the candidate load harness. `npm run test:rehearsal:local`
-(`scripts/rehearse-local.mjs`) runs it against the local Supabase stack, and
-`npm run test:rehearsal:staging` (`scripts/rehearse-connected-staging.mjs`) runs it against the
-disposable staging project. Both wrappers pass every `REHEARSAL_*` variable through.
+No hosted operating cohort has been established by this change. Local checks validate behavior;
+only repeated runs on the actual disposable hosted **Free** project establish capacity. Keep the
+same code, Auth limits, data scale and representative paper/media as the intended sitting.
 
-## What one run does
+`scripts/rehearse-staging.mjs` is the harness. `npm run test:rehearsal:local` uses local Supabase;
+`npm run test:rehearsal:staging` uses the explicitly disposable connected staging project. Both
+wrappers pass `REHEARSAL_*` settings through and supply a temporary verified administrator.
+Never run against production. Preserve JSON reports before an operator resets disposable staging:
+immutable results and private media remain after the run; the harness does not reset the project.
 
-Every candidate has its own Supabase client, JWT and Realtime socket, and follows the real
-client hot path (`AuthPortal.jsx`, `StudentDashboard.jsx`, `App.jsx`):
+## Workload and correctness gates
 
-1. **Login and claim**: `signInWithPassword` and then `claim_student_session`. Sign-ins are
-   paced by `REHEARSAL_AUTH_SIGNIN_DELAY_MS` (default 3000; the local wrapper sets 0), and a 429
-   response is retried with backoff.
-2. **Realtime and dashboard**: each candidate subscribes to the same `postgres_changes` UPDATE
-   listener on its own `students` row that App.jsx uses for takeover detection. It then does the
-   dashboard reads (`student_results`, `cbt_exams`), reads the paper (and checks that the answer
-   key is hidden), and does the `active_sessions` restore read.
-3. **Start rush**: every candidate calls `start_exam_session` at the same moment
-   (`REHEARSAL_RUSH_LEAD_MS` after the barrier is armed), followed by the first versioned autosave.
-4. **Takeover probes** (`REHEARSAL_TAKEOVER_PROBES`): a second device signs in mid-exam. The
-   original device's listener must see the takeover, and its next autosave must be rejected by
-   the server.
-5. **Soak** (`REHEARSAL_SOAK_SECONDS`), for each candidate:
-   - An autosave every 5–20 s with jitter. Each one changes 1–2 answers and sends the whole
-     response object with `expected_version_param`, tracking the returned version. Network errors
-     get the same retry and backoff as App.jsx.
-   - A `sync_exam_subject_time` call about every 15 s (App.jsx uses a fixed 15 s interval). The
-     subject time is cumulative, never goes backwards and never exceeds the elapsed time.
-   - A light dashboard read every 30–60 s.
-   - **Stale-tab probes** (`REHEARSAL_STALE_TAB_PERCENT`): an autosave with an old version must
-     return `conflict` together with the unchanged server answers.
-6. The existing security checks: cross-account reads, forged writes, and student and admin
-   provisioning.
-7. **Deadline rush**: every candidate runs `calculateResults` at the same moment: a final
-   versioned sync, then subject time, then `submit_exam(exam_id_param, responses_param)`. That
-   call works with and without the optional `expected_version_param`.
-8. **Lost-response retry rush**: every candidate repeats the submit. The final sync must report
-   the session as already submitted, and `submit_exam` must return the same committed score.
-9. **Verification**: exactly one `student_results` row per candidate with the exact expected
-   score, and zero `active_sessions` left for the exam.
+Each candidate has a separate Auth session and HTTPS client, with **no student Realtime socket**.
+One administrator retains Realtime on the active sessions and reads up to 25 visible sessions
+plus operational health every 30 seconds, without overlapping admin refreshes.
 
-## Output
+1. Password sign-ins share the harness's source IP. Sign-in starts are paced (default 3 seconds)
+   and rate-limit/server failures are retried with backoff. Record every attempt, including retries.
+2. The visible dashboard page is `student_dashboard_page(0)`, limited to 25 metadata cards. It is
+   refreshed after a completion-scheduled randomized 20–30 seconds before starting. The harness
+   rejects paper/answer-key fields in the dashboard response.
+3. A barrier releases simultaneous `start_exam_session` calls. The start payload contains no
+   paper. Candidates read `student_exam_runtime`, then send versioned confirmed-answer saves.
+4. During the soak, answers change every 5–20 seconds. Saves include cumulative subject time;
+   `timing_saved` alone confirms timing, and each successful answer save postpones the runtime
+   poll. Runtime reads schedule from completion, with 20–30-second jitter and capped backoff.
+   Changed timing gets a separate fallback only after 60 seconds without a successful timing
+   save. Timing rejection never prevents submission of confirmed answers.
+5. Takeover probes claim a second device, require the original runtime read to detect lost
+   ownership, and require its stale save to fail. Stale tabs must return a version conflict and
+   unchanged confirmed answers. Token refresh runs before expiry throughout login and soak.
+6. A shared-IP burst explicitly refreshes every candidate token and immediately reads runtime,
+   modeling the read path on reconnect. Each candidate also repeats a save with its original
+   expected version as though the first response was lost; the confirmed version must stay fixed.
+7. The existing cross-account, forged-write and provisioning checks remain. A submission barrier
+   flushes the final answer/timing snapshot through the same serial save path, then submits its
+   confirmed version. Submission retries must return the identical committed grade.
+8. Exactly one result per candidate must match its unique expected grade, with no active sessions
+   remaining. Optional abandonment probes start another one-minute paper, save confirmed answers,
+   stop candidate traffic and wait up to `4 + ceil(probes / 200)` minutes for the scheduled finalizer; each grade and
+   result count must match. The harness never invokes finalization to hide scheduler failure.
 
-- A progress line for each phase, a latency table (n, errors, p50/p95/p99/max, ops/s, the p95
-  limit, and the top HTTP statuses for each operation), Realtime and stale-tab counters, and any
-  thresholds that failed.
-- A JSON report written to `REHEARSAL_REPORT_PATH`, by default `logs/load-rehearsal/<run>.json`
-  (git-ignored). The same JSON is printed as the last stdout line.
-  - `load.operations` lists each operation's latency percentiles, throughput and status counts,
-    plus `errorKinds`: `rate_limited_429`, `server_5xx`, `postgrest`, `statement_timeout`,
-    `serialization_or_deadlock`, `too_many_connections`, `version_conflict`, `network`,
-    `rpc_exception` and `realtime_*`.
-  - Designed rejections, such as a stale device or a retry after a commit, are counted as
-    `expectedErrors`, not as errors.
-- The run exits with status 1 if a correctness check fails or a threshold is exceeded.
-- No keys, tokens or email addresses are printed or written. Error text is redacted.
+Optional `REHEARSAL_MEDIA_FILE` uploads one private PNG/JPEG/WebP (at most 5 MiB). Candidates
+fetch the first visible diagram once after start and further simulated page views during the
+soak, rather than preloading the paper. Set `REHEARSAL_MEDIA_REQUESTS` to the expected number of
+image views. This repeats one compressed fixture; it does **not** establish browser caching,
+layout, or diverse media behavior. Confirm fixture sizes and total view bytes match the real
+paper before setting `REHEARSAL_REPRESENTATIVE_FIXTURE_CONFIRMED=1`; supplement with a browser
+rehearsal of the actual private paper, option diagrams and mobile devices.
 
-## Knobs
+Require zero incorrect grades, duplicate results, stale-device/tab writes, cross-account answers,
+or lost confirmed answers. Expected authorization/version/submission rejections are separate
+from unexpected failures. Default p95 limits are dashboard/runtime ≤2,000 ms, autosave/final
+sync/subject timing ≤1,000 ms, and start/submit/retry/login/refresh ≤3,000 ms. Unexpected errors
+must be ≤1% for **every** measured operation, including attempted retries. Admin Realtime must
+subscribe successfully. A request that later succeeds still counts its earlier unexpected error.
 
-| Variable | Default | Meaning |
+## Output and usage evidence
+
+The latency table and `load.operations` include samples, errors, expected rejections,
+p50/p95/p99/max, throughput, status/error breakdown and bounded redacted error samples. JSON is
+saved to `logs/load-rehearsal/<run>.json` (mode 0600) and printed as the final stdout line.
+Correctness or enforced threshold failure produces exit status 1. Secrets and addresses are redacted.
+
+`finalizer.observations` records pending count, oldest pending deadline and scheduler state before,
+during and after the run. The pending count includes expired sessions still inside the existing
+120-second grace; oldest age plus scheduler status distinguishes normal grace from a stuck queue.
+Use the optional abandonment burst at the intended cohort size to verify backlog drain. The
+unchanged batch ceiling is 200 attempts/minute, so a burst may take several scheduler ticks;
+examine drain rate and oldest age, not just the final count.
+
+`usage` reports observed database size/growth and projected monthly growth/response payload bytes
+using `REHEARSAL_MONTHLY_SITTINGS`. Response bytes include serialized RPC/Auth payloads and fetched
+media, but exclude HTTP/TLS overhead, admin Realtime payloads and backups. Database growth between
+two observations is noisy and can be zero because allocated pages are reused. These are planning
+estimates, not billing counters. Also record the project's actual egress dashboard and relation/index
+sizes before and after representative sittings, including paper copies, results and audit records.
+Keep academic records; export and verify operator backups rather than delete records to fit a quota.
+Confirm current Free quotas in the project dashboard and reserve space/egress for ordinary usage.
+
+## Controls
+
+| Variable | Default | Purpose |
 | --- | --- | --- |
-| `REHEARSAL_CANDIDATE_COUNT` | 80 | Number of candidates (1–1000) |
-| `REHEARSAL_CONCURRENCY` | candidate count | Worker pool size for the rush phases (max 1000). A value below the count models staggered arrival. |
-| `REHEARSAL_AUTH_SIGNIN_DELAY_MS` | 3000 (local: 0) | Global spacing between sign-in starts |
-| `REHEARSAL_PROVISION_CONCURRENCY` | 4 | Parallel service-role user creation |
-| `REHEARSAL_SOAK_SECONDS` | 60 | Soak length (0 skips it; max 3000, which stays under the JWT expiry) |
-| `REHEARSAL_AUTOSAVE_MIN_MS` / `_MAX_MS` | 5000 / 20000 | Autosave interval |
-| `REHEARSAL_SUBJECT_TIME_MIN_MS` / `_MAX_MS` | 12000 / 18000 | Subject-time sync interval |
-| `REHEARSAL_DASHBOARD_READ_MIN_MS` / `_MAX_MS` | 30000 / 60000 | Dashboard read interval during the soak |
-| `REHEARSAL_STALE_TAB_PERCENT` | 10 | Share of candidates that send one stale-version autosave |
-| `REHEARSAL_TAKEOVER_PROBES` | min(3, count) | Number of mid-exam device takeovers. Each costs one extra sign-in. |
-| `REHEARSAL_RUSH_LEAD_MS` | 1000 | Barrier lead time for the start, deadline and retry rushes |
-| `REHEARSAL_REALTIME_TIMEOUT_MS` | 15000 | Timeout for subscribing and for takeover detection |
-| `REHEARSAL_REPORT_PATH` | `logs/load-rehearsal/<run>.json` | Where the JSON report is written |
-| `REHEARSAL_THRESHOLDS` | see below | JSON overrides, for example `{"p95Ms":{"autosave":800},"maxErrorRate":0.02}` |
-| `REHEARSAL_MAX_P95_AUTOSAVE_MS` | 1000 | Shorthand for the autosave p95 limit |
-| `REHEARSAL_MAX_ERROR_RATE` | 0.01 | Maximum error rate for each operation |
-| `REHEARSAL_MIN_REALTIME_SUBSCRIBE_RATE` | 1 | Minimum Realtime subscribe rate and `postgres_changes` binding rate |
-| `REHEARSAL_ENFORCE_THRESHOLDS` | 1 | Set to `0` to report threshold results without failing the run. Correctness checks still fail it. |
+| `REHEARSAL_CANDIDATE_COUNT` | 80 | Total candidates, 1–1000 |
+| `REHEARSAL_CONCURRENCY` | candidate count | Rush worker limit; lower values stagger starts/submits |
+| `REHEARSAL_PROVISION_CONCURRENCY` | 4 | Service-role setup workers |
+| `REHEARSAL_AUTH_SIGNIN_DELAY_MS` | 3000 (local: 0) | Shared-IP login spacing; do not raise hosted limits just to pass |
+| `REHEARSAL_SOAK_SECONDS` | 60 | Active workload length, 0–28800 seconds |
+| `REHEARSAL_FULL_DURATION_SECONDS` | 0 | Intended complete sitting length; must be covered by the soak |
+| `REHEARSAL_AUTOSAVE_MIN_MS` / `_MAX_MS` | 5000 / 20000 | Changed-answer interval; use >60000 to exercise timing fallback |
+| `REHEARSAL_STUDENT_POLL_MIN_MS` / `_MAX_MS` | 20000 / 30000 | Completion-based dashboard/runtime jitter |
+| `REHEARSAL_STALE_TAB_PERCENT` | 10 | Percentage sending one stale-version write |
+| `REHEARSAL_TAKEOVER_PROBES` | min(3, count) | Second-device ownership probes |
+| `REHEARSAL_RUSH_LEAD_MS` | 1000 | Start/submission barrier lead |
+| `REHEARSAL_ABANDONMENT_PROBES` | 0 | Finalizer burst size; adds up to `4 + ceil(probes / 200)` minutes |
+| `REHEARSAL_MEDIA_FILE` / `REHEARSAL_MEDIA_REQUESTS` | unset / 1 | Private representative image / views per candidate |
+| `REHEARSAL_MONTHLY_SITTINGS` | 1 | Usage projection multiplier |
+| `REHEARSAL_HOSTED_PLAN` | unset | Set `free` only after confirming actual hosted Free tier |
+| `REHEARSAL_REPRESENTATIVE_FIXTURE_CONFIRMED` | unset | Set `1` after matching real paper/media sizes and views |
+| `REHEARSAL_CAPACITY_REPORTS` | unset | Comma-separated prior JSON report paths |
+| `REHEARSAL_REPORT_PATH` | generated under logs | Preserve each distinct report |
+| `REHEARSAL_REALTIME_TIMEOUT_MS` | 15000 | Administrator subscription timeout |
+| `REHEARSAL_MIN_REALTIME_SUBSCRIBE_RATE` | 1 | Administrator subscription success fraction |
+| `REHEARSAL_THRESHOLDS` | default limits above | Diagnostic JSON overrides, e.g. `{"p95Ms":{"autosave":800}}` |
+| `REHEARSAL_MAX_P95_AUTOSAVE_MS` / `REHEARSAL_MAX_ERROR_RATE` | 1000 / 0.01 | Threshold shorthands |
+| `REHEARSAL_ENFORCE_THRESHOLDS` | 1 | `0` reports thresholds without enforcing them; cannot establish capacity |
 
-Default p95 limits in ms:
+Long runs require administrator refresh credentials supplied by the wrappers. Direct harness
+runs need the URL, anon/service keys, AAL2 access token, `REHEARSAL_ADMIN_REFRESH_TOKEN`,
+`REHEARSAL_ADMIN_EXPIRES_AT`, exact expected project ref and disposable confirmation. Treat
+refresh credentials like passwords; never put them in report files or committed shell scripts.
+Wrappers allow 20 minutes plus the soak: budget for login pacing, probes and abandonment. For a
+large paced cohort, use a separately authorized direct run if the wrapper time budget is too short.
 
-| Operation | p95 limit (ms) |
-| --- | --- |
-| login | 3000 |
-| claim | 1500 |
-| realtime_subscribe | 5000 |
-| dashboard_read | 2000 |
-| start | 3000 |
-| autosave | 1000 |
-| subject_time | 1000 |
-| final_sync | 2000 |
-| submit | 3000 |
-| submit_retry | 3000 |
+## Progressive hosted validation
 
-These checks must also pass:
+First run local behavioral checks. Then, with an explicitly authorized disposable Free project,
+start at a small cohort and increase gradually until a threshold fails. Compare runs under the
+same representative existing data volume; empty staging is not enough. Re-run the highest passing
+cohort at least **three** times with a full intended exam duration, refreshes, media, admin traffic,
+start/submit bursts and abandonment. Include normal pacing and a realistic shared-school-IP
+Auth/reconnect burst; never remove production anti-abuse controls to make a run pass.
 
-- zero unexpected takeover signals
-- every takeover probe detected
-- zero stale-device writes accepted
-- zero stale-tab overwrites
-
-## Running 100 and 300 candidates
-
-Local stack, which must already be running. The wrapper registers a disposable admin under the
-existing application owner and never replaces the owner:
+Example short local smoke (the local stack must already be running):
 
 ```sh
-REHEARSAL_CANDIDATE_COUNT=100 REHEARSAL_SOAK_SECONDS=300 npm run test:rehearsal:local
-REHEARSAL_CANDIDATE_COUNT=300 REHEARSAL_SOAK_SECONDS=600 npm run test:rehearsal:local
+REHEARSAL_CANDIDATE_COUNT=20 REHEARSAL_SOAK_SECONDS=120 npm run test:rehearsal:local
 ```
 
-Disposable staging:
-
-- Pace sign-ins to the Auth rate limit. For example, 300 sign-ins with a 3000 ms delay is about
-  15 minutes of login phase.
-- Reset the project from its baseline afterwards, because results are immutable.
+Example authorized disposable hosted run (choose the cohort and duration from measurements):
 
 ```sh
 REHEARSAL_CONFIRM_DISPOSABLE=YES_RESET_THIS_DISPOSABLE_PROJECT_AFTER_REHEARSAL \
-REHEARSAL_CANDIDATE_COUNT=300 REHEARSAL_SOAK_SECONDS=300 REHEARSAL_AUTH_SIGNIN_DELAY_MS=3000 \
-  npm run test:rehearsal:staging
+REHEARSAL_HOSTED_PLAN=free REHEARSAL_CANDIDATE_COUNT=80 \
+REHEARSAL_SOAK_SECONDS=7200 REHEARSAL_FULL_DURATION_SECONDS=7200 \
+REHEARSAL_MEDIA_FILE=/absolute/path/representative-diagram.webp REHEARSAL_MEDIA_REQUESTS=20 \
+REHEARSAL_REPRESENTATIVE_FIXTURE_CONFIRMED=1 REHEARSAL_ABANDONMENT_PROBES=80 \
+REHEARSAL_MONTHLY_SITTINGS=8 npm run test:rehearsal:staging
 ```
 
-Notes:
+Supply the previous report paths on the third run. `capacity.operatingCohort` is
+`floor(0.70 × highest repeatedly passing concurrency)` and remains null without three distinct
+same-project hosted Free runs meeting the full-duration/media/drill gates (abandonment at least the measured concurrency) and standard latency/error
+limits. The tier and representative-fixture flags are operator attestations; retain dashboard proof
+and browser evidence alongside reports. A successful short/local run never establishes hosted capacity.
+Split sittings when demand exceeds the operating cohort.
 
-- **Realtime connections**: every candidate holds one Realtime connection. Check the project's
-  Realtime concurrent-connection quota before a 300-candidate staging run (the Free plan allows
-  200). A shortfall shows up as `realtime_*` error kinds and a subscribe rate below 1.
-- **Sign-in pacing**: the login phase is paced, but the start and deadline rushes are not. They
-  measure the database under a true simultaneous burst.
-- **Wrapper timeout**: the wrapper timeout is 20 minutes plus the soak length. For example, a
-  paced login of 300 × 3 s is about 15 minutes. Lower `REHEARSAL_AUTH_SIGNIN_DELAY_MS` only if
-  the staging Auth rate limit has been raised to match.
-- **Soak length**: the earliest student JWT must stay valid (1 h by default) until the retry
-  rush. That limit covers the login phase plus the soak.
+The Node harness cannot simulate browser visibility/disposal, monotonic-clock changes, real offline
+packet loss, device storage recovery, or an expiry racing a retry. Run the component/database tests
+and a browser drill for hidden→visible/offline→online immediate refresh, re-grant generation rejection,
+server-confirmed expiry grading, and honest locally pending recovery copy. Record these separately;
+`operationalDrillsValidated` describes only the automated refresh/runtime/takeover/finalizer drills.

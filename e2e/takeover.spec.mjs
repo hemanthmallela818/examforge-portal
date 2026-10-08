@@ -55,8 +55,17 @@ test('newest student login takes over atomically and the old device becomes read
 
     await loginStudent(newPage, takeoverCredentials, { expectTakeover: true });
 
+    const ownershipRead = oldPage.waitForResponse(response => (
+      response.request().method() === 'POST'
+      && response.url().includes('/rest/v1/rpc/student_exam_runtime')
+    ), { timeout: 35_000 });
+    // Returning to the old screen refreshes ownership immediately, including
+    // when the previous save postponed the normal 20–30-second status poll.
+    await oldPage.bringToFront();
+    await oldPage.evaluate(() => window.dispatchEvent(new Event('online')));
+    await ownershipRead;
     const oldDeviceWarning = oldPage.getByRole('dialog', { name: 'Notification' });
-    await expect(oldDeviceWarning).toContainText('replaced by another device', { timeout: 20_000 });
+    await expect(oldDeviceWarning).toContainText('replaced by another device', { timeout: 35_000 });
     await expect(oldPage.getByRole('button', { name: /Save & Next/ })).toHaveCount(0);
     const recoveryCopy = await oldPage.evaluate(() => localStorage.getItem('cbt_active_exam_session'));
     expect(recoveryCopy).not.toBeNull();

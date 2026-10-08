@@ -6,9 +6,8 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { APP_ERROR, classifyAppError } from '../../appErrors';
 import { supabase, supabaseUrl, supabaseAnonKey } from '../../supabase';
 import { customAlert } from '../../utils';
-import { safeStorageGet, safeStorageSet, safeStorageRemove } from '../../browserStorage';
+import { safeStorageSet, safeStorageRemove } from '../../browserStorage';
 import {
-  buildSubmissionResponses,
   createInitialResponses,
   sessionBelongsToStudent,
   saveOfflineRecoveryRecord,
@@ -26,7 +25,8 @@ import {
   isTransientRpcError,
   retryDelayMs
 } from '../../examLogic';
-import { preloadExamImages } from '../../components/StorageImage';
+import { createExamSavePipeline } from '../../examSavePipeline';
+import { useStudentPolling } from './useStudentPolling';
 import { announceAssertive } from '../../components/LiveAnnouncer';
 import {
   emptyExam,
@@ -36,7 +36,7 @@ import {
   committedResultToScorecard,
   shuffleQuestionBlocks
 } from './examSessionHelpers';
-import { useDeadlineReached } from './examClock';
+import { anchorExamClock, getExamActionNow, resetExamClock, useDeadlineReached } from './examClock';
 import { useExamLockdown } from './useExamLockdown';
 import { useSubjectTime } from './useSubjectTime';
 import { useExamNavigation } from './useExamNavigation';
@@ -105,16 +105,19 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
   const [submissionError, setSubmissionError] = useState(/** @type {string | null} */ (null));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submissionStartedRef = useRef(false);
+  const confirmedSubmissionVersionRef = useRef(/** @type {number | null} */ (null));
   const [autosaveStatus, setAutosaveStatus] = useState(/** @type {AutosaveStatus} */ ('SAVED'));
   const [recoveryNotice, setRecoveryNotice] = useState('');
   const [localRecoveryAvailable, setLocalRecoveryAvailable] = useState(true);
   const sessionVersionRef = useRef(initialActiveSession?.version || 1);
   const isSavingRef = useRef(false);
-  const pendingSaveRef = useRef(/** @type {{ payload: ExamResponses, generation: number } | null} */ (null));
   // Last answer set the server confirmed. Navigation-only changes are persisted
   // locally but never re-sent, which removes most redundant autosave writes.
   const lastConfirmedResponsesRef = useRef(/** @type {ExamResponses | null} */ (null));
-  const autosaveGenerationRef = useRef(0);
+  const [runtimeStatus, setRuntimeStatus] = useState('PENDING');
+  const [runtimeError, setRuntimeError] = useState('');
+  const responsesRef = useRef(userResponses);
+  useEffect(() => { responsesRef.current = userResponses; }, [userResponses]);
   const safeLogoutRef = useRef(/** @type {((options?: SafeLogoutOptions) => void) | null} */ (null));
   const studentSessionLockedRef = useRef(false);
   const [studentSessionLocked, setStudentSessionLocked] = useState(false);
@@ -147,6 +150,17 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
   // per-second countdown text is rendered by ExamNavbar's own clock subscriber.
   const isExamLocked = useDeadlineReached(sessionEndTime, examState === 'ACTIVE');
 
+  const { subjectTimeRef, subjectTickRef, syncSubjectTime, getSubjectTimeSnapshot, markSubjectTimeSaved, timingInFlightRef } = useSubjectTime({
+    examState,
+    activeSubject,
+    activeExamId: activeExam?.id,
+    currentStudent,
+    lockdownActiveRef,
+    initialSubjectTimeSeconds: initialActiveSession?.subjectTimeSeconds,
+    accessGenerationRef,
+    answerSavingRef: isSavingRef
+  });
+
   const flushPendingTermination = useCallback(async () => {
     if (!currentStudent) return;
     const pending = readPendingTerminationRecord({ student: currentStudent, userUuid: currentStudent.docId });
@@ -171,7 +185,7 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
   }, [currentStudent]);
 
   const flushPendingOfflineSubmission = useCallback(async () => {
-    if (!currentStudent) return;
+    if (!currentStudent || submissionStartedRef.current || terminatingRef.current) return;
     const parsed = readPendingSubmissionRecord({
       student: currentStudent,
       examId: activeExam?.id,
@@ -183,10 +197,12 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
 
     try {
       setIsSubmitting(true);
-      setSubmissionError('Submitting previously saved offline responses...');
+      submissionStartedRef.current = true;
+      setSubmissionError('Finalizing previously confirmed answers...');
       const { data: finalResults, error } = await supabase.rpc('submit_exam', {
         exam_id_param: examId,
-        responses_param: parsed.responses,
+        responses_param: null,
+        ...(parsed.expectedVersion != null ? { expected_version_param: parsed.expectedVersion } : {}),
         access_generation_param: parsed.accessGeneration ?? null
       });
       if (error) {
@@ -227,6 +243,7 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
       }
     } finally {
       setIsSubmitting(false);
+      submissionStartedRef.current = false;
       finishPendingSubmissionSync({ student: currentStudent, examId, userUuid: currentStudent.docId });
     }
   }, [activeExam, currentStudent, setExamState, setResults]);
@@ -289,6 +306,7 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
     warningsRef.current = 0;
     isAlertingRef.current = false;
     submissionStartedRef.current = false;
+    resetExamClock();
     setCurrentStudent(null);
     setExamState('AUTH');
   }, [isAlertingRef, setCurrentStudent, setExamState, warningsRef]);
@@ -336,221 +354,203 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
     };
   }, [examState, currentStudent?.docId, handleSafeLogout]);
 
-  // Session hijacking listener (Supabase Realtime)
-  useEffect(() => {
-    if (!currentStudent || !currentStudent.docId || examState === 'AUTH') return;
+  const handleSessionReplaced = useCallback(() => {
+    if (studentSessionLockedRef.current) return;
+    studentSessionLockedRef.current = true;
+    setStudentSessionLocked(true);
+    setAutosaveStatus('LOCKED');
+    handleSafeLogout({ preserveAttempt: true });
+    void customAlert('This login was replaced by another device. Local pending answers were preserved on this device; only answers confirmed by the server can be graded after the deadline.');
+  }, [handleSafeLogout]);
 
-    // Check if docId is a valid UUID to prevent query exceptions for mock students
-    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(currentStudent.docId);
-    if (!isUuid) return;
+  const applyRuntimeClock = useCallback((/** @type {import('../../types').UntrustedInput} */ runtime) => {
+    if (runtime?.server_now) anchorExamClock(runtime.server_now);
+    if (runtime?.deadline_at) {
+      const deadline = Date.parse(runtime.deadline_at);
+      if (Number.isFinite(deadline)) {
+        sessionEndTimeRef.current = deadline;
+        setSessionEndTime(deadline);
+      }
+    }
+  }, []);
 
-    let disposed = false;
-    /** @param {unknown} activeAuthSessionId */
-    const lockIfReplaced = (activeAuthSessionId) => {
-      if (disposed || studentSessionLockedRef.current || activeAuthSessionId === undefined) return;
-      const currentLocalToken = safeStorageGet('localStorage', 'examSessionToken') || currentStudent.sessionToken;
-      if (activeAuthSessionId !== currentLocalToken) {
-        isAlertingRef.current = true;
-        studentSessionLockedRef.current = true;
-        setStudentSessionLocked(true);
-        handleSafeLogout({ preserveAttempt: true });
-        setTimeout(() => {
-          customAlert('This login was replaced by another device. The local recovery copy on this device was preserved, but it can no longer autosave, submit, or terminate this attempt.')
-            .then(() => {
-              isAlertingRef.current = false;
-            });
-        }, 100);
+  const { postpone: postponeRuntimePoll } = useStudentPolling({
+    enabled: Boolean(currentStudent && activeExam && ['PRE_EXAM', 'ACTIVE'].includes(examState)),
+    key: `${currentStudent?.docId}:${activeExam?.id}:${examState}`,
+    poll: async (signal) => {
+      try {
+        const { data, error } = await supabase.rpc('student_exam_runtime', { exam_id_param: activeExam?.id }).abortSignal(signal);
+        if (signal.aborted) return;
+        if (error) throw error;
+        if (!data) throw new Error('Invalid exam runtime response.');
+        setRuntimeStatus(data.exam_status);
+        setRuntimeError('');
+        applyRuntimeClock(data);
+        if (data.session_owned === false) {
+          handleSessionReplaced();
+        } else if (data.status === 'SUBMITTED' && data.result) {
+          savePipelineRef.current?.dispose();
+          savePipelineRef.current = null;
+          clearOfflineRecoveryRecord({ student: currentStudent, examId: activeExam?.id, userUuid: currentStudent?.docId });
+          setResults(committedResultToScorecard(data.result));
+          setExamState('SUBMITTED');
+        } else if (data.status === 'TERMINATED') {
+          savePipelineRef.current?.dispose();
+          savePipelineRef.current = null;
+          setTerminationReason(data.termination_reason || 'ended');
+          setExamState('TERMINATED');
+        } else if (examState === 'ACTIVE' && data.access_generation !== undefined
+          && data.access_generation !== null && data.access_generation !== accessGenerationRef.current) {
+          savePipelineRef.current?.dispose();
+          savePipelineRef.current = null;
+          // Keep the old local generation until start reconciles it with the server.
+          setRecoveryNotice('Access was re-granted. Resume to load the server-confirmed answers; this device’s pending copy cannot overwrite them.');
+          setExamState('PRE_EXAM');
+        }
+      } catch (error) {
+        if (signal.aborted) return;
+        if (isStudentSessionReplaced(error)) handleSessionReplaced();
+        else setRuntimeError('Unable to verify the exam status. Check your connection.');
+        throw error;
+      }
+    }
+  });
+
+  const saveScope = `${currentStudent?.docId}:${activeExam?.id}:${accessGeneration}`;
+  const saveScopeRef = useRef(saveScope);
+  useEffect(() => { saveScopeRef.current = saveScope; }, [saveScope]);
+
+  const saveAnswers = useCallback(async (/** @type {ExamResponses} */ payload) => {
+    if (!currentStudent || !activeExam) throw new Error('An active student and exam are required to save.');
+    const savedGeneration = accessGenerationRef.current;
+    const scope = `${currentStudent.docId}:${activeExam.id}:${savedGeneration}`;
+    const assertWritable = () => {
+      if (!savePipelineRef.current || studentSessionLockedRef.current || terminatingRef.current || scope !== saveScopeRef.current || savedGeneration !== accessGenerationRef.current) {
+        throw new Error('The answer save pipeline is closed.');
       }
     };
-
-    const channel = supabase
-      .channel(`student-session-${currentStudent.docId}`)
-      .on('postgres_changes', {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'students',
-        filter: `id=eq.${currentStudent.docId}`
-      }, (payload) => lockIfReplaced(payload.new?.active_auth_session_id))
-      .subscribe(async (status) => {
-        if (status !== 'SUBSCRIBED') return;
-        // A takeover that happened while the channel was connecting produces no
-        // event, so confirm the current owner once the subscription is live.
-        const { data } = await supabase
-          .from('students')
-          .select('active_auth_session_id')
-          .eq('id', currentStudent.docId)
-          .maybeSingle();
-        if (data) lockIfReplaced(data.active_auth_session_id);
-      });
-
-    return () => {
-      disposed = true;
-      supabase.removeChannel(channel);
+    assertWritable();
+    if (lastConfirmedResponsesRef.current && sameResponses(payload, lastConfirmedResponsesRef.current)) return sessionVersionRef.current;
+    // Freeze all retry parameters. A lost response must not turn a retry into a
+    // different write against the same version.
+    const timing = getSubjectTimeSnapshot();
+    const args = {
+      exam_id_param: activeExam.id,
+      responses_param: payload,
+      expected_version_param: sessionVersionRef.current,
+      access_generation_param: accessGenerationRef.current,
+      ...(timingInFlightRef.current ? {} : { subject_time_seconds_param: timing })
     };
-  }, [currentStudent, examState, handleSafeLogout, isAlertingRef]);
-
-  // Bounded, deterministic autosave engine with optimistic concurrency and offline recovery
+    isSavingRef.current = true;
+    try {
+      for (let retry = 0; retry <= 3; retry += 1) {
+        assertWritable();
+        if (retry > 0) {
+          setAutosaveStatus('RETRYING');
+          await new Promise(resolve => setTimeout(resolve, retryDelayMs(retry, { capMs: 5000 })));
+          assertWritable();
+        }
+        if (sessionEndTimeRef.current && getExamActionNow() >= sessionEndTimeRef.current) {
+          setAutosaveStatus('LOCKED');
+          setRecoveryNotice('The deadline has passed. Only server-confirmed answers will be graded; locally pending answers cannot be recovered after expiry.');
+          return null;
+        }
+        try {
+          const { data, error, status } = await supabase.rpc('sync_active_session_progress', args);
+          assertWritable();
+          if (error) throw Object.assign(error, { httpStatus: status });
+          applyRuntimeClock(data);
+          const ownLostSave = data?.conflict && data.user_responses && sameResponses(data.user_responses, payload);
+          if (data?.success || ownLostSave) {
+            sessionVersionRef.current = data.version;
+            lastConfirmedResponsesRef.current = payload;
+            if (data.timing_saved) markSubjectTimeSaved(timing);
+            postponeRuntimePoll();
+            if (sameResponses(payload, responsesRef.current)) {
+              const local = saveOfflineRecoveryRecord({
+                student: currentStudent, examId: activeExam.id, examTitle: activeExam.title,
+                userUuid: currentStudent.docId, examData, userResponses: payload,
+                activeSubject, currentIndices, version: data.version,
+                endTime: /** @type {number | undefined} */ (sessionEndTimeRef.current), accessGeneration: accessGenerationRef.current
+              });
+              setLocalRecoveryAvailable(local.success);
+              setAutosaveStatus('SAVED');
+            }
+            return data.version;
+          }
+          if (data?.conflict) {
+            sessionVersionRef.current = data.version;
+            if (data.user_responses) {
+              lastConfirmedResponsesRef.current = data.user_responses;
+              setUserResponses(data.user_responses);
+            }
+            setAutosaveStatus('CONFLICT');
+            setRecoveryNotice('A newer server-confirmed answer set was found, so this stale tab was not allowed to overwrite it. Review your answers before continuing.');
+            throw Object.assign(new Error('A newer server-confirmed answer set was found. Review the restored answers and submit again.'), { code: APP_ERROR.CONFLICT });
+          }
+          throw new Error('The exam server returned an invalid autosave response.');
+        } catch (error) {
+          if (classifyAppError(error) === APP_ERROR.TIME_EXPIRED) {
+            setAutosaveStatus('LOCKED');
+            setRecoveryNotice('The deadline has passed. Only server-confirmed answers will be graded; locally pending answers cannot be recovered after expiry.');
+            return null;
+          }
+          if (!isTransientRpcError(/** @type {import('../../types').RpcErrorLike} */ (error), { online: navigator.onLine }) || retry === 3) throw error;
+        }
+      }
+      return null;
+    } finally {
+      isSavingRef.current = false;
+    }
+  }, [currentStudent, activeExam, getSubjectTimeSnapshot, applyRuntimeClock, markSubjectTimeSaved, postponeRuntimePoll, examData, activeSubject, currentIndices, timingInFlightRef]);
+  const saveAnswersRef = useRef(saveAnswers);
+  useEffect(() => { saveAnswersRef.current = saveAnswers; }, [saveAnswers]);
+  const savePipelineRef = useRef(/** @type {ReturnType<typeof createExamSavePipeline<ExamResponses>> | null} */ (null));
   useEffect(() => {
-    if (examState !== 'ACTIVE' || !currentStudent || !activeExam || !userResponses || !examData) return;
-    if (studentSessionLockedRef.current || terminatingRef.current) return;
-    const saveGeneration = ++autosaveGenerationRef.current;
+    const pipeline = createExamSavePipeline((/** @type {ExamResponses} */ payload) => {
+      if (saveScope !== saveScopeRef.current) return Promise.reject(new Error('The answer save pipeline is closed.'));
+      return saveAnswersRef.current(payload);
+    });
+    savePipelineRef.current = pipeline;
+    return () => { pipeline.dispose(); savePipelineRef.current = null; };
+  }, [saveScope]);
 
-    // Immediate zero-data-loss local persistence
+  useEffect(() => {
+    if (examState !== 'ACTIVE' || !currentStudent || !activeExam || studentSessionLockedRef.current || terminatingRef.current || submissionStartedRef.current) return;
     const localSave = saveOfflineRecoveryRecord({
-      student: currentStudent,
-      examId: activeExam.id,
-      examTitle: activeExam.title,
-      userUuid: currentStudent.docId,
-      examData,
-      userResponses,
-      activeSubject,
-      currentIndices,
-      version: sessionVersionRef.current,
-      endTime: /** @type {number | undefined} */ (sessionEndTimeRef.current),
+      student: currentStudent, examId: activeExam.id, examTitle: activeExam.title,
+      userUuid: currentStudent.docId, examData, userResponses, activeSubject, currentIndices,
+      version: sessionVersionRef.current, endTime: /** @type {number | undefined} */ (sessionEndTimeRef.current),
       accessGeneration: accessGenerationRef.current
     });
     setLocalRecoveryAvailable(localSave.success);
-
-    if (sessionEndTimeRef.current && Date.now() >= sessionEndTimeRef.current) {
-      setAutosaveStatus('LOCKED');
-      return;
-    }
-
-    if (!navigator.onLine || offlineSince) {
-      setAutosaveStatus(localSave.success ? 'OFFLINE' : 'FAILED');
-      return;
-    }
-
-    if (lastConfirmedResponsesRef.current && sameResponses(userResponses, lastConfirmedResponsesRef.current)) {
-      // Only the position changed; the answers are already server-confirmed.
-      setAutosaveStatus(prev => (prev === 'SAVING' || prev === 'RETRYING' ? 'SAVED' : prev));
-      return;
-    }
-
-    // A changed response is not server-confirmed until the debounced RPC succeeds.
-    // Mark it pending immediately so the UI never presents stale "saved" state.
+    const remaining = (sessionEndTimeRef.current || Infinity) - getExamActionNow();
+    if (remaining <= 0) { setAutosaveStatus('LOCKED'); return; }
+    if (!navigator.onLine || offlineSince) { setAutosaveStatus(localSave.success ? 'OFFLINE' : 'FAILED'); return; }
+    if (lastConfirmedResponsesRef.current && sameResponses(userResponses, lastConfirmedResponsesRef.current)) return;
     setAutosaveStatus('SAVING');
-
-    const timer = setTimeout(async () => {
-      if (terminatingRef.current) return;
-      if (isSavingRef.current) {
-        pendingSaveRef.current = { payload: userResponses, generation: saveGeneration };
-        return;
-      }
-
-      /**
-       * @param {ExamResponses} payload
-       * @param {number} generation
-       */
-      const executeSave = async (payload, generation) => {
-        if (studentSessionLockedRef.current || terminatingRef.current) return;
-        isSavingRef.current = true;
-        try {
-          for (let retry = 0; retry <= 3; retry += 1) {
-            if (studentSessionLockedRef.current || terminatingRef.current) return;
-            if (sessionEndTimeRef.current && Date.now() >= sessionEndTimeRef.current) {
-              setAutosaveStatus('LOCKED');
-              return;
-            }
-            if (retry > 0) {
-              if (generation === autosaveGenerationRef.current) setAutosaveStatus('RETRYING');
-              await new Promise(resolve => setTimeout(resolve, retryDelayMs(retry, { capMs: 5000 })));
-              if (terminatingRef.current) return;
-            }
-
-            try {
-              const { data: syncData, error: syncError, status: syncStatus } = await supabase.rpc('sync_active_session_progress', {
-                exam_id_param: activeExam.id,
-                responses_param: payload,
-                expected_version_param: sessionVersionRef.current,
-                access_generation_param: accessGenerationRef.current
-              });
-              if (syncError) throw Object.assign(syncError, { httpStatus: syncStatus });
-              if (terminatingRef.current) return;
-
-              // A retry after a lost response reports a version conflict even though
-              // the server already holds exactly this answer set. Treat it as saved.
-              const ownLostSave = syncData?.conflict && syncData.user_responses
-                && sameResponses(syncData.user_responses, payload);
-
-              if (syncData?.success || ownLostSave) {
-                sessionVersionRef.current = syncData.version;
-                lastConfirmedResponsesRef.current = payload;
-                if (generation === autosaveGenerationRef.current) {
-                  const confirmedLocalSave = saveOfflineRecoveryRecord({
-                    student: currentStudent,
-                    examId: activeExam.id,
-                    examTitle: activeExam.title,
-                    userUuid: currentStudent.docId,
-                    examData,
-                    userResponses: payload,
-                    activeSubject,
-                    currentIndices,
-                    version: syncData.version,
-                    endTime: /** @type {number | undefined} */ (sessionEndTimeRef.current),
-                    accessGeneration: accessGenerationRef.current
-                  });
-                  setLocalRecoveryAvailable(confirmedLocalSave.success);
-                  setAutosaveStatus('SAVED');
-                }
-                return;
-              }
-              if (syncData?.conflict) {
-                sessionVersionRef.current = syncData.version;
-                if (generation === autosaveGenerationRef.current) {
-                  if (syncData.user_responses) setUserResponses(syncData.user_responses);
-                  setAutosaveStatus('CONFLICT');
-                  setRecoveryNotice('A newer server-confirmed answer set was found, so this stale tab was not allowed to overwrite it. Review your answers before continuing.');
-                }
-                return;
-              }
-              throw new Error('The exam server returned an invalid autosave response.');
-            } catch (err) {
-              if (!isTransientRpcError(/** @type {import('../../types').RpcErrorLike} */ (err), { online: navigator.onLine }) || retry === 3) throw err;
-            }
-          }
-        } catch (err) {
-          console.warn("Autosave sync failed:", err);
-          if (isStudentSessionReplaced(err)) {
-            studentSessionLockedRef.current = true;
-            setStudentSessionLocked(true);
-            setAutosaveStatus('LOCKED');
-            setRecoveryNotice(examActionErrorMessage(err, 'submit'));
-            handleSafeLogout({ preserveAttempt: true });
-            setTimeout(() => customAlert(examActionErrorMessage(err, 'submit')), 100);
-            return;
-          }
-          const isNetworkIssue = isTransientRpcError(/** @type {import('../../types').RpcErrorLike} */ (err), { online: navigator.onLine });
-          if (generation === autosaveGenerationRef.current) {
-            setAutosaveStatus(isNetworkIssue && localSave.success ? 'OFFLINE' : 'FAILED');
-          }
-          if (!localSave.success && generation === autosaveGenerationRef.current) {
-            setRecoveryNotice('This browser could not store a recovery copy. Keep this page open and restore the connection immediately.');
-          }
-        } finally {
-          isSavingRef.current = false;
-          if (pendingSaveRef.current) {
-            const nextBatch = pendingSaveRef.current;
-            pendingSaveRef.current = null;
-            if (!sessionEndTimeRef.current || Date.now() < sessionEndTimeRef.current) {
-              executeSave(nextBatch.payload, nextBatch.generation);
-            }
-          }
+    const timer = setTimeout(() => {
+      if (submissionStartedRef.current || terminatingRef.current) return;
+      void savePipelineRef.current?.save(userResponses).catch(error => {
+        if (studentSessionLockedRef.current || terminatingRef.current || saveScope !== saveScopeRef.current) return;
+        if (isStudentSessionReplaced(error)) { handleSessionReplaced(); return; }
+        if (classifyAppError(error) === APP_ERROR.CONFLICT) {
+          if (error.code === 'EX015') setExamState('PRE_EXAM');
+          return;
         }
-      };
-
-      executeSave(userResponses, saveGeneration);
-    }, 1000);
-
+        setAutosaveStatus(isTransientRpcError(error, { online: navigator.onLine }) && localSave.success ? 'OFFLINE' : 'FAILED');
+        if (!localSave.success) setRecoveryNotice('This browser could not store a recovery copy. Keep this page open and restore the connection immediately.');
+      });
+    }, remaining <= 10_000 ? 250 : 1000);
     return () => clearTimeout(timer);
-  }, [userResponses, examState, currentStudent, activeExam, examData, activeSubject, currentIndices, offlineSince, handleSafeLogout]);
+  }, [userResponses, examState, currentStudent, activeExam, examData, activeSubject, currentIndices, offlineSince, handleSessionReplaced, saveScope, setExamState]);
 
   const terminateExam = useCallback(async (/** @type {TerminationReason} */ reason = 'ended') => {
     if (studentSessionLockedRef.current || terminatingRef.current) return;
     terminatingRef.current = true;
+    savePipelineRef.current?.dispose();
+    savePipelineRef.current = null;
     lockdownActiveRef.current = true;
-    pendingSaveRef.current = null;
-    autosaveGenerationRef.current += 1;
     // No further warnings while the attempt is being ended.
     isAlertingRef.current = true;
     setTerminationReason(reason);
@@ -619,16 +619,6 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
     terminateExamRef.current = terminateExam;
   }, [terminateExam]);
 
-  const { subjectTimeRef, subjectTickRef, syncSubjectTime } = useSubjectTime({
-    examState,
-    activeSubject,
-    activeExamId: activeExam?.id,
-    currentStudent,
-    lockdownActiveRef,
-    initialSubjectTimeSeconds: initialActiveSession?.subjectTimeSeconds,
-    accessGenerationRef
-  });
-
   // Auto-submit once when the fixed deadline passes. The deadline is derived
   // from the fixed end time, so sleep, background throttling, and a busy main
   // thread cannot give the candidate extra time.
@@ -646,6 +636,12 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
     clearLockdown();
     subjectTimeRef.current = {};
     submissionStartedRef.current = false;
+    lastConfirmedResponsesRef.current = null;
+    sessionVersionRef.current = 1;
+    sessionEndTimeRef.current = null;
+    setSessionEndTime(null);
+    setRuntimeStatus('PENDING');
+    setRuntimeError('');
     setActiveExam(exam);
     const data = exam.questionsData || exam.questions_data || { subjects: [], questions: {} };
 
@@ -778,6 +774,7 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
         responses_param: null
       });
       if (error) throw error;
+      applyRuntimeClock(session);
       if (session?.expired) {
         await customAlert('Your exam time has expired. Your attempt has been finalized.');
         const { data: committedResult } = await supabase
@@ -806,6 +803,8 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
         return;
       }
 
+      subjectTimeRef.current = session?.subject_time_seconds || {};
+      markSubjectTimeSaved(subjectTimeRef.current);
       const localGeneration = accessGenerationRef.current;
       const gen = session?.access_generation ?? null;
       accessGenerationRef.current = gen;
@@ -817,6 +816,7 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
       const activeData = session?.jumbled_exam_data || examData;
       if (session?.jumbled_exam_data) setExamData(session.jumbled_exam_data);
       if (session?.user_responses) {
+        lastConfirmedResponsesRef.current = session.user_responses;
         const reconciliation = reconcileOfflineRecovery({
           examData: activeData,
           serverResponses: session.user_responses,
@@ -832,16 +832,15 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
       const remainingSeconds = session?.time_left !== undefined && session?.time_left !== null
         ? session.time_left
         : (examData.duration || 180) * 60;
-      const calculatedEndTime = Date.now() + (remainingSeconds * 1000);
+      const calculatedEndTime = session?.deadline_at ? Date.parse(session.deadline_at) : getExamActionNow() + (remainingSeconds * 1000);
       sessionEndTimeRef.current = calculatedEndTime;
       setSessionEndTime(calculatedEndTime);
 
-      // Pre-cache all question diagrams into browser memory
-      preloadExamImages(activeData);
+      // Diagrams remain private and load on demand; avoid a whole-paper burst.
 
       // Start Exam after a server-owned session has been created or restored.
       setExamState('ACTIVE');
-      subjectTickRef.current = Date.now();
+      subjectTickRef.current = performance.now();
       announceAssertive(`Examination started. Time remaining: ${Math.round(remainingSeconds / 60)} minutes.`);
     } catch (err) {
       console.error('Unable to create exam session:', err);
@@ -867,47 +866,28 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
       throw new Error('An active student and exam are required to submit.');
     }
 
-    // Confirm the final visible answer state before submission so the private
-    // administrator review snapshot and the grade are based on the same data.
-    const deadlinePassed = sessionEndTimeRef.current && Date.now() >= sessionEndTimeRef.current;
+    // Drain the same queue as autosave. The deadline check also runs after each
+    // retry wait, and an expired submit grades only the server's stored answers.
+    confirmedSubmissionVersionRef.current = null;
     let mayAlreadyBeCommitted = false;
     let confirmedVersion = null;
-    if (!deadlinePassed) {
-      const { data: syncData, error: syncError } = await supabase.rpc('sync_active_session_progress', {
-        exam_id_param: activeExam.id,
-        responses_param: userResponses,
-        expected_version_param: sessionVersionRef.current,
-        access_generation_param: accessGenerationRef.current
-      });
-      // A successful first submission removes the active session. If its HTTP
-      // response is lost, the retry must still reach the idempotent submit RPC
-      // so it can return the already-committed result.
-      mayAlreadyBeCommitted = /** @type {string[]} */ ([APP_ERROR.SESSION_NOT_FOUND, APP_ERROR.ALREADY_SUBMITTED]).includes(classifyAppError(syncError));
-      if (syncError && !mayAlreadyBeCommitted) throw syncError;
-      if (!syncError) {
-        if (syncData?.conflict) {
-          sessionVersionRef.current = syncData.version;
-          if (syncData.user_responses) setUserResponses(syncData.user_responses);
-          throw new Error('A newer server-confirmed answer set was found. Review the restored answers and submit again.');
-        }
-        if (!syncData?.success) throw new Error('The final answer save was not confirmed by the server.');
-        sessionVersionRef.current = syncData.version;
-        lastConfirmedResponsesRef.current = userResponses;
-        confirmedVersion = syncData.version;
-      }
+    try {
+      if (!savePipelineRef.current) throw new Error('The answer save pipeline is closed.');
+      confirmedVersion = await savePipelineRef.current.save(responsesRef.current);
+    } catch (error) {
+      mayAlreadyBeCommitted = /** @type {string[]} */ ([APP_ERROR.SESSION_NOT_FOUND, APP_ERROR.ALREADY_SUBMITTED]).includes(classifyAppError(error));
+      if (!mayAlreadyBeCommitted) throw error;
     }
-    if (!mayAlreadyBeCommitted) await syncSubjectTime();
+    if (!mayAlreadyBeCommitted) {
+      try { await syncSubjectTime({ onlyIfChanged: true }); }
+      catch (error) { console.warn('Final subject timing was not saved; grading confirmed answers:', error); }
+    }
 
-    // The browser sends only question IDs and responses. Answer keys stay in
-    // Supabase and are evaluated by the protected submit_exam RPC.
-    const responses = buildSubmissionResponses(examData, userResponses);
-
-    // With a confirmed version the server grades its own stored snapshot, so a
-    // stale tab can never overwrite newer answers. Submission is idempotent, so
-    // transient failures (rate limits, overload, lock timeouts) are retried.
+    confirmedSubmissionVersionRef.current = confirmedVersion;
+    // The final save confirmed this version; grading uses only the server copy.
     const submitArgs = {
       exam_id_param: activeExam.id,
-      responses_param: responses,
+      responses_param: null,
       ...(confirmedVersion !== null ? { expected_version_param: confirmedVersion } : {}),
       access_generation_param: accessGenerationRef.current
     };
@@ -975,13 +955,18 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
         await customAlert(friendlyMsg);
         return;
       }
-      if (currentStudent && activeExam && examData) {
-        const responses = buildSubmissionResponses(examData, userResponses);
+      if (/** @type {import('../../types').RpcErrorLike} */ (err)?.code === 'EX013' || /** @type {import('../../types').RpcErrorLike} */ (err)?.code === 'EX015') {
+        lastConfirmedResponsesRef.current = null;
+        setExamState('PRE_EXAM');
+      }
+      if (currentStudent && activeExam && isTransientRpcError(/** @type {import('../../types').RpcErrorLike} */ (err), { online: navigator.onLine })
+        && (confirmedSubmissionVersionRef.current !== null || (sessionEndTimeRef.current && getExamActionNow() >= sessionEndTimeRef.current))) {
         const pendingSave = savePendingSubmissionRecord({
           student: currentStudent,
           examId: activeExam.id,
           userUuid: currentStudent.docId,
-          responses,
+          responses: [],
+          expectedVersion: confirmedSubmissionVersionRef.current,
           accessGeneration: accessGenerationRef.current
         });
         if (!pendingSave.success) {
@@ -1019,7 +1004,9 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
     offlineSince,
     setAutosaveStatus,
     studentSessionLockedRef,
-    terminatingRef
+    terminatingRef,
+    submissionStartedRef,
+    sessionEndTimeRef
   });
 
   const currentQIndex = currentIndices[activeSubject] || 0;
@@ -1040,6 +1027,9 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
 
   return {
     // Session data
+    runtimeStatus,
+    runtimeError,
+    handleSessionReplaced,
     activeExam,
     examData,
     activeSubject,

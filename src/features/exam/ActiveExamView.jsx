@@ -109,7 +109,7 @@ export default function ActiveExamView({ session, currentStudent }) {
       {offlineSince && offlineDismissed && (
         <div className="theme-island z-[100] flex flex-wrap items-center justify-center gap-x-4 gap-y-2 bg-red-700 px-4 py-2 text-center text-sm font-semibold text-white shadow-md">
           <span className="inline-flex items-center gap-2">{localRecoveryAvailable
-            ? <><WifiOff className="size-4 shrink-0" aria-hidden="true" /> Offline Mode Active: You can continue answering. Responses are being saved on this device.</>
+            ? <><WifiOff className="size-4 shrink-0" aria-hidden="true" /> Offline: Answers are pending on this device. Reconnect before the deadline to confirm them.</>
             : <><AlertTriangle className="size-4 shrink-0" aria-hidden="true" /> Offline recovery storage failed. Reconnect immediately and keep this page open.</>}</span>
           <button
             onClick={() => setOfflineDismissed(false)}
@@ -173,7 +173,7 @@ export default function ActiveExamView({ session, currentStudent }) {
       {isExamLocked && (
         <div className="z-[100] flex items-center justify-center gap-3 bg-rose-600 px-4 py-2.5 text-center text-sm font-semibold text-white shadow-md">
           <TimerOff className="size-4 shrink-0" aria-hidden="true" />
-          <span>Examination Time Has Concluded. Answers are locked. Submitting responses to server...</span>
+          <span>Examination Time Has Concluded. Answers are locked. Only server-confirmed answers will be graded. Finalizing your attempt…</span>
         </div>
       )}
 

@@ -71,36 +71,28 @@ test('administrator data failures are visible, bounded, and recover through expl
 
 test('student dashboard recovers from 401 and 403 REST failures without reloading the page', async ({ page }, testInfo) => {
   const fixture = fixturesFor(testInfo.project.name);
-  let resultReads = 0;
-  let examReads = 0;
-  let rejectExamReads = false;
-
-  await page.route('**/rest/v1/student_results*', async route => {
-    resultReads += 1;
-    if (resultReads === 1) await route.fulfill(jsonError(401, 'Injected expired JWT response'));
-    else await route.continue();
-  });
-  await page.route('**/rest/v1/cbt_exams*', async route => {
-    examReads += 1;
-    if (rejectExamReads) {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      await route.fulfill(jsonError(403, 'Injected forbidden response'));
-    }
+  const dashboardPages = [];
+  const injectedStatuses = [401, 403];
+  await page.route('**/rest/v1/rpc/student_dashboard_page', async route => {
+    dashboardPages.push(route.request().postDataJSON().page_param);
+    const status = injectedStatuses[dashboardPages.length - 1];
+    if (status) await route.fulfill(jsonError(status, `Injected ${status} dashboard failure`));
     else await route.continue();
   });
 
   await loginStudent(page, fixture.credentials.reliabilityStudent);
   const error = page.getByRole('alert').filter({ hasText: 'Failed to fetch exams' });
   await expect(error).toBeVisible();
-  rejectExamReads = true;
+  const forbiddenReply = page.waitForResponse(response => (
+    response.url().includes('/rest/v1/rpc/student_dashboard_page') && response.status() === 403
+  ));
   await error.getByRole('button', { name: 'Retry dashboard' }).click();
-  await expect.poll(() => examReads).toBeGreaterThanOrEqual(1);
+  await (await forbiddenReply).finished();
   await expect(error).toBeVisible();
-  rejectExamReads = false;
   await error.getByRole('button', { name: 'Retry dashboard' }).click();
   await expect(page.locator('.student-exam-card').filter({ hasText: fixture.exam.title })).toBeVisible();
-  expect(resultReads).toBeGreaterThanOrEqual(3);
-  expect(examReads).toBeGreaterThanOrEqual(2);
+  await expect(error).toHaveCount(0);
+  expect(dashboardPages).toEqual([0, 0, 0]);
 });
 
 test('a response lost after committed submission recovers idempotently with one result', async ({ page }, testInfo) => {
@@ -147,7 +139,7 @@ test('a response lost after committed submission recovers idempotently with one 
   expect(count).toBe(1);
 });
 
-test('storage quota denial blocks exam start while a Realtime outage preserves REST access', async ({ page }, testInfo) => {
+test('storage quota denial blocks exam start and student REST access needs no Realtime connection', async ({ page }, testInfo) => {
   const fixture = fixturesFor(testInfo.project.name);
   let realtimeAttempts = 0;
   await page.routeWebSocket(/\/realtime\/v1\/websocket/, websocket => {
@@ -164,11 +156,21 @@ test('storage quota denial blocks exam start while a Realtime outage preserves R
     };
   });
 
+  const dashboardRead = page.waitForResponse(response => (
+    response.request().method() === 'POST'
+    && response.url().includes('/rest/v1/rpc/student_dashboard_page')
+    && response.ok()
+  ));
   await loginStudent(page, fixture.credentials.storageStudent);
-  await expect.poll(() => realtimeAttempts).toBeGreaterThan(0);
+  const response = await dashboardRead;
+  expect(response.request().postDataJSON()).toEqual({ page_param: 0 });
+  const dashboard = await response.json();
+  expect(dashboard.exams.length).toBeLessThanOrEqual(25);
+  expect(realtimeAttempts).toBe(0);
   const examCard = page.locator('.student-exam-card').filter({ hasText: fixture.exam.title });
   await expect(examCard).toBeVisible();
   await examCard.getByRole('button', { name: /Start Exam/ }).click();
   await expect(page.getByText('This browser cannot safely start the exam.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Browser Storage Required to Start' })).toBeDisabled();
+  expect(realtimeAttempts).toBe(0);
 });

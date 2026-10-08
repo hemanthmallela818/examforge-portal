@@ -7,15 +7,16 @@ import { readExamSource } from './support/examSource.mjs';
 
 const source = async (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('exam Realtime listeners use the metadata-only published table', async () => {
-  for (const content of await Promise.all([
-    source('src/components/StudentDashboard.jsx'),
-    source('src/components/PreExam.jsx'),
-    adminSource()
-  ])) {
-    assert.match(content, /table:\s*['"]exam_status_events['"]/);
-    assert.doesNotMatch(content, /table:\s*['"]cbt_exams_raw['"]/);
-  }
+test('only admin exam Realtime uses metadata; student screens use bounded polling', async () => {
+  const [dashboard, preExam, session, admin] = await Promise.all([
+    source('src/components/StudentDashboard.jsx'), source('src/components/PreExam.jsx'),
+    source('src/features/exam/useExamSession.js'), adminSource()
+  ]);
+  assert.match(admin, /table:\s*['"]exam_status_events['"]/);
+  assert.doesNotMatch(admin, /table:\s*['"]cbt_exams_raw['"]/);
+  for (const content of [dashboard, preExam, session]) assert.doesNotMatch(content, /\.channel\(/);
+  assert.match(dashboard, /student_dashboard_page/);
+  assert.match(session, /student_exam_runtime/);
 });
 
 test('creating an exam preserves question IDs for server-side grading', async () => {
@@ -80,7 +81,8 @@ test('administrative access, timing, broad exam assignment, and storage rules ar
   assert.match(admin, /get_my_role/);
   assert.match(admin, /The exam was not created/);
   assert.match(admin, /admin_deactivate_students/);
-  assert.match(student, /examObj\.class === 'All'/);
+  assert.match(student, /student_dashboard_page/);
+  assert.doesNotMatch(student, /filteredExams/);
   assert.match(operationalMigration, /CREATE OR REPLACE FUNCTION public\.get_db_size/);
   assert.match(operationalMigration, /FOR SELECT TO authenticated/);
   assert.match(operationalMigration, /CREATE OR REPLACE FUNCTION public\.delete_students/);
@@ -154,8 +156,8 @@ test('offline recovery is account-bound, versioned, deadline-safe, and never rep
   assert.match(app, /readPendingTerminationRecord/);
   assert.match(logic, /cbt_pending_termination_v/);
   assert.match(logic, /localVersion !== authoritativeVersion/);
-  assert.match(app, /setUserResponses\(syncData\.user_responses\)/);
-  assert.match(app, /Date\.now\(\) >= sessionEndTimeRef\.current/);
+  assert.match(app, /setUserResponses\(data\.user_responses\)/);
+  assert.match(app, /getExamActionNow\(\) >= sessionEndTimeRef\.current/);
   assert.match(migration, /clock_timestamp\(\) >= session_row\.deadline_at/);
   assert.match(migration, /expected_version_param <> session_row\.version/);
   assert.match(migration, /r\.questions_data - 'questions'/);
@@ -170,7 +172,8 @@ test('student takeover is bound to the signed Supabase auth session at the datab
   assert.match(auth, /rpc\('claim_student_session'\)/);
   assert.doesNotMatch(auth, /update\(\{\s*session_token/);
   assert.match(app, /rpc\('release_student_session'\)/);
-  assert.match(app, /active_auth_session_id/);
+  assert.match(app, /student_exam_runtime/);
+  assert.doesNotMatch(app, /\.channel\(/);
   assert.match(app, /isStudentSessionReplaced/);
   assert.match(app, /handleSafeLogout\(\{ preserveAttempt: true \}\)/);
   assert.match(app, /Promise\.race\(\[\s*Promise\.resolve\(supabase\.rpc\('release_student_session'\)\)/);
@@ -371,7 +374,8 @@ test('large collections are complete, bounded, deferred, and refreshed without e
     source('supabase/migrations/20260910310000_stage19_paginated_exam_list.sql')
   ]);
   assert.match(admin, /fetchAllRows/);
-  assert.match(student, /fetchAllRows/);
+  assert.doesNotMatch(student, /fetchAllRows|questions_data.*select/);
+  assert.match(student, /page_param: page/);
   assert.match(admin, /Large collections\s*\n\s*\/\/ are loaded when their owning screen is opened/);
   assert.match(admin, /scheduleCollectionRefresh/);
   assert.match(admin, /get_admin_exam_list_page/);

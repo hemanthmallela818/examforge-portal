@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../supabase';
 import { checkBrowserCompatibility, isNarrowViewport } from '../runtimeConfig';
 import { AlertTriangle, BookOpen, CheckCircle2, ClipboardList, Clock, Hourglass, ListChecks, Lock, MinusCircle, Play, ShieldCheck, Smartphone, XCircle } from 'lucide-react';
 import { Alert, Badge, Button, Checkbox, cn } from './ui';
@@ -8,7 +7,8 @@ import { questionTypeLabel, resolveMarking } from '../questionTypes';
 /**
  * @param {{
  *   startExam: () => void | Promise<void>,
- *   activeExamId?: string,
+ *   examStatus?: string,
+ *   statusError?: string,
  *   duration?: number,
  *   marksCorrect?: number,
  *   marksIncorrect?: number,
@@ -16,10 +16,8 @@ import { questionTypeLabel, resolveMarking } from '../questionTypes';
  *   subjects?: string[]
  * }} props
  */
-const PreExam = ({ startExam, activeExamId, duration = 180, marksCorrect = 4, marksIncorrect = -1, marking = null, subjects = [] }) => {
+const PreExam = ({ startExam, examStatus = 'PENDING', statusError = '', duration = 180, marksCorrect = 4, marksIncorrect = -1, marking = null, subjects = [] }) => {
   const [checked, setChecked] = useState(false);
-  const [examStatus, setExamStatus] = useState('PENDING');
-  const [statusError, setStatusError] = useState('');
   const [compatCheck] = useState(() => checkBrowserCompatibility());
   const [isMobileScreen, setIsMobileScreen] = useState(() => typeof window !== 'undefined' ? isNarrowViewport(window.innerWidth) : false);
 
@@ -29,54 +27,9 @@ const PreExam = ({ startExam, activeExamId, duration = 180, marksCorrect = 4, ma
     return () => window.removeEventListener('resize', updateViewport);
   }, []);
 
-  useEffect(() => {
-    if (!activeExamId) return;
-
-    const fetchInitialStatus = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('cbt_exams')
-          .select('status')
-          .eq('id', activeExamId)
-          .single();
-        
-        if (error) throw error;
-        if (data) {
-          setExamStatus(data.status);
-          setStatusError('');
-        }
-      } catch (err) {
-        console.error("Failed to fetch exam status:", err);
-        setStatusError('Unable to verify the exam status. Check your connection.');
-      }
-    };
-    fetchInitialStatus();
-
-    const channel = supabase
-      .channel(`pre-exam-${activeExamId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'exam_status_events', filter: `exam_id=eq.${activeExamId}` },
-        (/** @type {{ new: { status?: string } }} */ payload) => {
-          if (payload.new && payload.new.status) {
-            setExamStatus(payload.new.status);
-          }
-        }
-      )
-      .subscribe();
-
-    // Realtime delivers activation immediately; this jittered poll is only a fallback.
-    const refreshInterval = setInterval(fetchInitialStatus, 20000 + Math.floor(Math.random() * 10000));
-
-    return () => {
-      clearInterval(refreshInterval);
-      supabase.removeChannel(channel);
-    };
-  }, [activeExamId]);
-
   const isExamActive = examStatus === 'ACTIVE';
 
-  const canStart = checked && isExamActive && compatCheck.compatible;
+  const canStart = checked && isExamActive && !statusError && compatCheck.compatible;
   const penalty = Math.abs(marksIncorrect);
   const typeMarking = Object.keys(marking || {}).map(code => ({ code, label: questionTypeLabel(code), ...resolveMarking({ marksCorrect, marksIncorrect, marking }, code) }));
 
@@ -217,7 +170,7 @@ const PreExam = ({ startExam, activeExamId, duration = 180, marksCorrect = 4, ma
             size="lg"
             variant={isExamActive ? 'primary' : 'secondary'}
             className="w-full"
-            disabled={!checked || !isExamActive || !compatCheck.compatible}
+            disabled={!canStart}
             onClick={startExam}
           >
             {!compatCheck.compatible

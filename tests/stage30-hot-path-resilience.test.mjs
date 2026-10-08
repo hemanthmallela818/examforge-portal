@@ -23,6 +23,9 @@ test('only transient failures are retried', () => {
   assert.ok(!isTransientRpcError({ httpStatus: 400, code: 'P0001', message: 'This exam is not available for submission' }));
   assert.ok(!isTransientRpcError({ code: '42501', message: 'This student session has been replaced or is no longer active' }));
   assert.ok(!isTransientRpcError(null));
+  assert.ok(!isTransientRpcError({ code: 'EX013', message: 'Version conflict' }, { online: false }));
+  assert.ok(!isTransientRpcError({ code: 'EX015' }, { online: false }));
+  assert.ok(!isTransientRpcError({ code: 'CONFLICT' }, { online: false }));
 });
 
 test('retry delays use capped full jitter', () => {

@@ -2,6 +2,7 @@
 // Every handler is memoized so the memoized QuestionPanel and GridPanel only
 // re-render when the data they display actually changes.
 import { useCallback } from 'react';
+import { getExamActionNow } from './examClock';
 import { announcePolite } from '../../components/LiveAnnouncer';
 
 /**
@@ -23,7 +24,9 @@ import { announcePolite } from '../../components/LiveAnnouncer';
  *   offlineSince: number | null,
  *   setAutosaveStatus: (status: 'SAVING' | 'OFFLINE') => void,
  *   studentSessionLockedRef: { current: boolean },
- *   terminatingRef: { current: boolean }
+ *   terminatingRef: { current: boolean },
+ *   submissionStartedRef: { current: boolean },
+ *   sessionEndTimeRef: { current: number | null }
  * }} options
  */
 export function useExamNavigation({
@@ -37,10 +40,15 @@ export function useExamNavigation({
   offlineSince,
   setAutosaveStatus,
   studentSessionLockedRef,
-  terminatingRef
+  terminatingRef,
+  submissionStartedRef,
+  sessionEndTimeRef
 }) {
+  const isEditingBlocked = useCallback(() => studentSessionLockedRef.current || terminatingRef.current || submissionStartedRef.current
+    || Boolean(sessionEndTimeRef.current && getExamActionNow() >= sessionEndTimeRef.current),
+  [studentSessionLockedRef, terminatingRef, submissionStartedRef, sessionEndTimeRef]);
   const updateResponse = useCallback((/** @type {number} */ index, /** @type {SelectedOption} */ selectedOption, /** @type {ResponseStatus} */ status) => {
-    if (studentSessionLockedRef.current || terminatingRef.current) return;
+    if (isEditingBlocked()) return;
     setAutosaveStatus(navigator.onLine && !offlineSince ? 'SAVING' : 'OFFLINE');
     setUserResponses(prev => {
       if (!prev[activeSubject]) return prev;
@@ -49,10 +57,10 @@ export function useExamNavigation({
       newResponses[activeSubject][index] = { selectedOption, status };
       return newResponses;
     });
-  }, [activeSubject, offlineSince, setAutosaveStatus, setUserResponses, studentSessionLockedRef, terminatingRef]);
+  }, [activeSubject, offlineSince, setAutosaveStatus, setUserResponses, isEditingBlocked]);
 
   const selectResponse = useCallback((/** @type {number} */ index, /** @type {SelectedOption} */ selectedOption) => {
-    if (studentSessionLockedRef.current || terminatingRef.current) return;
+    if (isEditingBlocked()) return;
     setAutosaveStatus(navigator.onLine && !offlineSince ? 'SAVING' : 'OFFLINE');
     setUserResponses(prev => {
       if (!prev[activeSubject] || !prev[activeSubject][index]) return prev;
@@ -73,10 +81,10 @@ export function useExamNavigation({
       newResponses[activeSubject][index] = { selectedOption, status };
       return newResponses;
     });
-  }, [activeSubject, offlineSince, setAutosaveStatus, setUserResponses, studentSessionLockedRef, terminatingRef]);
+  }, [activeSubject, offlineSince, setAutosaveStatus, setUserResponses, isEditingBlocked]);
 
   const changeSubjectAndIndex = useCallback((/** @type {string} */ newSubject, /** @type {number} */ newIndex) => {
-    if (studentSessionLockedRef.current || terminatingRef.current) return;
+    if (isEditingBlocked()) return;
     setActiveSubject(newSubject);
     setCurrentIndices(prev => ({ ...prev, [newSubject]: newIndex }));
     announcePolite(`Switched to ${newSubject} section, Question ${newIndex + 1}.`);
@@ -95,10 +103,10 @@ export function useExamNavigation({
       }
       return prev;
     });
-  }, [setActiveSubject, setCurrentIndices, setUserResponses, studentSessionLockedRef, terminatingRef]);
+  }, [setActiveSubject, setCurrentIndices, setUserResponses, isEditingBlocked]);
 
   const changeQuestion = useCallback((/** @type {number} */ newIndex) => {
-    if (studentSessionLockedRef.current || terminatingRef.current) return;
+    if (isEditingBlocked()) return;
     setCurrentIndices(prev => ({ ...prev, [activeSubject]: newIndex }));
 
     // If the new question is NOT_VISITED, change it to NOT_ANSWERED
@@ -115,7 +123,7 @@ export function useExamNavigation({
       }
       return prev;
     });
-  }, [activeSubject, setCurrentIndices, setUserResponses, studentSessionLockedRef, terminatingRef]);
+  }, [activeSubject, setCurrentIndices, setUserResponses, isEditingBlocked]);
 
   const goNext = useCallback(() => {
     const currentIndex = currentIndices[activeSubject] || 0;
@@ -146,7 +154,7 @@ export function useExamNavigation({
   }, [activeSubject, changeQuestion, changeSubjectAndIndex, currentIndices, examData]);
 
   const handleAction = useCallback((/** @type {ExamActionType} */ actionType) => {
-    if (studentSessionLockedRef.current || terminatingRef.current) return;
+    if (isEditingBlocked()) return;
     const currentIndex = currentIndices[activeSubject] || 0;
     const currentResponse = userResponses?.[activeSubject]?.[currentIndex] || { selectedOption: null, status: /** @type {ResponseStatus} */ ('NOT_VISITED') };
 
@@ -164,10 +172,10 @@ export function useExamNavigation({
 
     updateResponse(currentIndex, currentResponse.selectedOption, newStatus);
     goNext();
-  }, [activeSubject, currentIndices, goNext, studentSessionLockedRef, terminatingRef, updateResponse, userResponses]);
+  }, [activeSubject, currentIndices, goNext, isEditingBlocked, updateResponse, userResponses]);
 
   const handleSubjectChange = useCallback((/** @type {string} */ sub) => {
-    if (studentSessionLockedRef.current || terminatingRef.current) return;
+    if (isEditingBlocked()) return;
     setActiveSubject(sub);
     const firstIndex = currentIndices[sub] || 0;
     setUserResponses(prev => {
@@ -180,7 +188,7 @@ export function useExamNavigation({
       }
       return prev;
     });
-  }, [currentIndices, setActiveSubject, setUserResponses, studentSessionLockedRef, terminatingRef]);
+  }, [currentIndices, setActiveSubject, setUserResponses, isEditingBlocked]);
 
   return {
     selectResponse,

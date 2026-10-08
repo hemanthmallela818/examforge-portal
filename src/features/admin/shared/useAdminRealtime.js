@@ -4,7 +4,7 @@ import { supabase } from '../../../supabase';
 
 /**
  * @typedef {object} AdminRealtimeServices
- * @property {import('react').RefObject<Set<string>>} loadedCollections
+ * @property {{ exams: boolean, students: boolean, questions: boolean, classes: boolean }} visibleCollections
  * @property {() => unknown} fetchTableCounts
  * @property {() => void} scheduleTableCounts
  * @property {() => Promise<unknown>} fetchExams
@@ -29,11 +29,11 @@ import { supabase } from '../../../supabase';
  * are opened once when the workspace mounts (after access is granted) and
  * closed on unmount; the handlers are effect events, so they always see the
  * current loaders without re-subscribing. Refreshes are debounced per
- * collection and only target collections that have already been loaded.
+ * collection and only target collections used by the current screen.
  * @param {AdminRealtimeServices} services
  */
 export function useAdminRealtime({
-  loadedCollections,
+  visibleCollections,
   fetchTableCounts,
   scheduleTableCounts,
   fetchExams,
@@ -51,8 +51,11 @@ export function useAdminRealtime({
   const pendingDeleted = useRef(/** @type {string[]} */ ([]));
   const debounceTimer = useRef(/** @type {ReturnType<typeof setTimeout> | null} */ (null));
 
+  const visibleCollectionsRef = useRef(visibleCollections);
+  useEffect(() => { visibleCollectionsRef.current = visibleCollections; }, [visibleCollections]);
+
   /**
-   * @param {string} key
+   * @param {'exams' | 'examDetail' | 'results' | 'students' | 'questions' | 'classes'} key
    * @param {() => unknown} refresh
    */
   const scheduleCollectionRefresh = (key, refresh) => {
@@ -60,7 +63,10 @@ export function useAdminRealtime({
     if (existing) clearTimeout(existing);
     const timer = setTimeout(() => {
       collectionRefreshTimers.current.delete(key);
-      refresh();
+      const visible = key === 'examDetail' || key === 'results'
+        ? Boolean(activeExamIdRef.current)
+        : visibleCollectionsRef.current[key];
+      if (visible) refresh();
     }, 300);
     collectionRefreshTimers.current.set(key, timer);
   };
@@ -69,17 +75,25 @@ export function useAdminRealtime({
     fetchTableCounts();
   });
 
-  const handleExamStatusChange = useEffectEvent(() => scheduleCollectionRefresh('exams', async () => {
-    await fetchExams();
+  const handleExamStatusChange = useEffectEvent(() => {
+    if (visibleCollections.exams) scheduleCollectionRefresh('exams', fetchExams);
     const currentExamId = activeExamIdRef.current;
-    if (currentExamId) await fetchExamDetail(currentExamId);
-  }));
+    if (currentExamId) {
+      scheduleCollectionRefresh('examDetail', () => {
+        if (activeExamIdRef.current === currentExamId) return fetchExamDetail(currentExamId);
+      });
+    } else if (!visibleCollections.exams) {
+      scheduleTableCounts();
+    }
+  });
 
   const handleResultChange = useEffectEvent((/** @type {RealtimePayload} */ payload) => {
     const currentExamId = activeExamIdRef.current;
     const result = payload.new || payload.old;
     if (currentExamId && result?.exam_id === currentExamId) {
-      scheduleCollectionRefresh('results', () => fetchResults(currentExamId));
+      scheduleCollectionRefresh('results', () => {
+        if (activeExamIdRef.current === currentExamId) return fetchResults(currentExamId);
+      });
     } else {
       scheduleTableCounts();
     }
@@ -87,7 +101,7 @@ export function useAdminRealtime({
 
   const handleStudentChange = useEffectEvent((/** @type {RealtimePayload} */ payload) => {
     // Fetch fresh list
-    if (loadedCollections.current.has('students')) {
+    if (visibleCollections.students) {
       scheduleCollectionRefresh('students', fetchStudents);
     } else {
       scheduleTableCounts();
@@ -136,12 +150,12 @@ export function useAdminRealtime({
   });
 
   const handleQuestionBankChange = useEffectEvent(() => {
-    if (loadedCollections.current.has('questions')) scheduleCollectionRefresh('questions', fetchQuestionBank);
+    if (visibleCollections.questions) scheduleCollectionRefresh('questions', fetchQuestionBank);
     else scheduleTableCounts();
   });
 
   const handleClassChange = useEffectEvent(() => {
-    if (loadedCollections.current.has('classes')) scheduleCollectionRefresh('classes', fetchClasses);
+    if (visibleCollections.classes) scheduleCollectionRefresh('classes', fetchClasses);
     else scheduleTableCounts();
   });
 
