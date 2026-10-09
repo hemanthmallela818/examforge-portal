@@ -77,8 +77,8 @@ describe('ExamNavbar header', () => {
 describe('ExamNavbar save status', () => {
   it.each([
     ['SAVED', 'All responses saved to server', /Saved/],
-    ['SAVING', 'Saving responses to server...', /Saving…/],
-    ['OFFLINE', 'Offline: Responses saved to local storage', /Saved on this device/],
+    ['SAVING', 'Answers pending confirmation by the server', /Saving…/],
+    ['OFFLINE', 'Pending on this device; reconnect before the deadline to confirm answers', /Pending on this device/],
     ['RETRYING', 'Retrying synchronization...', /Syncing…/],
     ['FAILED', 'Autosave failed. Check connection.', /Save Failed/],
     ['CONFLICT', 'Newer server-confirmed progress was kept.', /Server Copy Kept/],

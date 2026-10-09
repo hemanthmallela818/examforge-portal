@@ -85,7 +85,8 @@ const EXAM_ERROR_MESSAGES = Object.freeze({
   [APP_ERROR.TIME_EXPIRED]: 'Your exam time has expired. Your attempt has been finalized.',
   [APP_ERROR.SESSION_NOT_STARTED]: 'Your exam session is no longer valid. Return to the dashboard and contact the invigilator.',
   [APP_ERROR.PROFILE_MISSING]: 'Your student account is not set up correctly. Contact the invigilator.',
-  [APP_ERROR.ANSWER_KEY_MISSING]: 'This exam cannot be submitted. Contact the invigilator immediately.'
+  [APP_ERROR.ANSWER_KEY_MISSING]: 'This exam cannot be submitted. Contact the invigilator immediately.',
+  [APP_ERROR.CONFLICT]: 'The server has newer confirmed answers or re-granted access. Review the server copy before submitting again.'
 });
 
 /**

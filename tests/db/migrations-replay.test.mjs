@@ -43,8 +43,10 @@ test('latest schema objects exist after replay', async () => {
   const su = await h.asSuperuser();
   const functions = [
     'public.submit_exam(uuid,jsonb,integer,integer)',
-    'public.sync_active_session_progress(uuid,jsonb,integer,integer)',
+    'public.sync_active_session_progress(uuid,jsonb,integer,integer,jsonb)',
     'public.sync_exam_subject_time(uuid,jsonb,integer)',
+    'public.student_dashboard_page(integer)',
+    'public.student_exam_runtime(uuid)',
     'public.terminate_exam(uuid,text,integer)',
     'public.admin_delete_exam(uuid,text)',
     'public.admin_regrant_exam_access(text)',

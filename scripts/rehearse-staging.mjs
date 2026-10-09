@@ -1,6 +1,8 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { nextStudentPollAt, timingFallbackDue, projectUsage, operatingCapacity, isConfirmedSaveReply, responsesForPaper } from './rehearsal-capacity.mjs';
 import { dirname, resolve } from 'node:path';
 import { createClient } from '@supabase/supabase-js';
+import { isTransientRpcError, retryDelayMs } from '../src/examLogic.js';
 
 const url = process.env.REHEARSAL_SUPABASE_URL;
 const anonKey = process.env.REHEARSAL_SUPABASE_ANON_KEY;
@@ -46,13 +48,15 @@ const rangeEnv = (prefix, fallbackMin, fallbackMax, floor) => {
 // All candidates act at once by default; a smaller pool models staggered arrival.
 const workerConcurrency = intEnv('REHEARSAL_CONCURRENCY', candidateCount, { min: 1, max: 1000 });
 const provisionConcurrency = intEnv('REHEARSAL_PROVISION_CONCURRENCY', 4, { min: 1, max: 50 });
-// Student JWTs are not refreshed by the harness, so a soak must finish well
-// inside the project's JWT expiry (3600 s by default).
-const soakSeconds = intEnv('REHEARSAL_SOAK_SECONDS', 60, { min: 0, max: 3000 });
+const soakSeconds = intEnv('REHEARSAL_SOAK_SECONDS', 60, { min: 0, max: 28_800 });
+const fullDurationSeconds = intEnv('REHEARSAL_FULL_DURATION_SECONDS', 0, { min: 0, max: 28_800 });
+if (fullDurationSeconds > soakSeconds) throw new Error('SOAK_SECONDS must cover FULL_DURATION_SECONDS.');
+const monthlySittings = intEnv('REHEARSAL_MONTHLY_SITTINGS', 1, { min: 1, max: 1000 });
+const abandonmentProbes = intEnv('REHEARSAL_ABANDONMENT_PROBES', 0, { min: 0, max: candidateCount });
+const mediaFile = process.env.REHEARSAL_MEDIA_FILE;
+const mediaRequests = intEnv('REHEARSAL_MEDIA_REQUESTS', 1, { min: 1, max: 500 });
 const autosaveInterval = rangeEnv('REHEARSAL_AUTOSAVE', 5_000, 20_000, 1_000);
-// App.jsx syncs subject time on a fixed 15 s interval while the exam is active.
-const subjectTimeInterval = rangeEnv('REHEARSAL_SUBJECT_TIME', 12_000, 18_000, 1_000);
-const dashboardReadInterval = rangeEnv('REHEARSAL_DASHBOARD_READ', 30_000, 60_000, 1_000);
+const studentPollInterval = rangeEnv('REHEARSAL_STUDENT_POLL', 20_000, 30_000, 1_000);
 const staleTabPercent = intEnv('REHEARSAL_STALE_TAB_PERCENT', 10, { min: 0, max: 100 });
 const takeoverProbeCount = intEnv('REHEARSAL_TAKEOVER_PROBES', Math.min(3, candidateCount), { min: 0, max: candidateCount });
 const rushLeadMs = intEnv('REHEARSAL_RUSH_LEAD_MS', 1_000, { min: 0, max: 60_000 });
@@ -73,7 +77,10 @@ const thresholds = {
     start: 3000,
     autosave: 1000,
     subject_time: 1000,
-    final_sync: 2000,
+    final_sync: 1000,
+    runtime_read: 2000,
+    reconnect_runtime: 2000,
+    token_refresh: 3000,
     submit: 3000,
     submit_retry: 3000
   },
@@ -106,6 +113,14 @@ if (process.env.REHEARSAL_MIN_REALTIME_SUBSCRIBE_RATE) {
 }
 
 const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+const adminClient = createClient(url, anonKey, {
+  auth: { persistSession: false, autoRefreshToken: false },
+  global: { headers: { Authorization: `Bearer ${adminAccessToken}` } }
+});
+let adminBearer = adminAccessToken;
+// Global headers must track the refreshed AAL2 token too.
+adminClient.rest.headers.set('Authorization', `Bearer ${adminBearer}`);
+adminClient.functions.setAuth(adminBearer);
 const prefix = `REHEARSAL-${Date.now()}`;
 // logs/ is git-ignored and, unlike test-results/, is not wiped by Playwright.
 const reportPath = resolve(process.env.REHEARSAL_REPORT_PATH || `logs/load-rehearsal/${prefix}.json`);
@@ -144,16 +159,13 @@ const questionsData = {
 };
 
 const responsesForCandidate = correctTarget => {
-  const grouped = Object.fromEntries(subjects.map(subject => [subject, []]));
   const flattened = [];
   for (let index = 0; index < questionCount; index += 1) {
-    const subject = subjects[index % subjects.length];
     const questionId = `${prefix}-q-${String(index + 1).padStart(3, '0')}`;
     const selectedOption = index < correctTarget ? String(index + 1) : String(-(index + 1));
-    grouped[subject].push({ selectedOption, status: 'ANSWERED' });
     flattened.push({ question_id: questionId, selected_option: selectedOption, status: 'ANSWERED' });
   }
-  return { grouped, flattened };
+  return flattened;
 };
 
 const limit = async (items, concurrency, task) => {
@@ -256,7 +268,7 @@ const metrics = new Map();
 const operationMetrics = name => {
   if (!metrics.has(name)) {
     metrics.set(name, {
-      samples: [], ok: 0, errors: 0, expectedErrors: 0,
+      samples: [], ok: 0, errors: 0, expectedErrors: 0, responseBytes: 0,
       statuses: {}, errorKinds: {}, errorCodes: {}, sampleErrors: [],
       firstStartedAt: Infinity, lastEndedAt: 0
     });
@@ -306,6 +318,7 @@ const measure = async (operation, task, { bucket, expectError, validate } = {}) 
   bucket?.push(elapsed);
   entry.firstStartedAt = Math.min(entry.firstStartedAt, startedAt);
   entry.lastEndedAt = Math.max(entry.lastEndedAt, Date.now());
+  if (result?.data != null) entry.responseBytes += Buffer.byteLength(JSON.stringify(result.data));
   const error = thrown || result?.error || null;
   const status = Number(result?.status ?? error?.status ?? error?.context?.status ?? (error ? 0 : 200)) || 0;
   increment(entry.statuses, String(status));
@@ -347,7 +360,8 @@ const summarizeOperation = entry => {
     statuses: entry.statuses,
     errorKinds: entry.errorKinds,
     errorCodes: entry.errorCodes,
-    sampleErrors: entry.sampleErrors
+    sampleErrors: entry.sampleErrors,
+    responseBytes: entry.responseBytes
   };
 };
 
@@ -380,57 +394,22 @@ const runCandidate = async (candidate, phase, task) => {
 };
 const alive = list => list.filter(candidate => !candidate.failed);
 
-const realtimeStats = {
-  subscribeAttempts: 0,
-  subscribed: 0,
-  postgresChangesReady: 0,
-  takeoverProbesWithoutReadyBinding: 0,
-  studentRowEvents: 0,
-  eventsCarryingSessionColumn: 0,
-  unexpectedTakeoverSignals: 0,
-  takeoverProbes: 0,
-  takeoverDetected: 0,
-  takeoverDetectionMs: [],
-  staleDeviceWritesRejected: 0,
-  staleDeviceWritesAccepted: 0
-};
+const realtimeStats = { subscribeAttempts: 0, subscribed: 0, adminEvents: 0,
+  takeoverProbes: 0, takeoverDetected: 0, takeoverDetectionMs: [],
+  staleDeviceWritesRejected: 0, staleDeviceWritesAccepted: 0 };
 const staleTabStats = { probes: 0, conflictsDetected: 0, overwrites: 0 };
-
-// App.jsx listens for UPDATEs on the candidate's own students row and treats a
-// changed active_auth_session_id as a takeover. Mirror that exact listener.
-const handleStudentRowUpdate = (candidate, payload) => {
-  realtimeStats.studentRowEvents += 1;
-  const row = payload?.new || {};
-  if (Object.prototype.hasOwnProperty.call(row, 'active_auth_session_id')) realtimeStats.eventsCarryingSessionColumn += 1;
-  if (row.active_auth_session_id === candidate.sessionToken) return;
-  if (candidate.onTakeover) candidate.onTakeover(Date.now());
-  else realtimeStats.unexpectedTakeoverSignals += 1;
-};
-
-const subscribe = (client, channelName, candidate) => new Promise(resolve => {
-  let channel = client.channel(channelName);
-  if (candidate) {
-    channel = channel.on('postgres_changes', {
-      event: 'UPDATE',
-      schema: 'public',
-      table: 'students',
-      filter: `id=eq.${candidate.authId}`
-    }, payload => handleStudentRowUpdate(candidate, payload))
-      // SUBSCRIBED only acknowledges the channel join; Realtime confirms the
-      // postgres_changes replication binding separately with a system message.
-      .on('system', {}, payload => {
-        if (payload?.extension === 'postgres_changes' && payload?.status === 'ok' && !candidate.changesReady) {
-          candidate.changesReady = true;
-          realtimeStats.postgresChangesReady += 1;
-          candidate.onChangesReady?.();
-        }
-      });
-  }
-  const timeout = setTimeout(() => resolve({ channel, status: 'TIMED_OUT' }), realtimeTimeoutMs);
+const subscribeAdmin = () => new Promise(resolve => {
+  realtimeStats.subscribeAttempts += 1;
+  const channel = adminClient.channel(`rehearsal-admin-${prefix}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'active_sessions', filter: `exam_id=eq.${examId}` },
+      () => { realtimeStats.adminEvents += 1; });
+  channels.push(channel);
+  const timeout = setTimeout(() => resolve({ error: { message: 'Admin Realtime timed out', code: 'REALTIME_TIMED_OUT' } }), realtimeTimeoutMs);
   channel.subscribe(status => {
-    if (status === 'SUBSCRIBED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+    if (status === 'SUBSCRIBED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
       clearTimeout(timeout);
-      resolve({ channel, status });
+      if (status === 'SUBSCRIBED') realtimeStats.subscribed += 1;
+      resolve({ error: status === 'SUBSCRIBED' ? null : { message: `Admin Realtime ${status}`, code: `REALTIME_${status}` } });
     }
   });
 });
@@ -439,9 +418,22 @@ let examId;
 let authIds = [];
 const channels = [];
 const clients = [];
+const authTimers = [];
+const backgroundTasks = new Set();
+let adminTrafficTimer;
+let operationalBefore;
+let operationalAfter;
+let mediaPath;
+let mediaBytes = 0;
+let tokenRefreshes = 0;
+let reconnectReads = 0;
+const backlogObservations = [];
 const startedAt = Date.now();
 const latencyMs = { start: [], autosave: [], submit: [], retry: [], realtime: [] };
 const report = {
+  runId: prefix,
+  projectRef: expectedProjectRef,
+  environment: localTarget ? 'local' : process.env.REHEARSAL_HOSTED_PLAN === 'free' ? 'hosted-free' : 'hosted-unverified',
   candidateCount: students.length,
   questionCount,
   createdStudents: 0,
@@ -476,6 +468,7 @@ const signIn = (client, student, operation) => withRetries(async () => {
   await waitForAuthSignInSlot();
   const result = await measure(operation, () => client.auth.signInWithPassword({ email: student.email, password: studentPassword }));
   if (result.error) throw result.error;
+  watchAuth(client, result.data.session, 'token_refresh');
   return result.data;
 });
 
@@ -491,64 +484,92 @@ const claimSession = async (client, operation) => {
   }
 };
 
-const subscribeCandidate = async candidate => {
-  realtimeStats.subscribeAttempts += 1;
-  candidate.changesReady = false;
-  const result = await measure('realtime_subscribe', async () => {
-    const outcome = await subscribe(candidate.client, `student-session-${candidate.authId}`, candidate);
-    channels.push(outcome.channel);
-    candidate.channel = outcome.channel;
-    return outcome.status === 'SUBSCRIBED'
-      ? { data: outcome, error: null, status: 101 }
-      : { data: outcome, error: { message: `Realtime channel ${outcome.status}`, code: `REALTIME_${outcome.status}` }, status: 0 };
-  }, { bucket: latencyMs.realtime });
-  if (!result.error) realtimeStats.subscribed += 1;
-  return !result.error;
+const dashboardRead = candidate => measure('dashboard_read', () =>
+  candidate.client.rpc('student_dashboard_page', { page_param: 0 }), {
+    validate: result => Array.isArray(result.data?.exams) && result.data.exams.length <= 25
+      && typeof result.data.has_more === 'boolean'
+      && !/"(?:questions|correctAnswer|correct_answer)"/.test(JSON.stringify(result.data))
+      ? null : { message: 'Invalid or unbounded dashboard metadata.', code: 'INVALID_DASHBOARD' }
+  });
+const runtimeRead = (candidate, operation = 'runtime_read') => measure(operation, () =>
+  candidate.client.rpc('student_exam_runtime', { exam_id_param: examId }), {
+    validate: result => result.data?.session_owned === false
+      ? { message: 'Student session has been replaced.', code: 'SESSION_REPLACED' } : null
+  });
+const downloadMedia = async candidate => {
+  const media = await measure('media_download', () => candidate.client.storage.from('exam-assets').download(mediaPath));
+  if (media.error) throw media.error;
+  operationMetrics('media_download').responseBytes += media.data.size;
+};
+const refreshAuth = async (client, operation) => {
+  const result = await measure(operation, () => client.auth.refreshSession());
+  if (result.error) throw result.error;
+  if (!result.data?.session) throw new Error('Refresh did not return a session.');
+  tokenRefreshes += 1;
+  return result.data.session;
+};
+const watchAuth = (client, session, operation, afterRefresh) => {
+  let expiresAt = session.expires_at * 1000;
+  let running = false;
+  const timer = setInterval(() => {
+    if (running || Date.now() < expiresAt - 60_000) return;
+    running = true;
+    const work = (async () => {
+      try {
+        const refreshed = await refreshAuth(client, operation);
+        expiresAt = refreshed.expires_at * 1000;
+        await afterRefresh?.(refreshed);
+      } catch { /* The operation metric fails the run; retry at the next tick. */ }
+      finally { running = false; }
+    })();
+    backgroundTasks.add(work);
+    work.finally(() => backgroundTasks.delete(work));
+  }, 10_000);
+  authTimers.push(timer);
+};
+const observeHealth = async () => {
+  const result = await measure('admin_health', () => admin.rpc('admin_operational_health'));
+  if (result.error) throw result.error;
+  backlogObservations.push({ at: new Date().toISOString(), count: result.data.expired_sessions_pending_finalization,
+    oldestDeadlineAt: result.data.expired_sessions_oldest_deadline_at ?? null, scheduler: result.data.scheduler });
+  return result.data;
 };
 
-// Mirrors StudentDashboard.fetchExamsAndResults (first page of each query).
-const dashboardRead = candidate => measure('dashboard_read', async () => {
-  const results = await candidate.client
-    .from('student_results')
-    .select('exam_id, total_score, max_score, correct, incorrect, unattempted, subject_scores')
-    .eq('student_id', candidate.student.studentId)
-    .order('exam_id', { ascending: true })
-    .range(0, 999);
-  if (results.error) return results;
-  return candidate.client
-    .from('cbt_exams')
-    .select('id, title, status, class, section, created_at, questions_data')
-    .order('created_at', { ascending: false })
-    .order('id', { ascending: true })
-    .range(0, 999);
-});
-
-const autosaveValidation = result => {
-  if (result?.data?.success) return null;
+const autosaveValidation = (result, payload) => {
+  if (isConfirmedSaveReply(result?.data, payload)) return null;
   if (result?.data?.conflict) return { message: 'Unexpected autosave version conflict.', code: 'VERSION_CONFLICT' };
   return { message: 'The exam server returned an invalid autosave response.', code: 'INVALID_AUTOSAVE_RESPONSE' };
 };
-const isTransientNetworkError = error => /network|fetch|timeout|connection/i.test(error?.message || '');
-const isSessionReplaced = error => /student session has been replaced|no longer active/i.test(error?.message || '');
+const isSessionReplaced = error => error?.code === 'EX001' || /student session has been replaced|no longer active/i.test(error?.message || '');
 const isAlreadySubmitted = error => /active (?:exam )?session not found|already submitted/i.test(error?.message || '');
 
 // Mirrors the App.jsx autosave engine: whole response object, optimistic
-// version, up to three retries with exponential backoff for network errors.
+// version, immutable retry parameters, and the frontend transient-error/backoff policy.
 const autosave = async (candidate, payload, operation = 'autosave') => {
+  accrueSubjectTime(candidate);
+  const timingPayload = { ...candidate.subjectTime };
+  const expectedVersion = candidate.version;
+  const savedGeneration = candidate.accessGeneration;
   let result;
   for (let retry = 0; retry <= 3; retry += 1) {
-    if (retry > 0) await wait(Math.min(1000 * (2 ** (retry - 1)) + Math.random() * 200, 5000));
+    if (retry > 0) await wait(retryDelayMs(retry, { capMs: 5000 }));
     result = await measure(operation, () => candidate.client.rpc('sync_active_session_progress', {
       exam_id_param: examId,
       responses_param: payload,
-      expected_version_param: candidate.version,
-    access_generation_param: candidate.accessGeneration
-    }), { bucket: operation === 'autosave' ? latencyMs.autosave : undefined, validate: autosaveValidation });
-    if (!result.error || !isTransientNetworkError(result.error)) break;
+      expected_version_param: expectedVersion,
+      access_generation_param: savedGeneration,
+      subject_time_seconds_param: timingPayload
+    }), { bucket: operation === 'autosave' ? latencyMs.autosave : undefined, validate: reply => autosaveValidation(reply, payload) });
+    if (!result.error || !isTransientRpcError(Object.assign(result.error, { httpStatus: result.status }))) break;
   }
-  if (result.data?.success) {
+  if (isConfirmedSaveReply(result.data, payload)) {
     candidate.version = result.data.version;
     candidate.confirmed = clone(payload);
+    candidate.nextPollAt = nextStudentPollAt(Date.now(), studentPollInterval);
+    if (result.data.timing_saved) {
+      candidate.timingSaved = canonical(timingPayload);
+      candidate.lastTimingSaveAt = performance.now();
+    }
   } else if (result.data?.conflict) {
     candidate.version = result.data.version;
     if (result.data.user_responses) {
@@ -560,18 +581,24 @@ const autosave = async (candidate, payload, operation = 'autosave') => {
 };
 
 const accrueSubjectTime = candidate => {
-  const elapsedSeconds = Math.floor((Date.now() - candidate.subjectTick) / 1000);
+  const elapsedSeconds = Math.floor((performance.now() - candidate.subjectTick) / 1000);
   if (elapsedSeconds <= 0) return;
   candidate.subjectTick += elapsedSeconds * 1000;
   candidate.subjectTime[candidate.activeSubject] = (candidate.subjectTime[candidate.activeSubject] || 0) + elapsedSeconds;
 };
-const syncSubjectTime = candidate => {
+const syncSubjectTime = async candidate => {
   accrueSubjectTime(candidate);
-  return measure('subject_time', () => candidate.client.rpc('sync_exam_subject_time', {
-    exam_id_param: examId,
-    subject_time_seconds_param: { ...candidate.subjectTime },
+  const timingPayload = { ...candidate.subjectTime };
+  if (!timingFallbackDue(performance.now(), candidate.lastTimingSaveAt, canonical(timingPayload) !== candidate.timingSaved)) return { error: null };
+  const result = await measure('subject_time', () => candidate.client.rpc('sync_exam_subject_time', {
+    exam_id_param: examId, subject_time_seconds_param: timingPayload,
     access_generation_param: candidate.accessGeneration
   }));
+  if (!result.error) {
+    candidate.timingSaved = canonical(timingPayload);
+    candidate.lastTimingSaveAt = performance.now();
+  }
+  return result;
 };
 
 const mutateAnswers = candidate => {
@@ -619,78 +646,96 @@ const staleTabProbe = async candidate => {
 const soakCandidate = async (candidate, soakEndsAt) => {
   const now = Date.now();
   let nextAutosave = now + randomBetween(autosaveInterval);
-  let nextSubjectTime = now + randomBetween(subjectTimeInterval);
-  let nextDashboardRead = now + randomBetween(dashboardReadInterval);
+  let nextTimingCheck = now + 60_000;
+  let pollFailures = 0;
+  const mediaIntervalMs = Math.max(1000, soakSeconds * 1000 / mediaRequests);
+  let nextMediaAt = candidate.mediaRemaining ? now + mediaIntervalMs : Infinity;
   let staleTabAt = candidate.staleTab ? now + Math.floor((0.2 + Math.random() * 0.6) * (soakEndsAt - now)) : Infinity;
   for (;;) {
-    const next = Math.min(nextAutosave, nextSubjectTime, nextDashboardRead, staleTabAt);
-    if (next >= soakEndsAt || candidate.failed) return;
+    const next = Math.min(nextAutosave, nextTimingCheck, candidate.nextPollAt, staleTabAt, nextMediaAt);
+    if (candidate.failed) return;
+    if (next >= soakEndsAt) { await waitUntil(soakEndsAt); return; }
     await waitUntil(next);
-    if (next === staleTabAt) {
+    if (next === nextMediaAt) {
+      await downloadMedia(candidate);
+      candidate.mediaRemaining -= 1;
+      nextMediaAt = candidate.mediaRemaining ? Date.now() + mediaIntervalMs : Infinity;
+    } else if (next === staleTabAt) {
       staleTabAt = Infinity;
       await staleTabProbe(candidate);
     } else if (next === nextAutosave) {
       mutateAnswers(candidate);
-      await autosave(candidate, clone(candidate.responses));
+      const result = await autosave(candidate, clone(candidate.responses));
+      if (result.error) throw result.error;
       nextAutosave = Date.now() + randomBetween(autosaveInterval);
-    } else if (next === nextSubjectTime) {
-      if (Math.random() < 0.3) candidate.activeSubject = subjects[Math.floor(Math.random() * subjects.length)];
-      await syncSubjectTime(candidate);
-      nextSubjectTime = Date.now() + randomBetween(subjectTimeInterval);
+    } else if (next === nextTimingCheck) {
+      const timing = await syncSubjectTime(candidate); // Timing failures must not block grading confirmed answers.
+      nextTimingCheck = Date.now() + (timing.error ? 60_000 : Math.max(1000, 60_000 - (performance.now() - candidate.lastTimingSaveAt)));
     } else {
-      await dashboardRead(candidate);
-      nextDashboardRead = Date.now() + randomBetween(dashboardReadInterval);
+      const result = await runtimeRead(candidate);
+      if (isSessionReplaced(result.error)) throw result.error;
+      pollFailures = result.error ? pollFailures + 1 : 0;
+      candidate.nextPollAt = nextStudentPollAt(Date.now(), studentPollInterval, pollFailures);
     }
   }
 };
 
-// A second device signs in mid-exam: the original device's Realtime listener
-// must see the takeover and its next autosave must be rejected server-side.
 const takeoverProbe = async candidate => {
   realtimeStats.takeoverProbes += 1;
-  if (!candidate.changesReady) {
-    await new Promise(resolve => {
-      candidate.onChangesReady = resolve;
-      setTimeout(resolve, realtimeTimeoutMs);
-    });
-    candidate.onChangesReady = null;
-    if (!candidate.changesReady) realtimeStats.takeoverProbesWithoutReadyBinding += 1;
-  }
-  const detected = new Promise(resolve => {
-    candidate.onTakeover = detectedAt => resolve(detectedAt);
-    setTimeout(() => resolve(null), realtimeTimeoutMs);
-  });
   const oldClient = candidate.client;
-  const oldChannel = candidate.channel;
   const newClient = newStudentClient();
   await signIn(newClient, candidate.student, 'takeover_login');
   const claimStartedAt = Date.now();
   const claim = await claimSession(newClient, 'takeover_claim');
-  const detectedAt = await detected;
-  candidate.onTakeover = null;
-  if (detectedAt) {
+  const staleRuntime = await measure('stale_device_runtime', () => oldClient.rpc('student_exam_runtime', { exam_id_param: examId }), {
+    expectError: isSessionReplaced
+  });
+  if ((staleRuntime.error && isSessionReplaced(staleRuntime.error)) || staleRuntime.data?.session_owned === false) {
     realtimeStats.takeoverDetected += 1;
-    realtimeStats.takeoverDetectionMs.push(detectedAt - claimStartedAt);
-  }
+    realtimeStats.takeoverDetectionMs.push(Date.now() - claimStartedAt);
+  } else throw new Error('Runtime failed to detect a replaced student session.');
   const staleDevice = await measure('stale_device_autosave', () => oldClient.rpc('sync_active_session_progress', {
-    exam_id_param: examId,
-    responses_param: candidate.confirmed,
-    expected_version_param: candidate.version,
-    access_generation_param: candidate.accessGeneration
+    exam_id_param: examId, responses_param: candidate.confirmed,
+    expected_version_param: candidate.version, access_generation_param: candidate.accessGeneration
   }), { expectError: isSessionReplaced });
   if (staleDevice.error && isSessionReplaced(staleDevice.error)) realtimeStats.staleDeviceWritesRejected += 1;
-  else if (!staleDevice.error) {
+  else {
     realtimeStats.staleDeviceWritesAccepted += 1;
-    if (staleDevice.data?.version) candidate.version = staleDevice.data.version;
+    throw new Error('Replaced device did not reject its save.');
   }
-  if (oldChannel) await oldClient.removeChannel(oldChannel).catch(() => undefined);
   candidate.client = newClient;
   candidate.sessionToken = claim.session_id;
-  await subscribeCandidate(candidate);
+  const runtime = await runtimeRead(candidate);
+  if (runtime.error) throw runtime.error;
+  candidate.version = runtime.data.version;
+  candidate.accessGeneration = runtime.data.access_generation;
 };
 
 let failure = null;
 try {
+  if (process.env.REHEARSAL_ADMIN_REFRESH_TOKEN) {
+    const { error } = await adminClient.auth.setSession({ access_token: adminBearer, refresh_token: process.env.REHEARSAL_ADMIN_REFRESH_TOKEN });
+    if (error) throw error;
+    watchAuth(adminClient, { expires_at: Number(process.env.REHEARSAL_ADMIN_EXPIRES_AT) || 0 }, 'admin_token_refresh', async session => {
+      adminBearer = session.access_token;
+      adminClient.rest.headers.set('Authorization', `Bearer ${adminBearer}`);
+      adminClient.functions.setAuth(adminBearer);
+      await adminClient.realtime.setAuth(adminBearer);
+    });
+  } else if (soakSeconds >= 3000) throw new Error('Long runs require the administrator refresh token and expiry from the wrapper.');
+  operationalBefore = await observeHealth();
+  if (mediaFile) {
+    const contents = readFileSync(mediaFile);
+    mediaBytes = contents.byteLength;
+    const extension = mediaFile.split('.').pop().toLowerCase();
+    const contentType = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' }[extension];
+    if (!contentType || mediaBytes === 0 || mediaBytes > 5 * 1024 * 1024) throw new Error('MEDIA_FILE must be a nonempty PNG/JPEG/WebP at most 5 MiB.');
+    mediaPath = `${prefix}/diagram.${extension}`;
+    const { error } = await admin.storage.from('exam-assets').upload(mediaPath, contents, { contentType });
+    if (error) throw error;
+    rehearsalQuestions[subjects[0]][0].hasImageOrDiagram = true;
+    rehearsalQuestions[subjects[0]][0].questionImageUrl = mediaPath;
+  }
   const { error: classError } = await admin.from('classes').insert({ name: className, sections: ['A'] });
   if (classError) throw classError;
 
@@ -721,15 +766,30 @@ try {
   }).select().single();
   if (examError) throw examError;
   examId = exam.id;
+  await adminClient.realtime.setAuth(adminBearer);
+  const subscription = await measure('realtime_subscribe', subscribeAdmin, { bucket: latencyMs.realtime });
+  if (subscription.error) throw subscription.error;
+  let adminTrafficRunning = false;
+  adminTrafficTimer = setInterval(() => {
+    if (adminTrafficRunning) return;
+    adminTrafficRunning = true;
+    const work = (async () => {
+      try {
+        await measure('admin_sessions_read', () => adminClient.from('active_sessions').select('id,status,deadline_at').eq('exam_id', examId).limit(25));
+        await observeHealth();
+      } catch { /* Metrics retain failures. */ }
+      finally { adminTrafficRunning = false; }
+    })();
+    backgroundTasks.add(work);
+    work.finally(() => backgroundTasks.delete(work));
+  }, 30_000);
 
   const candidates = created.map((student, index) => {
-    const target = responsesForCandidate(index + 1);
     return {
       index,
       student,
       correctTarget: index + 1,
-      targetGrouped: target.grouped,
-      submissionResponses: target.flattened,
+      submissionResponses: responsesForCandidate(index + 1),
       staleTab: false,
       failed: null
     };
@@ -756,24 +816,16 @@ try {
   report.authenticatedStudents = alive(candidates).length;
   report.sessionClaims = alive(candidates).length;
 
-  // Once logged in, App.jsx subscribes the takeover listener and the dashboard
-  // loads; the candidate then opens the paper and the restore check runs.
-  await runPhase('realtime subscribe and dashboard', () => limit(alive(candidates), workerConcurrency, candidate => runCandidate(candidate, 'pre-start', async () => {
-    await subscribeCandidate(candidate);
+  await runPhase('dashboard polling', () => limit(alive(candidates), workerConcurrency, candidate => runCandidate(candidate, 'pre-start', async () => {
     const dashboard = await dashboardRead(candidate);
     if (dashboard.error) throw dashboard.error;
-    const { data: visibleExam, error: visibleExamError } = await measure('exam_read', () => candidate.client.from('cbt_exams').select('*').eq('id', examId).single());
-    if (visibleExamError) throw visibleExamError;
-    const visibleText = JSON.stringify(visibleExam.questions_data);
-    if (visibleText.includes('correctAnswer') || visibleText.includes('correct_answer')) {
-      throw new Error('Answer key was exposed to a student.');
-    }
-    candidate.visibleExam = visibleExam;
-    await measure('session_restore_read', () => candidate.client
-      .from('active_sessions')
-      .select('*')
-      .eq('id', `${candidate.authId}_${examId}`)
-      .single(), { expectError: error => error?.code === 'PGRST116' });
+    candidate.visibleExam = dashboard.data.exams.find(exam => exam.id === examId);
+    if (!candidate.visibleExam) throw new Error('Assigned rehearsal exam absent from dashboard page.');
+    const visibleText = JSON.stringify(candidate.visibleExam.questions_data);
+    if (visibleText.includes('correctAnswer') || visibleText.includes('correct_answer')) throw new Error('Answer key was exposed to a student.');
+    if (soakSeconds) await waitUntil(nextStudentPollAt(Date.now(), studentPollInterval));
+    const refreshed = await dashboardRead(candidate);
+    if (refreshed.error) throw refreshed.error;
   })));
   report.realtimeSubscribed = realtimeStats.subscribed;
   report.answersHidden = alive(candidates).length > 0 && failedCandidates.every(entry => !/Answer key was exposed/.test(entry.reason));
@@ -787,17 +839,26 @@ try {
       startDispatch.push(Date.now());
       const { data: session, error: sessionError } = await measure('start', () => candidate.client.rpc('start_exam_session', {
         exam_id_param: examId,
-        exam_data_param: candidate.visibleExam.questions_data,
-        responses_param: candidate.targetGrouped
+        exam_data_param: {},
+        responses_param: {}
       }), { bucket: latencyMs.start });
       if (sessionError) throw sessionError;
       candidate.version = session.version;
       candidate.accessGeneration = session.access_generation;
+      candidate.targetGrouped = responsesForPaper(session.jumbled_exam_data, candidate.submissionResponses);
       candidate.responses = clone(session.user_responses);
       candidate.confirmed = clone(session.user_responses);
       candidate.subjectTime = {};
+      if (/correctAnswer|correct_answer/.test(JSON.stringify(session.jumbled_exam_data))) throw new Error('Answer key was exposed to a student.');
       candidate.activeSubject = subjects[candidate.index % subjects.length];
-      candidate.subjectTick = Date.now();
+      candidate.subjectTick = performance.now();
+      candidate.lastTimingSaveAt = performance.now();
+      candidate.timingSaved = canonical({});
+      candidate.nextPollAt = nextStudentPollAt(Date.now(), studentPollInterval);
+      const runtime = await runtimeRead(candidate);
+      if (runtime.error) throw runtime.error;
+      if (mediaPath) await downloadMedia(candidate);
+      candidate.mediaRemaining = mediaPath ? mediaRequests - 1 : 0;
       const { error: autosaveError } = await autosave(candidate, clone(session.user_responses));
       if (autosaveError) throw autosaveError;
     }));
@@ -827,6 +888,22 @@ try {
     });
   }
 
+  await runPhase('shared-IP refresh and reconnect burst', () => limit(alive(candidates), workerConcurrency, candidate => runCandidate(candidate, 'reconnect', async () => {
+    await refreshAuth(candidate.client, 'token_refresh');
+    const runtime = await runtimeRead(candidate, 'reconnect_runtime');
+    if (runtime.error) throw runtime.error;
+    reconnectReads += 1;
+    const expectedVersion = candidate.version;
+    const payload = clone(candidate.responses);
+    const first = await autosave(candidate, payload);
+    if (first.error) throw first.error;
+    const retry = await measure('lost_save_response_retry', () => candidate.client.rpc('sync_active_session_progress', {
+      exam_id_param: examId, responses_param: payload, expected_version_param: expectedVersion,
+      access_generation_param: candidate.accessGeneration
+    }), { validate: reply => autosaveValidation(reply, payload) });
+    if (retry.error) throw retry.error;
+    if (Number(retry.data.version) !== Number(candidate.version)) throw new Error('Uncertain-save retry changed the confirmed version.');
+  })));
   const sessions = alive(candidates);
   if (!sessions.length) throw new Error('No candidate reached the exam; see failedCandidates.');
 
@@ -863,10 +940,6 @@ try {
     throw new Error('A student was able to provision another student.');
   }
 
-  const adminClient = createClient(url, anonKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-    global: { headers: { Authorization: `Bearer ${adminAccessToken}` } }
-  });
   const { data: provisionedStudent, error: provisionError } = await adminClient.functions.invoke('manage-student', {
     body: { action: 'create', studentId: `${prefix}-PROVISIONED`, name: 'Provisioned Student', password: studentPassword, className, section: 'A' }
   });
@@ -887,19 +960,18 @@ try {
   }
   report.adminProvisionedStudent = true;
 
-  // Deadline rush: everyone submits at the same instant, exactly like
-  // App.jsx calculateResults (final versioned sync, subject time, submit_exam).
+  // Submit only the confirmed version after the final answer/timing save.
   await runPhase('deadline rush', async () => {
     const deadlineAt = Date.now() + rushLeadMs;
     await limit(sessions, workerConcurrency, candidate => runCandidate(candidate, 'submit', async () => {
       await waitUntil(deadlineAt);
       const finalSync = await autosave(candidate, clone(candidate.targetGrouped), 'final_sync');
       if (finalSync.error) throw finalSync.error;
-      const subjectTime = await syncSubjectTime(candidate);
-      if (subjectTime.error) throw subjectTime.error;
-      const { student, correctTarget, submissionResponses } = candidate;
+      await syncSubjectTime(candidate);
+      const { student, correctTarget } = candidate;
       const { data, error } = await measure('submit', () => candidate.client.rpc('submit_exam', {
-        exam_id_param: examId, responses_param: submissionResponses, access_generation_param: candidate.accessGeneration
+        exam_id_param: examId, responses_param: null, access_generation_param: candidate.accessGeneration,
+        expected_version_param: candidate.version
       }), { bucket: latencyMs.submit });
       if (error) throw error;
       const expectedIncorrect = questionCount - correctTarget;
@@ -931,8 +1003,9 @@ try {
       if (!isAlreadySubmitted(retrySync.error)) throw retrySync.error;
       const { data: retryData, error: retryError } = await measure('submit_retry', () => candidate.client.rpc('submit_exam', {
         exam_id_param: examId,
-        responses_param: candidate.submissionResponses,
-        access_generation_param: candidate.accessGeneration
+        responses_param: null,
+        access_generation_param: candidate.accessGeneration,
+        expected_version_param: candidate.version
       }), { bucket: latencyMs.retry });
       if (retryError) throw retryError;
       for (const key of ['totalScore', 'maxScore', 'correct', 'incorrect', 'unattempted']) {
@@ -979,6 +1052,7 @@ try {
   if (storedStudentIds.size !== students.length) throw new Error('Not every candidate has one verified result.');
   report.zeroLostOrCrossAccountAnswers = true;
   report.zeroDuplicateResults = true;
+  report.zeroIncorrectGrades = true;
 
   const { data: foreignResults, error: foreignResultsError } = await firstClient
     .from('student_results')
@@ -991,12 +1065,57 @@ try {
     .from('active_sessions').select('*', { count: 'exact', head: true }).eq('exam_id', examId);
   if (sessionCountError) throw sessionCountError;
   if (sessionCount !== 0) throw new Error(`Expected 0 remaining sessions, found ${sessionCount}.`);
+  if (abandonmentProbes) {
+    await runPhase('abandonment finalizer drill', async () => {
+      const { data: abandonedExam, error } = await admin.from('cbt_exams').insert({
+        title: `${prefix} Abandonment`, status: 'ACTIVE', class: className, section: 'A',
+        questions_data: { ...questionsData, duration: 1 }
+      }).select('id').single();
+      if (error) throw error;
+      const probes = sessions.slice(0, abandonmentProbes);
+      await limit(probes, workerConcurrency, async candidate => {
+        const started = await measure('abandonment_start', () => candidate.client.rpc('start_exam_session', {
+          exam_id_param: abandonedExam.id, exam_data_param: {}, responses_param: {}
+        }));
+        if (started.error) throw started.error;
+        const answers = responsesForPaper(started.data.jumbled_exam_data, candidate.submissionResponses);
+        const saved = await measure('abandonment_save', () => candidate.client.rpc('sync_active_session_progress', {
+          exam_id_param: abandonedExam.id, responses_param: answers,
+          expected_version_param: started.data.version, access_generation_param: started.data.access_generation
+        }), { validate: reply => autosaveValidation(reply, answers) });
+        if (saved.error) throw saved.error;
+      });
+      const finalizerWaitMs = (4 + Math.ceil(probes.length / 200)) * 60_000;
+      const timeoutAt = Date.now() + finalizerWaitMs;
+      let remaining = probes.length;
+      while (remaining && Date.now() < timeoutAt) {
+        await wait(15_000);
+        await observeHealth();
+        const pending = await admin.from('active_sessions').select('id', { count: 'exact', head: true }).eq('exam_id', abandonedExam.id);
+        if (pending.error) throw pending.error;
+        remaining = pending.count;
+      }
+      if (remaining) throw new Error(`Finalizer did not drain abandonment attempts within ${finalizerWaitMs / 60_000} minutes.`);
+      const results = await admin.from('student_results').select('student_id,total_score').eq('exam_id', abandonedExam.id);
+      if (results.error) throw results.error;
+      if (results.data.length !== probes.length || results.data.some(row => {
+        const candidate = probes.find(item => item.student.studentId === row.student_id);
+        return !candidate || Number(row.total_score) !== candidate.correctTarget * 4 - (questionCount - candidate.correctTarget);
+      })) throw new Error('Finalizer lost or incorrectly graded a confirmed abandonment snapshot.');
+      report.abandonmentVerified = probes.length;
+    });
+  }
+  operationalAfter = await observeHealth();
   report.zeroUnhandledServerErrors = true;
   report.startRushDispatchSpreadMs = startDispatch.length ? Math.max(...startDispatch) - Math.min(...startDispatch) : 0;
 } catch (error) {
   failure = redact(error?.message || error);
 } finally {
+  clearInterval(adminTrafficTimer);
+  authTimers.forEach(clearInterval);
+  await Promise.all([...backgroundTasks]);
   await Promise.all(channels.map(channel => channel.unsubscribe().catch(() => undefined)));
+  adminClient.realtime.disconnect();
   for (const client of clients) {
     try { client.realtime.disconnect(); } catch {}
   }
@@ -1032,14 +1151,11 @@ const check = (name, actual, limitValue, passed) => checks.push({ name, actual, 
 for (const [name, entry] of Object.entries(operations)) {
   if (!entry.samples) continue;
   if (thresholds.p95Ms[name] !== undefined) check(`${name} p95 ms`, entry.p95, `<= ${thresholds.p95Ms[name]}`, entry.p95 <= thresholds.p95Ms[name]);
-  check(`${name} error rate`, entry.errorRate, `<= ${thresholds.maxErrorRate}`, entry.errorRate <= thresholds.maxErrorRate);
+  check(`${name} error rate`, entry.errorRate, `<= ${thresholds.maxErrorRate}`, entry.errors / entry.samples <= thresholds.maxErrorRate);
 }
 check('realtime subscribe rate', Number(realtimeSubscribeRate.toFixed(4)), `>= ${thresholds.minRealtimeSubscribeRate}`, realtimeSubscribeRate >= thresholds.minRealtimeSubscribeRate);
-const changesBindingRate = realtimeStats.subscribeAttempts ? realtimeStats.postgresChangesReady / realtimeStats.subscribeAttempts : 0;
-check('postgres_changes binding rate', Number(changesBindingRate.toFixed(4)), `>= ${thresholds.minRealtimeSubscribeRate}`, changesBindingRate >= thresholds.minRealtimeSubscribeRate);
-check('unexpected takeover signals', realtimeStats.unexpectedTakeoverSignals, '= 0', realtimeStats.unexpectedTakeoverSignals === 0);
 if (realtimeStats.takeoverProbes) {
-  check('takeover detected by Realtime', realtimeStats.takeoverDetected, `= ${realtimeStats.takeoverProbes}`, realtimeStats.takeoverDetected === realtimeStats.takeoverProbes);
+  check('takeover detected by runtime', realtimeStats.takeoverDetected, `= ${realtimeStats.takeoverProbes}`, realtimeStats.takeoverDetected === realtimeStats.takeoverProbes);
   check('stale device writes accepted', realtimeStats.staleDeviceWritesAccepted, '= 0', realtimeStats.staleDeviceWritesAccepted === 0);
 }
 if (staleTabStats.probes) {
@@ -1054,8 +1170,11 @@ report.load = {
     authSignInDelayMs,
     soakSeconds,
     autosaveIntervalMs: autosaveInterval,
-    subjectTimeIntervalMs: subjectTimeInterval,
-    dashboardReadIntervalMs: dashboardReadInterval,
+    studentPollIntervalMs: studentPollInterval,
+    timingFallbackMs: 60_000,
+    abandonmentProbes,
+    mediaRequests,
+    fullDurationSeconds,
     staleTabPercent,
     takeoverProbes: takeoverProbeCount,
     rushLeadMs
@@ -1084,8 +1203,25 @@ report.load = {
   failedCandidateCount: failedCandidates.length,
   thresholds: { config: thresholds, enforced: enforceThresholds, passed: thresholdsPassed, checks }
 };
+report.finalizer = { observations: backlogObservations };
+report.usage = projectUsage({ responseBytes: Object.values(operations).reduce((sum, entry) => sum + entry.responseBytes, 0),
+  databaseBefore: operationalBefore?.database_size_bytes, databaseAfter: operationalAfter?.database_size_bytes,
+  sittingsPerMonth: monthlySittings });
+report.usage.academicStorageBytesBefore = operationalBefore?.academic_storage_bytes ?? null;
+report.usage.academicStorageBytesAfter = operationalAfter?.academic_storage_bytes ?? null;
+report.usage.caveat = 'JSON response payload plus downloaded media only; excludes HTTP headers, Realtime, backups and protocol overhead. Verify project dashboard egress and retained table/index growth.';
+report.tokenRefreshes = tokenRefreshes;
+report.fullDurationValidated = fullDurationSeconds > 0
+  && (phases.find(phase => phase.name === `soak ${soakSeconds} s`)?.durationMs || 0) >= fullDurationSeconds * 1000
+  && tokenRefreshes >= students.length;
+report.representativeMediaValidated = Boolean(mediaPath && mediaBytes && operationMetrics('media_download').ok >= students.length * mediaRequests && process.env.REHEARSAL_REPRESENTATIVE_FIXTURE_CONFIRMED === '1');
+report.operationalDrillsValidated = Boolean(report.abandonmentVerified >= Math.min(students.length, workerConcurrency) && reconnectReads === students.length && realtimeStats.takeoverDetected === takeoverProbeCount && takeoverProbeCount > 0);
 report.failure = failure;
 report.passed = !failure && (thresholdsPassed || !enforceThresholds);
+let historicalReports = [];
+try { historicalReports = (process.env.REHEARSAL_CAPACITY_REPORTS || '').split(',').filter(Boolean).map(path => JSON.parse(readFileSync(path, 'utf8'))); }
+catch (error) { report.failure = `Capacity report could not be read: ${redact(error.message)}`; report.passed = false; }
+report.capacity = operatingCapacity([...historicalReports, report]);
 
 const pad = (value, width, right = false) => (right ? String(value).padStart(width) : String(value).padEnd(width));
 const header = [pad('operation', 22), pad('n', 6, true), pad('err', 5, true), pad('err%', 6, true), pad('p50', 8, true),
@@ -1100,7 +1236,7 @@ for (const [name, entry] of Object.entries(operations)) {
     pad(entry.p50, 8, true), pad(entry.p95, 8, true), pad(entry.p99, 8, true), pad(entry.max, 8, true),
     pad(entry.throughputOpsPerSec, 8, true), pad(thresholds.p95Ms[name] ?? '-', 10, true), `  ${statuses}`].join(' '));
 }
-console.log(`[rehearsal] realtime: ${realtimeStats.subscribed}/${realtimeStats.subscribeAttempts} subscribed (${realtimeStats.postgresChangesReady} postgres_changes bindings confirmed), takeover ${realtimeStats.takeoverDetected}/${realtimeStats.takeoverProbes} detected, ${realtimeStats.unexpectedTakeoverSignals} unexpected signals; stale tab ${staleTabStats.conflictsDetected}/${staleTabStats.probes} conflicts, ${staleTabStats.overwrites} overwrites`);
+console.log(`[rehearsal] admin Realtime: ${realtimeStats.subscribed}/${realtimeStats.subscribeAttempts}; runtime takeovers ${realtimeStats.takeoverDetected}/${realtimeStats.takeoverProbes}; stale tab ${staleTabStats.conflictsDetected}/${staleTabStats.probes}, overwrites ${staleTabStats.overwrites}`);
 console.log(`[rehearsal] errors by kind: ${JSON.stringify(errorKindBreakdown)}`);
 for (const entry of checks.filter(item => !item.passed)) {
   console.log(`[rehearsal] THRESHOLD FAILED: ${entry.name} = ${entry.actual} (required ${entry.limit})`);

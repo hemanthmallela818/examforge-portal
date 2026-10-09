@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 const mocks = vi.hoisted(() => ({
@@ -8,24 +8,7 @@ const mocks = vi.hoisted(() => ({
   realtimeHandler: null
 }));
 
-vi.mock('../../src/supabase', () => {
-  const query = {
-    select: () => query,
-    eq: () => query,
-    single: () => Promise.resolve(mocks.status)
-  };
-  const channel = {
-    on: (_event, _filter, handler) => { mocks.realtimeHandler = handler; return channel; },
-    subscribe: () => channel
-  };
-  return {
-    supabase: {
-      from: vi.fn(() => query),
-      channel: vi.fn(() => channel),
-      removeChannel: vi.fn()
-    }
-  };
-});
+vi.mock('../../src/supabase', () => ({ supabase: { from: vi.fn(), channel: vi.fn(), removeChannel: vi.fn() } }));
 
 vi.mock('../../src/runtimeConfig', () => ({
   checkBrowserCompatibility: () => mocks.compat,
@@ -50,19 +33,20 @@ beforeEach(() => {
 
 describe('PreExam', () => {
   it('shows exam details and sections', async () => {
-    render(<PreExam startExam={vi.fn()} activeExamId="exam-1" duration={90} marksCorrect={3} marksIncorrect={-1} subjects={['Physics', 'Biology']} />);
+    render(<PreExam startExam={vi.fn()} examStatus="ACTIVE" duration={90} marksCorrect={3} marksIncorrect={-1} subjects={['Physics', 'Biology']} />);
     expect(screen.getByRole('heading', { name: 'Exam Instructions' })).toBeTruthy();
     expect(screen.getByText('90 minutes')).toBeTruthy();
     expect(screen.getByText('+3 marks')).toBeTruthy();
     expect(screen.getByText('-1 mark')).toBeTruthy();
     expect(screen.getByText('The exam sections are: Physics, Biology.')).toBeTruthy();
     await screen.findByRole('button', { name: 'Start Exam' });
-    expect(supabase.from).toHaveBeenCalledWith('cbt_exams');
+    expect(supabase.from).not.toHaveBeenCalled();
+    expect(supabase.channel).not.toHaveBeenCalled();
   });
 
   it('keeps Start disabled until the consent checkbox is ticked', async () => {
     const startExam = vi.fn();
-    render(<PreExam startExam={startExam} activeExamId="exam-1" />);
+    render(<PreExam startExam={startExam} examStatus="ACTIVE" />);
     const start = await screen.findByRole('button', { name: 'Start Exam' });
     expect(start.disabled).toBe(true);
     expect(screen.getByText('Tick the checkbox above to enable the Start button.')).toBeTruthy();
@@ -77,20 +61,19 @@ describe('PreExam', () => {
     expect(start.disabled).toBe(true);
   });
 
-  it('waits for the administrator while the exam is not active, then enables on realtime activation', async () => {
-    mocks.status = { data: { status: 'PENDING' }, error: null };
-    render(<PreExam startExam={vi.fn()} activeExamId="exam-1" />);
+  it('waits for the administrator while the exam is not active, then enables on the polling owner activation', async () => {
+    const { rerender } = render(<PreExam startExam={vi.fn()} examStatus="PENDING" />);
     await user.click(consent());
     const waiting = await screen.findByRole('button', { name: 'Waiting for Admin to Start...' });
     expect(waiting.disabled).toBe(true);
 
-    act(() => mocks.realtimeHandler({ new: { status: 'ACTIVE' } }));
+    rerender(<PreExam startExam={vi.fn()} examStatus="ACTIVE" />);
     expect(screen.getByRole('button', { name: 'Start Exam' }).disabled).toBe(false);
   });
 
   it('never enables Start when the browser compatibility check fails', async () => {
     mocks.compat = { compatible: false, missingFeatures: ['localStorage is blocked, full, or unavailable'] };
-    render(<PreExam startExam={vi.fn()} activeExamId="exam-1" />);
+    render(<PreExam startExam={vi.fn()} examStatus="ACTIVE" />);
     expect(screen.getByRole('alert').textContent).toContain('This browser cannot safely start the exam.');
     expect(screen.getByText('localStorage is blocked, full, or unavailable')).toBeTruthy();
     await user.click(consent());
@@ -99,15 +82,14 @@ describe('PreExam', () => {
   });
 
   it('reports a status lookup failure', async () => {
-    mocks.status = { data: null, error: new Error('network down') };
-    render(<PreExam startExam={vi.fn()} activeExamId="exam-1" />);
+    render(<PreExam startExam={vi.fn()} examStatus="PENDING" statusError="Unable to verify the exam status. Check your connection." />);
     expect((await screen.findByRole('alert')).textContent).toContain('Unable to verify the exam status. Check your connection.');
     expect(screen.getByRole('button', { name: 'Waiting for Admin to Start...' }).disabled).toBe(true);
   });
 
   it('lists per-type marking when the exam sets it', async () => {
     const marking = { MULTIPLE_CORRECT: { correct: 4, incorrect: -2 }, INTEGER: { incorrect: 0 } };
-    render(<PreExam startExam={vi.fn()} activeExamId="exam-1" marksCorrect={3} marksIncorrect={-1} marking={marking} />);
+    render(<PreExam startExam={vi.fn()} examStatus="ACTIVE" marksCorrect={3} marksIncorrect={-1} marking={marking} />);
     const list = screen.getByRole('list', { name: 'Marks by question type' });
     const items = [...list.querySelectorAll('li')].map(item => item.textContent);
     expect(items).toEqual([
@@ -118,15 +100,15 @@ describe('PreExam', () => {
   });
 
   it('shows no per-type list for an exam without per-type marking', async () => {
-    render(<PreExam startExam={vi.fn()} activeExamId="exam-1" />);
+    render(<PreExam startExam={vi.fn()} examStatus="ACTIVE" />);
     expect(screen.queryByRole('list', { name: 'Marks by question type' })).toBeNull();
     await screen.findByRole('button', { name: 'Start Exam' });
   });
 
-  it('unsubscribes from realtime on unmount', async () => {
-    const { unmount } = render(<PreExam startExam={vi.fn()} activeExamId="exam-1" />);
+  it('leaves all network ownership to the session hook', async () => {
+    const { unmount } = render(<PreExam startExam={vi.fn()} examStatus="ACTIVE" />);
     await screen.findByRole('button', { name: 'Start Exam' });
     unmount();
-    expect(supabase.removeChannel).toHaveBeenCalledTimes(1);
+    expect(supabase.removeChannel).not.toHaveBeenCalled();
   });
 });

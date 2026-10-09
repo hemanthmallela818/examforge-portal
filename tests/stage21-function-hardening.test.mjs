@@ -104,8 +104,10 @@ test('Stage 21 removes raw papers from Realtime and publishes metadata only', as
   assert.match(sql, /REVOKE ALL PRIVILEGES ON TABLE public\.exam_status_events FROM PUBLIC, anon, authenticated/);
   assert.match(sql, /SET search_path = ''/);
 
-  for (const source of [studentDashboard, preExam, adminDashboard]) {
-    assert.match(source, /table: 'exam_status_events'/);
+  assert.match(adminDashboard, /table: 'exam_status_events'/);
+  assert.doesNotMatch(adminDashboard, /table: 'cbt_exams_raw'/);
+  for (const source of [studentDashboard, preExam]) {
+    assert.doesNotMatch(source, /\.channel\(/);
     assert.doesNotMatch(source, /table: 'cbt_exams_raw'/);
   }
 });
