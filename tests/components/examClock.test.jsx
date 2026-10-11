@@ -1,12 +1,41 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
-import { useDeadlineReached, useRemainingSeconds } from '../../src/features/exam/examClock';
+import { anchorExamClock, getExamActionNow, resetExamClock, useDeadlineReached, useRemainingSeconds } from '../../src/features/exam/examClock';
 
 afterEach(() => {
+  resetExamClock();
   vi.useRealTimers();
 });
 
 describe('exam clock', () => {
+  it('keeps an expired deadline locked when an older runtime reply arrives after a save', () => {
+    let monotonic = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => monotonic);
+    anchorExamClock(1_000_000);
+    const { result } = renderHook(() => useDeadlineReached(1_015_000, true));
+    expect(result.current).toBe(false);
+
+    monotonic = 20_000;
+    act(() => { anchorExamClock(1_020_000); });
+    expect(result.current).toBe(true);
+    act(() => { anchorExamClock(1_005_000); });
+    expect(getExamActionNow()).toBe(1_020_000);
+    expect(result.current).toBe(true);
+
+    monotonic += 1000;
+    expect(getExamActionNow()).toBe(1_021_000);
+  });
+
+  it('accepts a forward server correction and a fresh anchor after logout', () => {
+    vi.spyOn(performance, 'now').mockReturnValue(0);
+    anchorExamClock(1_000_000);
+    anchorExamClock(1_010_000);
+    expect(getExamActionNow()).toBe(1_010_000);
+    resetExamClock();
+    anchorExamClock(900_000);
+    expect(getExamActionNow()).toBe(900_000);
+  });
+
   it('derives remaining seconds from the fixed end time once per second', () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
     const endTime = Date.now() + 3_500;

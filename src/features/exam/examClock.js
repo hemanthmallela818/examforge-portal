@@ -19,7 +19,9 @@ let anchor = null;
 export const anchorExamClock = (serverNow) => {
   const server = typeof serverNow === 'number' ? serverNow : Date.parse(serverNow);
   if (!Number.isFinite(server)) return;
-  anchor = { server, monotonic: performance.now() };
+  const monotonic = performance.now();
+  // Delayed replies must not rewind elapsed time or unlock an expired deadline.
+  anchor = { server: anchor ? Math.max(server, anchor.server + monotonic - anchor.monotonic) : server, monotonic };
   tick();
 };
 

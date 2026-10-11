@@ -5,7 +5,8 @@ import { act, cleanup, renderHook } from '@testing-library/react';
 vi.mock('../../src/supabase.js', () => ({
   supabaseUrl: 'http://127.0.0.1:54321', supabaseAnonKey: 'test',
   supabase: { rpc: vi.fn(), from: vi.fn(), channel: vi.fn(),
-    auth: { getSession: vi.fn(async () => ({ data: { session: { user: { id: 'u1' } } } })), signOut: vi.fn(async () => ({})) } }
+    auth: { getUser: vi.fn(async () => ({ data: { user: { id: 'u1' } }, error: null })),
+      getSession: vi.fn(async () => ({ data: { session: { user: { id: 'u1' } } } })), signOut: vi.fn(async () => ({})) } }
 }));
 vi.mock('../../src/utils', () => ({ customAlert: vi.fn(async () => {}) }));
 const lockdown = vi.hoisted(() => ({
@@ -30,7 +31,7 @@ const deferred = () => { let resolve; const promise = new Promise(r => { resolve
 let saves;
 let submitArgs;
 beforeEach(() => {
-  vi.useFakeTimers(); localStorage.clear(); saves = []; submitArgs = [];
+  vi.useFakeTimers(); localStorage.clear(); sessionStorage.clear(); saves = []; submitArgs = [];
   vi.spyOn(document, 'hasFocus').mockReturnValue(true);
   vi.mocked(supabase.rpc).mockImplementation((name, args) => {
     let promise;
@@ -48,6 +49,103 @@ beforeEach(() => {
   });
 });
 afterEach(() => { cleanup(); resetExamClock(); vi.useRealTimers(); vi.restoreAllMocks(); });
+
+it.each([false, true])('ignores a late dashboard identity failure only when pagehide discards the page (persisted: %s)', async persisted => {
+  const config = { ...options(), examState: 'STUDENT_DASHBOARD', initialActiveSession: null };
+  const storedStudent = JSON.stringify(config.currentStudent);
+  sessionStorage.setItem('currentStudent', storedStudent);
+  const response = deferred();
+  vi.mocked(supabase.auth.getUser).mockReturnValueOnce(response.promise);
+  renderHook(() => useExamSession(config));
+  await act(async () => { window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted })); });
+  await act(async () => { response.resolve({ data: { user: null }, error: { name: 'AuthRetryableFetchError', message: 'Failed to fetch', status: 0 } }); });
+  expect(sessionStorage.getItem('currentStudent')).toBe(persisted ? null : storedStudent);
+  if (persisted) {
+    expect(config.setCurrentStudent).toHaveBeenCalledWith(null);
+    expect(config.setExamState).toHaveBeenCalledWith('AUTH');
+  } else {
+    expect(config.setCurrentStudent).not.toHaveBeenCalledWith(null);
+    expect(config.setExamState).not.toHaveBeenCalledWith('AUTH');
+  }
+});
+
+it('clears the stored dashboard identity when the authenticated user does not match', async () => {
+  const config = { ...options(), examState: 'STUDENT_DASHBOARD', initialActiveSession: null };
+  sessionStorage.setItem('currentStudent', JSON.stringify(config.currentStudent));
+  vi.mocked(supabase.auth.getUser).mockResolvedValueOnce({ data: { user: { id: 'another-user' } }, error: null });
+  renderHook(() => useExamSession(config));
+  await act(async () => {});
+  expect(sessionStorage.getItem('currentStudent')).toBeNull();
+  expect(config.setCurrentStudent).toHaveBeenCalledWith(null);
+  expect(config.setExamState).toHaveBeenCalledWith('AUTH');
+});
+
+it('keeps a confirmed answer saved when the same option is selected again', async () => {
+  const config = options();
+  const { result } = renderHook(() => useExamSession(config));
+  await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+  await act(async () => { saves[0].resolve({ data: { success: true, version: 2 }, error: null }); });
+  await act(async () => { result.current.setSelectedOption('0'); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+  expect(saves).toHaveLength(1);
+  expect(result.current.autosaveStatus).toBe('SAVED');
+});
+
+it('saves a reverted confirmed answer after a different answer is already in flight', async () => {
+  const config = options();
+  const { result } = renderHook(() => useExamSession(config));
+  await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+  await act(async () => { saves[0].resolve({ data: { success: true, version: 2 }, error: null }); });
+  await act(async () => { result.current.setSelectedOption('1'); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+  await act(async () => { result.current.setSelectedOption('0'); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+  expect(saves).toHaveLength(2);
+  expect(result.current.autosaveStatus).toBe('SAVING');
+  await act(async () => { saves[1].resolve({ data: { success: true, version: 3 }, error: null }); });
+  expect(saves).toHaveLength(3);
+  expect(saves[2].args.responses_param.Physics[0].selectedOption).toBe('0');
+  expect(saves[2].args.expected_version_param).toBe(3);
+  expect(result.current.autosaveStatus).toBe('SAVING');
+  await act(async () => { saves[2].resolve({ data: { success: true, version: 4 }, error: null }); });
+  expect(result.current.autosaveStatus).toBe('SAVED');
+});
+
+it('replaces a queued changed answer when the student reverts before the in-flight confirmation', async () => {
+  const config = options();
+  const { result } = renderHook(() => useExamSession(config));
+  await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+  await act(async () => { result.current.setSelectedOption('1'); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+  expect(saves).toHaveLength(1);
+  await act(async () => { result.current.setSelectedOption('0'); });
+  await act(async () => { saves[0].resolve({ data: { success: true, version: 2 }, error: null }); });
+  expect(saves).toHaveLength(1);
+  expect(result.current.autosaveStatus).toBe('SAVED');
+});
+
+it('requires a new confirmation after a changed save exhausts uncertain retries', async () => {
+  const config = options();
+  const { result } = renderHook(() => useExamSession(config));
+  await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+  await act(async () => { saves[0].resolve({ data: { success: true, version: 2 }, error: null }); });
+  await act(async () => { result.current.setSelectedOption('1'); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+  await act(async () => { result.current.setSelectedOption('0'); });
+  for (let retry = 1; retry <= 4; retry += 1) {
+    await act(async () => { saves[retry].resolve({ data: null, error: { message: 'network connection failed' }, status: 503 }); });
+    if (retry < 4) await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+  }
+  expect(result.current.autosaveStatus).toBe('OFFLINE');
+  await act(async () => { result.current.setSelectedOption('0'); });
+  expect(result.current.autosaveStatus).toBe('SAVING');
+  await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+  expect(saves).toHaveLength(6);
+  expect(saves[5].args.responses_param.Physics[0].selectedOption).toBe('0');
+  expect(saves[5].args.expected_version_param).toBe(2);
+  await act(async () => { saves[5].resolve({ data: { success: true, version: 3 }, error: null }); });
+  expect(result.current.autosaveStatus).toBe('SAVED');
+});
 
 it('flushes latest answers after an in-flight autosave, freezes editing and submits the confirmed version', async () => {
   const config = options();
@@ -107,6 +205,7 @@ it('restores server conflicts and does not grade a stale final snapshot', async 
   const serverResponses = { Physics: [{ selectedOption: '1', status: 'ANSWERED' }] };
   await act(async () => { saves[0].resolve({ data: { conflict: true, version: 5, user_responses: serverResponses }, error: null }); await submitted; });
   expect(result.current.currentResponse.selectedOption).toBe('1');
+  expect(result.current.autosaveStatus).toBe('CONFLICT');
   expect(submitArgs).toHaveLength(0);
   await act(async () => { window.dispatchEvent(new Event('online')); });
   expect(submitArgs).toHaveLength(0);

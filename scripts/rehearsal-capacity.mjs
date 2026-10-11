@@ -40,8 +40,10 @@ export const operatingCapacity = (reports, requiredRepeats = 3) => {
       const measured = report.load.operations?.[operation];
       return !measured?.samples || measured.p95 > limit || measured.errors / measured.samples > 0.01;
     })) continue;
-    const concurrency = report.load?.config?.workerConcurrency;
-    if (!Number.isInteger(concurrency) || concurrency < 1) continue;
+    const cohort = [report.load?.config?.workerConcurrency, report.candidateCount,
+      report.authenticatedStudents, report.startedSessions, report.submittedResults];
+    if (cohort.some(count => !Number.isInteger(count) || count < 1)) continue;
+    const concurrency = Math.min(...cohort);
     const key = `${report.projectRef}:${concurrency}`;
     if (!passing.has(key)) passing.set(key, { concurrency, runs: new Set() });
     passing.get(key).runs.add(report.runId);

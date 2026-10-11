@@ -144,7 +144,9 @@ REHEARSAL_MONTHLY_SITTINGS=8 npm run test:rehearsal:staging
 Supply the previous report paths on the third run. `capacity.operatingCohort` is
 `floor(0.70 × highest repeatedly passing concurrency)` and remains null without three distinct
 same-project hosted Free runs meeting the full-duration/media/drill gates (abandonment at least the measured concurrency) and standard latency/error
-limits. The tier and representative-fixture flags are operator attestations; retain dashboard proof
+limits. Measured concurrency is bounded by the worker limit, candidate count and authenticated,
+started and submitted student counts; missing or invalid counts cannot establish capacity.
+The tier and representative-fixture flags are operator attestations; retain dashboard proof
 and browser evidence alongside reports. A successful short/local run never establishes hosted capacity.
 Split sittings when demand exceeds the operating cohort.
 

@@ -324,13 +324,16 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
   useEffect(() => {
     if (examState !== 'STUDENT_DASHBOARD') return;
     let active = true;
+    // Navigation can abort getUser before React has a chance to clean up.
+    const handlePageHide = (/** @type {PageTransitionEvent} */ event) => { if (!event.persisted) active = false; };
+    window.addEventListener('pagehide', handlePageHide);
     supabase.auth.getUser().then(({ data: { user }, error }) => {
       if (!active) return;
       if (error || !user || !currentStudent?.docId || user.id !== currentStudent.docId) {
         handleSafeLogout();
       }
     });
-    return () => { active = false; };
+    return () => { active = false; window.removeEventListener('pagehide', handlePageHide); };
   }, [examState, currentStudent?.docId, handleSafeLogout]);
 
   // An offline recovery record is not proof of identity. Validate the locally
@@ -442,6 +445,8 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
       ...(timingInFlightRef.current ? {} : { subject_time_seconds_param: timing })
     };
     isSavingRef.current = true;
+    // A changed write may commit even if every reply is lost.
+    lastConfirmedResponsesRef.current = null;
     try {
       for (let retry = 0; retry <= 3; retry += 1) {
         assertWritable();
@@ -527,9 +532,12 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
     const remaining = (sessionEndTimeRef.current || Infinity) - getExamActionNow();
     if (remaining <= 0) { setAutosaveStatus('LOCKED'); return; }
     if (!navigator.onLine || offlineSince) { setAutosaveStatus(localSave.success ? 'OFFLINE' : 'FAILED'); return; }
-    if (lastConfirmedResponsesRef.current && sameResponses(userResponses, lastConfirmedResponsesRef.current)) return;
+    if (!isSavingRef.current && lastConfirmedResponsesRef.current && sameResponses(userResponses, lastConfirmedResponsesRef.current)) {
+      setAutosaveStatus(status => status === 'CONFLICT' ? status : 'SAVED');
+      return;
+    }
     setAutosaveStatus('SAVING');
-    const timer = setTimeout(() => {
+    const save = () => {
       if (submissionStartedRef.current || terminatingRef.current) return;
       void savePipelineRef.current?.save(userResponses).catch(error => {
         if (studentSessionLockedRef.current || terminatingRef.current || saveScope !== saveScopeRef.current) return;
@@ -541,7 +549,9 @@ export function useExamSession({ examState, setExamState, currentStudent, setCur
         setAutosaveStatus(isTransientRpcError(error, { online: navigator.onLine }) && localSave.success ? 'OFFLINE' : 'FAILED');
         if (!localSave.success) setRecoveryNotice('This browser could not store a recovery copy. Keep this page open and restore the connection immediately.');
       });
-    }, remaining <= 10_000 ? 250 : 1000);
+    };
+    if (isSavingRef.current) { save(); return; }
+    const timer = setTimeout(save, remaining <= 10_000 ? 250 : 1000);
     return () => clearTimeout(timer);
   }, [userResponses, examState, currentStudent, activeExam, examData, activeSubject, currentIndices, offlineSince, handleSessionReplaced, saveScope, setExamState]);
 

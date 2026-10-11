@@ -3,6 +3,14 @@ import assert from 'node:assert/strict';
 import { isTransientRpcError, retryDelayMs } from '../src/examLogic.js';
 import { nextStudentPollAt, timingFallbackDue, projectUsage, operatingCapacity, isConfirmedSaveReply, responsesForPaper } from '../scripts/rehearsal-capacity.mjs';
 
+const pass = (runId, workerConcurrency = 100, cohort = workerConcurrency) => ({
+  passed: true, environment: 'hosted-free', projectRef: 'disposable', runId,
+  candidateCount: cohort, authenticatedStudents: cohort, startedSessions: cohort, submittedResults: cohort,
+  fullDurationValidated: true, representativeMediaValidated: true, operationalDrillsValidated: true,
+  load: { config: { workerConcurrency }, thresholds: { passed: true, enforced: true, config: { maxErrorRate: 0.01 } },
+    operations: Object.fromEntries(['dashboard_read', 'autosave', 'final_sync', 'start', 'submit'].map(name => [name, { samples: cohort, errors: 0, p95: 999 }])) }
+});
+
 test('Rehearsal saves match shuffled paper IDs and reject missing answers', () => {
   const paper = { questions: { Physics: [{ id: 'q2' }, { id: 'q1' }] } };
   const answers = [{ question_id: 'q1', selected_option: '1', status: 'ANSWERED' },
@@ -39,12 +47,6 @@ test('Usage projection retains missing observations and never treats cleanup as 
 });
 
 test('Operating cohort requires unique repeated same-project hosted Free full-duration passes with every gate', () => {
-  const pass = (runId, workerConcurrency = 100) => ({
-    passed: true, environment: 'hosted-free', projectRef: 'disposable', runId,
-    fullDurationValidated: true, representativeMediaValidated: true, operationalDrillsValidated: true,
-    load: { config: { workerConcurrency }, thresholds: { passed: true, enforced: true, config: { maxErrorRate: 0.01 } },
-      operations: Object.fromEntries(['dashboard_read', 'autosave', 'final_sync', 'start', 'submit'].map(name => [name, { samples: 100, errors: 0, p95: 999 }])) }
-  });
   const reports = [pass('a'), pass('a'), pass('b')];
   assert.equal(operatingCapacity(reports).operatingCohort, null);
   reports.push(pass('c'));
@@ -57,6 +59,29 @@ test('Operating cohort requires unique repeated same-project hosted Free full-du
   relaxed.load.operations.autosave.p95 = 1001;
   assert.equal(operatingCapacity([relaxed], 1).operatingCohort, null);
   assert.equal(operatingCapacity([pass('a', 3), pass('b', 3), pass('c', 3)]).operatingCohort, 2);
+});
+
+test('Operating capacity credits only the observed completed cohort when workers exceed students', () => {
+  assert.deepEqual(operatingCapacity(['a', 'b', 'c'].map(id => pass(id, 1000, 1))), {
+    requiredRepeats: 3, highestRepeatedlyPassingConcurrency: 1, operatingCohort: 0
+  });
+});
+
+test('Operating capacity is bounded by every participant count and the worker limit', () => {
+  for (const field of ['candidateCount', 'authenticatedStudents', 'startedSessions', 'submittedResults']) {
+    const report = { ...pass(field, 1000), [field]: 10 };
+    assert.equal(operatingCapacity([report], 1).highestRepeatedlyPassingConcurrency, 10, field);
+  }
+  assert.equal(operatingCapacity([pass('staggered', 100, 1000)], 1).operatingCohort, 70);
+});
+
+test('Operating capacity rejects missing or invalid participant evidence', () => {
+  for (const field of ['candidateCount', 'authenticatedStudents', 'startedSessions', 'submittedResults']) {
+    for (const value of [undefined, null, 0, -1, 1.5, '100', NaN, Infinity]) {
+      const report = { ...pass('invalid'), [field]: value };
+      assert.equal(operatingCapacity([report], 1).operatingCohort, null, `${field}: ${String(value)}`);
+    }
+  }
 });
 
 
