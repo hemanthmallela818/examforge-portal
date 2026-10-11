@@ -12,9 +12,24 @@ const listeners = new Set();
 let lastTick = Date.now();
 /** @type {ReturnType<typeof setInterval> | null} */
 let intervalId = null;
+/** @type {{ server: number, monotonic: number } | null} */
+let anchor = null;
+
+/** @param {string | number} serverNow */
+export const anchorExamClock = (serverNow) => {
+  const server = typeof serverNow === 'number' ? serverNow : Date.parse(serverNow);
+  if (!Number.isFinite(server)) return;
+  const monotonic = performance.now();
+  // Delayed replies must not rewind elapsed time or unlock an expired deadline.
+  anchor = { server: anchor ? Math.max(server, anchor.server + monotonic - anchor.monotonic) : server, monotonic };
+  tick();
+};
+
+export const resetExamClock = () => { anchor = null; tick(); };
+const now = () => anchor ? anchor.server + performance.now() - anchor.monotonic : Date.now();
 
 const tick = () => {
-  lastTick = Date.now();
+  lastTick = now();
   listeners.forEach(listener => listener());
 };
 
@@ -22,7 +37,7 @@ const tick = () => {
 export const subscribeExamClock = (listener) => {
   listeners.add(listener);
   if (intervalId === null) {
-    lastTick = Date.now();
+    lastTick = now();
     intervalId = setInterval(tick, 1000);
   }
   return () => {
@@ -39,7 +54,10 @@ const noopSubscribe = () => () => {};
 // While ticking, every subscriber reads the same instant so the timer text and
 // the deadline check can never disagree. While idle, read the wall clock so a
 // newly mounted subscriber never starts from a stale instant.
-export const getExamClockNow = () => (intervalId === null ? Date.now() : lastTick);
+export const getExamClockNow = () => (intervalId === null ? now() : lastTick);
+
+// Async actions need the current monotonic instant, not the last displayed tick.
+export const getExamActionNow = () => now();
 
 /**
  * Seconds remaining until `endTime` (epoch ms), re-rendering once per second.

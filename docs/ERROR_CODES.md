@@ -22,6 +22,9 @@ and only then legacy message wording (so older servers keep working).
 | `EX010` | `ANSWER_KEY_MISSING` | `submit_exam_internal` | Answer key not found |
 | `EX011` | `SESSION_NOT_FOUND` | `sync_active_session_progress_internal` | Active session not found or already submitted |
 | `EX012` | `VALIDATION_FAILED` | exam internals | Response payload exceeds 256 KiB / Exam question data is invalid / A positive expected session version is required |
+| `EX013` | `CONFLICT` | versioned submit | Exam session version conflict; confirm the current saved answers before submitting |
+| `EX014` | `EXAM_UNAVAILABLE` | protected attempt actions | Active session is terminated / Cannot submit a terminated exam before deadline |
+| `EX015` | `CONFLICT` | protected attempt actions | Session access generation mismatch / A positive access generation is required |
 | `42501` | `FORBIDDEN` | root/admin guards (e.g. `admin_clear_question_bank`) | Root developer access is required |
 
 `EX002` is also raised as "Active student profile not found" by the exam

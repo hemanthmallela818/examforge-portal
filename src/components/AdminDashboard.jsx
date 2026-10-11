@@ -50,7 +50,6 @@ const PAGE_TITLES = {
 function AdminWorkspace({ onBackToLogin }) {
   const {
     dataLoadState,
-    loadedCollections,
     isRootDeveloper,
     tableCounts,
     dbSize,
@@ -102,7 +101,7 @@ function AdminWorkspace({ onBackToLogin }) {
   });
 
   useAdminRealtime({
-    loadedCollections,
+    visibleCollections: { exams: overviewEnabled, students: studentsEnabled, questions: questionBankEnabled, classes: classesEnabled },
     fetchTableCounts,
     scheduleTableCounts,
     fetchExams: examList.fetchExams,

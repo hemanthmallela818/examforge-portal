@@ -8,6 +8,8 @@
  * } from './types'
  */
 
+import { APP_ERROR, classifyAppError } from './appErrors.js';
+
 /**
  * Accepts any value in `.has()` so untrusted statuses can be validated.
  * @type {ReadonlySet<unknown>}
@@ -150,17 +152,21 @@ function isValidPendingSubmission(record, student, examId) {
     && record.schemaVersion === RECOVERY_SCHEMA_VERSION
     && String(record.examId || '') === String(examId || '')
     && Array.isArray(record.responses)
+    && (record.expectedVersion == null || (Number.isInteger(record.expectedVersion) && record.expectedVersion >= 1))
     && sessionBelongsToStudent(record, student));
 }
 
 /**
- * @param {StudentExamScope & { responses: SubmissionResponse[], accessGeneration?: number | null }} input
+ * @param {StudentExamScope & { responses: SubmissionResponse[], accessGeneration?: number | null, expectedVersion?: number | null }} input
  * @returns {StorageWriteResult<{ record: PendingSubmissionRecord }>}
  */
-export function savePendingSubmissionRecord({ student, examId, userUuid, responses, accessGeneration, storage }) {
+export function savePendingSubmissionRecord({ student, examId, userUuid, responses, accessGeneration, expectedVersion, storage }) {
   const studentKey = studentStorageKey(student, userUuid);
   if (!studentKey || !examId || !Array.isArray(responses)) {
     return { success: false, error: new Error('Student, exam, and responses are required.') };
+  }
+  if (expectedVersion != null && (!Number.isInteger(expectedVersion) || expectedVersion < 1)) {
+    return { success: false, error: new Error('A positive confirmed version is required.') };
   }
   const record = {
     schemaVersion: RECOVERY_SCHEMA_VERSION,
@@ -169,7 +175,8 @@ export function savePendingSubmissionRecord({ student, examId, userUuid, respons
     userUuid: String(userUuid || student?.docId || ''),
     responses,
     timestamp: Date.now(),
-    accessGeneration: accessGeneration !== undefined && accessGeneration !== null ? Number(accessGeneration) : null
+    accessGeneration: accessGeneration !== undefined && accessGeneration !== null ? Number(accessGeneration) : null,
+    ...(expectedVersion !== undefined ? { expectedVersion } : {})
   };
   const recordKey = formatPendingSubmissionStorageKey(studentKey, examId);
   const pointerKey = formatPendingSubmissionPointerKey(studentKey);
@@ -705,6 +712,8 @@ const TRANSIENT_ERROR_CODES = new Set([
  * @returns {boolean}
  */
 export function isTransientRpcError(error, { online = true } = {}) {
+  const kind = classifyAppError(error);
+  if (kind !== APP_ERROR.UNKNOWN && kind !== APP_ERROR.RATE_LIMITED && kind !== APP_ERROR.UNAVAILABLE) return false;
   if (!online) return true;
   if (!error) return false;
   const status = Number(error.httpStatus ?? error.status);

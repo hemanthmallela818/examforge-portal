@@ -77,6 +77,9 @@ if (!url || !key) {
       activeExams: healthData.active_exams,
       liveSessions: healthData.live_sessions,
       expiredSessionsPending: healthData.expired_sessions_pending_finalization,
+      oldestPendingDeadlineAt: healthData.expired_sessions_oldest_deadline_at ?? null,
+      databaseBytes: healthData.database_size_bytes ?? null,
+      academicStorageBytes: healthData.academic_storage_bytes ?? null,
       questionsMissingMedia: healthData.questions_missing_required_media,
       inactiveStudents: healthData.inactive_students,
       recentAuditEvents: healthData.audit_events_last_24_hours

@@ -150,7 +150,7 @@ function App() {
     setResults,
     initialActiveSession: initialActiveSession.current
   });
-  const { handleSafeLogout, handleStudentLogin, handleStartExamFlow, startExam, activeExam, examData, terminationReason } = session;
+  const { handleSafeLogout, handleStudentLogin, handleStartExamFlow, startExam, examData, terminationReason, runtimeStatus, runtimeError, handleSessionReplaced } = session;
   const handleAdminBackToLogin = useCallback(() => setExamState('AUTH'), []);
 
   return (
@@ -168,6 +168,7 @@ function App() {
         <StudentDashboard 
           student={/** @type {import('./features/exam/examSessionHelpers').CurrentStudent} */ (currentStudent)}
           onLogout={handleSafeLogout}
+          onSessionReplaced={handleSessionReplaced}
           onStartExam={handleStartExamFlow}
           onViewResult={(/** @type {import('./features/exam/examSessionHelpers').Scorecard} */ scorecard) => {
             setResults(scorecard);
@@ -187,7 +188,8 @@ function App() {
       {examTabOwner && examState === 'PRE_EXAM' && (
         <PreExam
           startExam={startExam}
-          activeExamId={activeExam?.id}
+          examStatus={runtimeStatus}
+          statusError={runtimeError}
           duration={examData?.duration}
           marksCorrect={examData?.marksCorrect}
           marksIncorrect={examData?.marksIncorrect}

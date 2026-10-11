@@ -56,6 +56,8 @@ try {
         REHEARSAL_SUPABASE_URL: url, REHEARSAL_SUPABASE_ANON_KEY: publicKey,
         REHEARSAL_SUPABASE_SERVICE_ROLE_KEY: serviceKey,
         REHEARSAL_ADMIN_AAL2_ACCESS_TOKEN: refreshed.session.access_token,
+        REHEARSAL_ADMIN_REFRESH_TOKEN: refreshed.session.refresh_token,
+        REHEARSAL_ADMIN_EXPIRES_AT: String(refreshed.session.expires_at),
         REHEARSAL_EXPECTED_PROJECT_REF: projectRef, REHEARSAL_CONFIRM_DISPOSABLE: confirmation
         , REHEARSAL_CANDIDATE_COUNT: process.env.REHEARSAL_CANDIDATE_COUNT || '80'
       }

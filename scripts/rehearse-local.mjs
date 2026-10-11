@@ -83,6 +83,8 @@ const result = spawnSync(process.execPath, [resolve('scripts/rehearse-staging.mj
     REHEARSAL_SUPABASE_ANON_KEY: local.anonKey,
     REHEARSAL_SUPABASE_SERVICE_ROLE_KEY: local.serviceRoleKey,
     REHEARSAL_ADMIN_AAL2_ACCESS_TOKEN: refreshed.session.access_token,
+    REHEARSAL_ADMIN_REFRESH_TOKEN: refreshed.session.refresh_token,
+    REHEARSAL_ADMIN_EXPIRES_AT: String(refreshed.session.expires_at),
     REHEARSAL_EXPECTED_PROJECT_REF: 'local',
     REHEARSAL_CONFIRM_DISPOSABLE: 'YES_RESET_THIS_DISPOSABLE_PROJECT_AFTER_REHEARSAL',
     // Local GoTrue is isolated and does not need the remote anti-abuse pacing.

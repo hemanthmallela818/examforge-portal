@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 const channel = { on: vi.fn(() => channel), subscribe: vi.fn(() => channel) };
 vi.mock('../../src/supabase', () => ({
@@ -11,14 +11,17 @@ vi.mock('../../src/supabase', () => ({
   }
 }));
 
-const rows = { results: [], exams: [], sessions: [] };
-vi.mock('../../src/paginatedQuery', () => ({
-  // The dashboard loads results first, then exams.
-  fetchAllRows: vi.fn()
-}));
-
+const rows = { results: [], exams: [], sessions: [], hasMore: false };
+const pageReply = () => ({
+  data: { exams: rows.exams.map(exam => ({
+    ...exam,
+    result: rows.results.find(result => result.exam_id === exam.id) || null,
+    session: rows.sessions.find(session => session.exam_id === exam.id) || null
+  })), has_more: rows.hasMore, server_now: new Date().toISOString() },
+  error: null
+});
+const rpcReply = reply => ({ abortSignal: vi.fn(() => Promise.resolve(reply)) });
 const { supabase } = await import('../../src/supabase');
-const { fetchAllRows } = await import('../../src/paginatedQuery');
 const { default: StudentDashboard } = await import('../../src/components/StudentDashboard');
 
 const student = { id: 'STU-9', docId: 'uuid-9', name: 'Asha Rao', class: '12', section: 'A' };
@@ -26,30 +29,18 @@ const paper = { duration: 60, subjects: ['Physics'] };
 const exam = (id, title, status, created_at) => ({ id, title, status, class: 'All', section: 'All', created_at, questions_data: paper });
 
 const renderDashboard = async () => {
-  vi.mocked(fetchAllRows)
-    .mockResolvedValueOnce(rows.results)
-    .mockResolvedValueOnce(rows.exams);
   render(<StudentDashboard student={student} onLogout={vi.fn()} onStartExam={vi.fn()} onViewResult={vi.fn()} />);
   await screen.findByRole('region', { name: /Live now/ });
 };
 
 beforeEach(() => {
   localStorage.clear();
-  vi.mocked(fetchAllRows).mockReset();
   rows.sessions = [];
-  vi.mocked(supabase.from).mockImplementation(() => {
-    const query = {
-      select: vi.fn((fields) => {
-        query.fields = fields;
-        return query;
-      }),
-      eq: vi.fn(() => query),
-      then: (resolve) => resolve(query.fields.includes('end_time')
-        ? { data: null, error: { message: 'column end_time does not exist' } }
-        : { data: rows.sessions, error: null })
-    };
-    return query;
-  });
+  rows.hasMore = false;
+  vi.mocked(supabase.rpc).mockReset().mockImplementation(() => rpcReply(pageReply()));
+  vi.mocked(supabase.channel).mockClear();
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  vi.mocked(supabase.from).mockReset().mockImplementation(() => { throw new Error('Unexpected historical table query'); });
   rows.exams = [
     exam('live', 'Live Mock', 'ACTIVE', '2026-09-03'),
     exam('pending', 'Pending Mock', 'PENDING', '2026-09-04'),
@@ -90,9 +81,10 @@ describe('StudentDashboard grouping (U13)', () => {
 
   it('shows a score trend across completed exams, oldest first', async () => {
     await renderDashboard();
-    const chart = screen.getByRole('img', { name: /Score trend across 2 completed exams: 50%, 75%/ });
+    const chart = screen.getByRole('img', { name: /Score trend across 2 completed exams on this page: 50%, 75%/ });
     expect(chart.tagName.toLowerCase()).toBe('svg');
     expect(screen.getByText('Your score trend')).toBeTruthy();
+    expect(screen.getByText(/completed exams on this page/i)).toBeTruthy();
   });
 
   it('shows a live countdown for the attempt in progress on this device', async () => {
@@ -123,9 +115,6 @@ describe('StudentDashboard after a termination', () => {
     localStorage.setItem('cbt_active_exam_session', JSON.stringify({
       studentId: student.id, userUuid: student.docId, activeExam: { id: 'live' }, endTime: Date.now() + 60_000
     }));
-    vi.mocked(fetchAllRows)
-      .mockResolvedValueOnce(rows.results)
-      .mockResolvedValueOnce(rows.exams);
     render(<StudentDashboard student={student} onLogout={vi.fn()} onStartExam={vi.fn()} onViewResult={vi.fn()} />);
 
     const completed = await screen.findByRole('region', { name: /Completed/ });
@@ -152,5 +141,91 @@ describe('StudentDashboard server attempt state', () => {
     const card = screen.getByText('Live Mock').closest('.student-exam-card');
     expect(within(card).getByRole('button', { name: /Resume Exam/ })).toBeTruthy();
     expect(within(card).getByText(/Time remaining in your attempt/).textContent).toMatch(/1:(29:5\d|30:00)/);
+  });
+});
+
+
+describe('StudentDashboard bounded page reads', () => {
+  it('reads one dashboard page without subscribing or loading historical tables', async () => {
+    await renderDashboard();
+    expect(supabase.rpc).toHaveBeenCalledTimes(1);
+    expect(supabase.rpc).toHaveBeenCalledWith('student_dashboard_page', { page_param: 0 });
+    const query = vi.mocked(supabase.rpc).mock.results[0].value;
+    expect(query.abortSignal).toHaveBeenCalledWith(expect.any(AbortSignal));
+    expect(supabase.channel).not.toHaveBeenCalled();
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
+
+  it('loads later pages only on demand and refreshes only the displayed page', async () => {
+    rows.hasMore = true;
+    await renderDashboard();
+    expect(screen.getByRole('button', { name: /previous page/i }).disabled).toBe(true);
+    expect(supabase.rpc).toHaveBeenCalledTimes(1);
+    rows.exams = [exam('older', 'Older Mock', 'PENDING', '2025-01-01')];
+    rows.results = [];
+    rows.hasMore = false;
+    fireEvent.click(screen.getByRole('button', { name: /next page/i }));
+    await screen.findByText('Older Mock');
+    expect(screen.queryByText('Live Mock')).toBeNull();
+    expect(screen.queryByText('Your score trend')).toBeNull();
+    expect(screen.getByRole('button', { name: /next page/i }).disabled).toBe(true);
+    expect(supabase.rpc).toHaveBeenLastCalledWith('student_dashboard_page', { page_param: 1 });
+    await act(async () => window.dispatchEvent(new Event('online')));
+    await waitFor(() => expect(supabase.rpc).toHaveBeenCalledTimes(3));
+    expect(supabase.rpc).toHaveBeenLastCalledWith('student_dashboard_page', { page_param: 1 });
+    fireEvent.click(screen.getByRole('button', { name: /previous page/i }));
+    await waitFor(() => expect(supabase.rpc).toHaveBeenLastCalledWith('student_dashboard_page', { page_param: 0 }));
+  });
+
+  it('recovers from RPC errors through retry without losing the current page', async () => {
+    rows.hasMore = true;
+    await renderDashboard();
+    vi.mocked(supabase.rpc).mockImplementationOnce(() => rpcReply({ data: null, error: { message: 'network failed' } }));
+    fireEvent.click(screen.getByRole('button', { name: /next page/i }));
+    await screen.findByRole('alert');
+    rows.exams = [exam('recover', 'Recovered Mock', 'ACTIVE', '2025-01-01')];
+    fireEvent.click(screen.getByRole('button', { name: /retry dashboard/i }));
+    await screen.findByText('Recovered Mock');
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(supabase.rpc).toHaveBeenLastCalledWith('student_dashboard_page', { page_param: 1 });
+  });
+
+  it.each([true, false])('routes replaced ownership to the session callback or logout (callback=%s)', async hasCallback => {
+    vi.mocked(supabase.rpc).mockImplementation(() => rpcReply({ data: null, error: { code: 'EX001', message: 'replaced' } }));
+    const onLogout = vi.fn();
+    const onSessionReplaced = hasCallback ? vi.fn() : undefined;
+    render(<StudentDashboard student={student} onLogout={onLogout} onSessionReplaced={onSessionReplaced} onStartExam={vi.fn()} />);
+    await waitFor(() => expect(onSessionReplaced || onLogout).toHaveBeenCalledTimes(1));
+    if (hasCallback) expect(onLogout).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('ignores an aborted old page reply when the user changes page (ownership error=%s)', async ownershipError => {
+    rows.hasMore = true;
+    await renderDashboard();
+    let resolveOld;
+    let oldSignal;
+    vi.mocked(supabase.rpc).mockImplementationOnce(() => ({ abortSignal: signal => {
+      oldSignal = signal;
+      return new Promise(resolve => { resolveOld = resolve; });
+    } }));
+    await act(async () => window.dispatchEvent(new Event('online')));
+    rows.exams = [exam('current', 'Current Page Mock', 'ACTIVE', '2025-01-01')];
+    rows.hasMore = false;
+    fireEvent.click(screen.getByRole('button', { name: /next page/i }));
+    await screen.findByText('Current Page Mock');
+    expect(oldSignal.aborted).toBe(true);
+    await act(async () => resolveOld(ownershipError
+      ? { data: null, error: { code: 'EX001', message: 'replaced' } }
+      : { data: { exams: [exam('late', 'Stale Mock', 'ACTIVE', '2024-01-01')], has_more: true }, error: null }));
+    expect(screen.queryByText('Stale Mock')).toBeNull();
+    expect(screen.getByText('Current Page Mock')).toBeTruthy();
+  });
+
+  it('describes local pending answers without promising an offline score', async () => {
+    const { savePendingSubmissionRecord } = await import('../../src/examLogic');
+    savePendingSubmissionRecord({ student, examId: 'live', userUuid: student.docId, responses: [] });
+    await renderDashboard();
+    expect(screen.getByText(/only answers confirmed by the server/i)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /retry submission/i })).toBeTruthy();
   });
 });

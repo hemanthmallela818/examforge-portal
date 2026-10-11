@@ -102,7 +102,7 @@ test('student reload is blocked, admin re-grants access, and offline answers sub
   await page.getByRole('button', { name: /Continue Answering Offline/ }).click();
   await page.getByLabel('Your Numerical Answer:').fill('0');
   await page.getByRole('button', { name: /Save & Next/ }).click();
-  await expect(page.getByTitle('Offline: Responses saved to local storage')).toBeVisible();
+  await expect(page.getByTitle('Pending on this device; reconnect before the deadline to confirm answers')).toBeVisible();
 
   const chemistryAutosave = waitForConfirmedAutosave(page, 'Chemistry', '0');
   await context.setOffline(false);

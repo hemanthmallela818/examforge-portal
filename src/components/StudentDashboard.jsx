@@ -1,7 +1,7 @@
 import { BarChart3, BookOpen, CalendarClock, CheckCircle2, CircleStop, ClipboardList, Clock, CloudUpload, Hourglass, IdCard, Inbox, Lock, LogOut, Play, Radio, RefreshCw, RotateCcw, ShieldAlert, Timer, TrendingUp, Users, XCircle } from 'lucide-react';
 import { APP_ERROR, classifyAppError } from '../appErrors';
 import { Badge, Button, Card, EmptyState, LoadingBlock, cn } from './ui';
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useMemo } from 'react';
 import { supabase } from '../supabase';
 import {
   sessionBelongsToStudent,
@@ -11,8 +11,8 @@ import {
   finishPendingSubmissionSync,
   readPendingTerminationRecord
 } from '../examLogic';
-import { fetchAllRows } from '../paginatedQuery';
-import { useRemainingSeconds } from '../features/exam/examClock';
+import { anchorExamClock, useRemainingSeconds } from '../features/exam/examClock';
+import { useStudentPolling } from '../features/exam/useStudentPolling';
 import BrandLogo from '../branding/BrandLogo';
 import { useBranding } from '../branding/brandingStore';
 import ThemeToggle from '../theme/ThemeToggle';
@@ -123,7 +123,7 @@ const ScoreTrend = ({ points }) => {
   const y = (/** @type {number} */ value) => TREND_PAD + ((maxY - value) * (TREND_HEIGHT - TREND_PAD * 2)) / (maxY - minY || 1);
   const path = points.map((point, index) => `${index === 0 ? 'M' : 'L'}${x(index).toFixed(1)},${y(point.percent).toFixed(1)}`).join(' ');
   const active = hovered === null ? null : points[hovered];
-  const summary = `Score trend across ${points.length} completed exam${points.length === 1 ? '' : 's'}: ${points.map(point => formatPercent(point.percent)).join(', ')}.`;
+  const summary = `Score trend across ${points.length} completed exam${points.length === 1 ? '' : 's'} on this page: ${points.map(point => formatPercent(point.percent)).join(', ')}.`;
 
   return (
     <Card className="student-score-trend p-5 sm:p-6">
@@ -135,7 +135,7 @@ const ScoreTrend = ({ points }) => {
             </div>
             <div className="min-w-0">
               <h3 className="text-base font-semibold text-slate-900">Your score trend</h3>
-              <p className="text-xs text-slate-500">Percentage across completed exams</p>
+              <p className="text-xs text-slate-500">Percentage across completed exams on this page</p>
             </div>
           </div>
           <dl className="grid grid-cols-3 gap-2 text-center">
@@ -209,10 +209,11 @@ const ScoreTrend = ({ points }) => {
  *   student: CurrentStudent,
  *   onLogout: () => void,
  *   onStartExam: (exam: DashboardExam) => void,
- *   onViewResult?: (scorecard: Scorecard) => void
+ *   onViewResult?: (scorecard: Scorecard) => void,
+ *   onSessionReplaced?: () => void
  * }} props
  */
-const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
+const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult, onSessionReplaced }) => {
   const [exams, setExams] = useState(/** @type {DashboardExam[]} */ ([]));
   const [completedExams, setCompletedExams] = useState(/** @type {Set<string>} */ (new Set()));
   const [completedResults, setCompletedResults] = useState(/** @type {Record<string, Scorecard>} */ ({}));
@@ -223,7 +224,8 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
     return readPendingSubmissionRecord({ student, userUuid: student?.docId })?.examId || null;
   });
   const [isSyncingPending, setIsSyncingPending] = useState(false);
-  const refreshTimer = useRef(/** @type {ReturnType<typeof setTimeout> | null} */ (null));
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
 
   const activeLocalSession = (() => {
     try {
@@ -261,7 +263,8 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
       setIsSyncingPending(true);
       const { data: finalResults, error } = await supabase.rpc('submit_exam', {
         exam_id_param: pendingSubmissionExamId,
-        responses_param: parsed.responses,
+        responses_param: null,
+        ...(parsed.expectedVersion != null ? { expected_version_param: parsed.expectedVersion } : {}),
         access_generation_param: parsed.accessGeneration ?? null
       });
       if (error) {
@@ -278,7 +281,7 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
             if (onViewResult) {
               onViewResult(committedResultToScorecard(committedResult));
             } else {
-              await fetchExamsAndResults();
+              await refresh();
             }
             return;
           }
@@ -290,9 +293,13 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
       if (onViewResult) {
         onViewResult(finalResults);
       } else {
-        await fetchExamsAndResults();
+        await refresh();
       }
     } catch (err) {
+      if (classifyAppError(err) === APP_ERROR.SESSION_REPLACED) {
+        (onSessionReplaced || onLogout)();
+        return;
+      }
       console.error("Offline submission sync error:", err);
       setError("Failed to sync offline submission. Please check connection and try again.");
     } finally {
@@ -301,154 +308,55 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
     }
   };
 
-  const fetchExamsAndResults = async () => {
-    try {
-      setError('');
-      // 1. Fetch completed exam results for this student
-      const resultsData = await fetchAllRows((from, to) => supabase
-        .from('student_results')
-        .select('exam_id, total_score, max_score, correct, partial, incorrect, unattempted, subject_scores')
-        .eq('student_id', student.id)
-        .order('exam_id', { ascending: true })
-        .range(from, to));
-      const completedSet = new Set((resultsData || []).map(r => r.exam_id));
-      /** @type {Record<string, Scorecard>} */
-      const resultsMap = {};
-      (resultsData || []).forEach(r => {
-        resultsMap[r.exam_id] = {
-          totalScore: r.total_score,
-          maxScore: r.max_score,
-          correct: r.correct,
-          partial: r.partial ?? 0,
-          incorrect: r.incorrect,
-          unattempted: r.unattempted,
-          subjectScores: r.subject_scores
-        };
-      });
-      setCompletedExams(completedSet);
-      setCompletedResults(resultsMap);
-
-      // 2. Fetch exams matching this student's class and section
-      const studentClass = student.class || null;
-      const studentSection = student.section || null;
-      const examsData = await fetchAllRows((from, to) => supabase
-        .from('cbt_exams')
-        .select('id, title, status, class, section, created_at, questions_data')
-        .order('created_at', { ascending: false })
-        .order('id', { ascending: true })
-        .range(from, to));
-      
-      const filteredExams = (examsData || []).filter(ex => {
-        if (!ex.class || ex.class === 'All' || (studentClass && ex.class === studentClass)) {
-          if (!ex.section || ex.section === 'All' || (studentSection && ex.section === studentSection)) {
-            return true;
-          }
+  const { refresh } = useStudentPolling({
+    enabled: Boolean(student),
+    key: `${student?.docId}:${page}`,
+    poll: async (signal) => {
+      try {
+        const { data, error: dashboardError } = await supabase
+          .rpc('student_dashboard_page', { page_param: page })
+          .abortSignal(signal);
+        if (signal.aborted) return;
+        if (dashboardError) throw dashboardError;
+        anchorExamClock(data.server_now);
+        /** @type {Record<string, Scorecard>} */
+        const resultsMap = {};
+        /** @type {typeof activeSessions} */
+        const sessionsMap = {};
+        const pageExams = data.exams || [];
+        pageExams.forEach((/** @type {import('../types').UntrustedInput} */ exam) => {
+          if (exam.result) resultsMap[exam.id] = committedResultToScorecard(exam.result);
+          if (exam.session) sessionsMap[exam.id] = exam.session;
+        });
+        setExams(pageExams.map((/** @type {import('../types').UntrustedInput} */ exam) => ({ ...exam, questionsData: exam.questions_data })));
+        setCompletedExams(new Set(Object.keys(resultsMap)));
+        setCompletedResults(resultsMap);
+        setActiveSessions(sessionsMap);
+        setHasMore(Boolean(data.has_more));
+        setError('');
+      } catch (err) {
+        if (signal.aborted) return;
+        if (classifyAppError(err) === APP_ERROR.SESSION_REPLACED) {
+          (onSessionReplaced || onLogout)();
+        } else {
+          console.error('Failed to load dashboard data:', err);
+          setError('Failed to fetch exams. Please check your connection.');
         }
-        return false;
-      });
-
-      setExams(filteredExams.map(ex => ({
-        ...ex,
-        questionsData: ex.questions_data
-      })));
-
-      // 3. Fetch active sessions for this student to reconcile blocked/resumable state
-      const { data: sessionsData, error: sessionsError } = await supabase
-        .from('active_sessions')
-        .select('id, exam_id, status, deadline_at, termination_reason, access_generation')
-        .eq('student_id', student.id);
-      if (sessionsError) throw sessionsError;
-      /** @type {Record<string, { id: string, exam_id: string, status: string, deadline_at: string | null, termination_reason: string | null, access_generation: number | null }>} */
-      const sessionsMap = {};
-      (sessionsData || []).forEach(s => {
-        if (s.exam_id) sessionsMap[s.exam_id] = s;
-      });
-      setActiveSessions(sessionsMap);
-
-    } catch (err) {
-      console.error("Failed to load dashboard data:", err);
-      setError("Failed to fetch exams. Please check your connection.");
-    } finally {
-      setLoading(false);
+        throw err;
+      } finally {
+        if (!signal.aborted) setLoading(false);
+      }
     }
+  });
+
+  /** @param {number} nextPage */
+  const changePage = (nextPage) => {
+    setLoading(true);
+    setError('');
+    setExams([]);
+    setHasMore(false);
+    setPage(nextPage);
   };
-
-  const scheduleDashboardRefresh = () => {
-    if (refreshTimer.current) clearTimeout(refreshTimer.current);
-    refreshTimer.current = setTimeout(() => {
-      refreshTimer.current = null;
-      fetchExamsAndResults();
-    }, 300);
-  };
-
-  useEffect(() => {
-    if (!student) return;
-    fetchExamsAndResults();
-
-    // Raw papers never enter Realtime. The metadata-only event table is a fast
-    // refresh signal; the protected view remains the authoritative read path.
-    const examsChannel = supabase
-      .channel(`student-exams-${student.id}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'exam_status_events' },
-        (/** @type {{ new: import('../types').UntrustedInput, old: import('../types').UntrustedInput }} */ payload) => {
-          const examObj = payload.new || payload.old;
-          // Refresh if it matches the student's class and section
-          if (examObj
-            && (!examObj.class || examObj.class === 'All' || examObj.class === student.class)
-            && (!examObj.section || examObj.section === 'All' || examObj.section === student.section)) {
-            scheduleDashboardRefresh();
-          }
-        }
-      )
-      .subscribe();
-
-    // Subscribe to student_results to update completed status dynamically
-    const resultsChannel = supabase
-      .channel(`student-results-${student.id}`)
-      .on(
-        'postgres_changes',
-        // Server-side filter: each candidate receives only its own result events,
-        // instead of every result inserted during a large sitting.
-        { event: '*', schema: 'public', table: 'student_results', filter: `student_id=eq.${student.id}` },
-        (/** @type {{ new: import('../types').UntrustedInput, old: import('../types').UntrustedInput }} */ payload) => {
-          const resultObj = payload.new || payload.old;
-          if (resultObj && resultObj.student_id === student.id) {
-            scheduleDashboardRefresh();
-          }
-        }
-      )
-      .subscribe();
-
-    // Subscribe to active_sessions to reflect termination and re-grant events immediately
-    const sessionsChannel = supabase
-      .channel(`student-sessions-${student.id}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'active_sessions', filter: `student_id=eq.${student.id}` },
-        () => {
-          scheduleDashboardRefresh();
-        }
-      )
-      .subscribe();
-
-    // Realtime is the fast path; polling is a safety net for school networks
-    // that block WebSocket connections. A per-browser random period spreads the
-    // polls of a whole class instead of aligning them on the same second.
-    const refreshInterval = setInterval(fetchExamsAndResults, 30000 + Math.floor(Math.random() * 15000));
-
-    return () => {
-      if (refreshTimer.current) clearTimeout(refreshTimer.current);
-      clearInterval(refreshInterval);
-      supabase.removeChannel(examsChannel);
-      supabase.removeChannel(resultsChannel);
-      supabase.removeChannel(sessionsChannel);
-    };
-  // The subscription lifetime is bound to the authenticated student. Query
-  // state is owned inside this component and refreshed by the callbacks.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [student]);
 
   const groupedExams = useMemo(() => {
     /** @type {Record<ExamGroupKey, DashboardExam[]>} */
@@ -517,9 +425,15 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
             </div>
             <div>
               <h3 className="text-lg font-semibold tracking-tight text-slate-900">Your Assigned Examinations</h3>
-              <p className="text-sm text-slate-500">Exams open here as soon as your administrator starts them.</p>
+              <p className="text-sm text-slate-500">Exams appear here after your administrator starts them and the dashboard refreshes.</p>
             </div>
           </div>
+
+          <nav aria-label="Exam pages" className="mb-5 flex items-center justify-between gap-3">
+            <Button variant="secondary" size="sm" disabled={loading || page === 0} onClick={() => changePage(page - 1)}>Previous page</Button>
+            <span className="text-sm text-slate-500" aria-live="polite">Page {page + 1}</span>
+            <Button variant="secondary" size="sm" disabled={loading || !hasMore} onClick={() => changePage(page + 1)}>Next page</Button>
+          </nav>
 
           {pendingSubmissionExamId && (
             <div className="student-recovery-banner" role="status">
@@ -527,7 +441,7 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
                 <div className="flex gap-3">
                   <CloudUpload className="mt-0.5 size-5 shrink-0 text-brand-600" aria-hidden="true" />
                   <p className="leading-relaxed">
-                    <strong className="font-semibold">Offline Exam Saved:</strong> You have an offline test attempt stored on this device. When online, click to synchronize your score to the server.
+                    <strong className="font-semibold">Submission pending:</strong> Answers awaiting confirmation are stored on this device. Reconnect to retry; only answers confirmed by the server before the deadline can be graded.
                   </p>
                 </div>
                 <Button
@@ -537,7 +451,7 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
                   loading={isSyncingPending}
                   className="shrink-0"
                 >
-                  {isSyncingPending ? 'Syncing...' : <><RefreshCw aria-hidden="true" /> Sync Score Now</>}
+                  {isSyncingPending ? 'Syncing...' : <><RefreshCw aria-hidden="true" /> Retry Submission</>}
                 </Button>
               </div>
             </div>
@@ -549,7 +463,7 @@ const StudentDashboard = ({ student, onLogout, onStartExam, onViewResult }) => {
                 <XCircle className="mt-0.5 size-4 shrink-0 text-red-600" aria-hidden="true" />
                 <span>{error}</span>
               </span>{' '}
-              <Button type="button" variant="danger-outline" size="sm" onClick={fetchExamsAndResults} className="shrink-0">
+              <Button type="button" variant="danger-outline" size="sm" onClick={() => { void refresh(); }} className="shrink-0">
                 <RefreshCw aria-hidden="true" />
                 Retry dashboard
               </Button>

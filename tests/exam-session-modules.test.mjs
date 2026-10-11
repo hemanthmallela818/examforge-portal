@@ -63,8 +63,9 @@ test('the per-second countdown is isolated from the exam session tree', async ()
 
 test('autosave and subject timing keep their debounce and interval contracts', async () => {
   const examSource = await readExamSource();
-  assert.match(examSource, /executeSave\(userResponses, saveGeneration\);\s*\}, 1000\);/);
-  assert.match(examSource, /syncSubjectTime\(\{ onlyIfChanged: true \}\)[\s\S]{0,120}\}, 30000\);/);
+  assert.match(examSource, /remaining <= 10_000 \? 250 : 1000/);
+  assert.match(examSource, /setTimeout\(fallback, 60_000\)/);
+  assert.match(examSource, /subject_time_seconds_param: timing/);
   assert.match(examSource, /retryDelayMs\(retry, \{ capMs: 5000 \}\)/);
   assert.match(examSource, /attempt >= 4 \|\| !isTransientRpcError\(submitError/);
 });

@@ -97,13 +97,13 @@ export function useClasses({ runAdminDataLoad, scheduleTableCounts, loadedCollec
 }
 
 /**
- * Loads classes the first time a screen that needs them is opened.
+ * Reloads classes whenever a screen that needs them is opened.
  * @param {boolean} enabled
  */
 export function useClassesOnDemand(enabled) {
-  const { classBook, loadedCollections } = useAdminContext();
+  const { classBook } = useAdminContext();
   const { fetchClasses } = classBook;
   useEffect(() => {
-    if (enabled && !loadedCollections.current.has('classes')) fetchClasses();
-  }, [enabled, fetchClasses, loadedCollections]);
+    if (enabled) fetchClasses();
+  }, [enabled, fetchClasses]);
 }

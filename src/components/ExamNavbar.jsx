@@ -101,9 +101,9 @@ const AutosaveIndicator = ({ autosaveStatus }) => {
   const pill = 'inline-flex items-center gap-1.5';
   switch (autosaveStatus) {
     case 'SAVING':
-      return <span className={cn(pill, 'text-amber-200')} title="Saving responses to server...">{icon(Loader2, 'animate-spin')} Saving…</span>;
+      return <span className={cn(pill, 'text-amber-200')} title="Answers pending confirmation by the server">{icon(Loader2, 'animate-spin')} Saving…</span>;
     case 'OFFLINE':
-      return <span className={cn(pill, 'text-orange-200')} title="Offline: Responses saved to local storage">{icon(CloudOff)} Saved on this device</span>;
+      return <span className={cn(pill, 'text-orange-200')} title="Pending on this device; reconnect before the deadline to confirm answers">{icon(CloudOff)} Pending on this device</span>;
     case 'RETRYING':
       return <span className={cn(pill, 'text-amber-200')} title="Retrying synchronization...">{icon(RefreshCw, 'animate-spin')} Syncing…</span>;
     case 'FAILED':

@@ -155,6 +155,7 @@ export interface PendingSubmissionRecord {
   responses: SubmissionResponse[];
   timestamp: number;
   accessGeneration?: number | null;
+  expectedVersion?: number | null;
 }
 
 export interface PendingTerminationRecord {

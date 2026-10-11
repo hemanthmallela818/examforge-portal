@@ -61,6 +61,13 @@ test('pending submissions for the same exam are isolated per student', () => {
   assert.deepEqual(readPendingSubmissionRecord({ student: studentB, storage }).responses, []);
 });
 
+test('queued submission preserves its confirmed version and rejects malformed versions', () => {
+  const storage = new MemoryStorage();
+  savePendingSubmissionRecord({ student: studentA, examId, responses: [], expectedVersion: 4, storage });
+  assert.equal(readPendingSubmissionRecord({ student: studentA, examId, storage }).expectedVersion, 4);
+  assert.equal(savePendingSubmissionRecord({ student: studentA, examId, responses: [], expectedVersion: -1, storage }).success, false);
+});
+
 test('a foreign legacy submission is neither restored nor deleted', () => {
   const storage = new MemoryStorage();
   const legacyKey = `cbt_pending_submission_${examId}`;
